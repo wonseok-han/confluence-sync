@@ -1,58 +1,58 @@
 {
   "docs/README.md": {
-    "pageId": "2024276014",
+    "pageId": "2024341644",
     "title": "Web3 × AI PoC 기획 문서"
   },
   "docs/01-item-04-ai-model-governance-audit.md": {
-    "pageId": "2024931422",
+    "pageId": "2024472692",
     "title": "공공·기업용 AI 모델 거버넌스 감사 추적 플랫폼 — 기획서"
   },
   "docs/02-item-06-ai-agent-permission-wallet.md": {
-    "pageId": "2025193548",
+    "pageId": "2025521225",
     "title": "기업형 AI 에이전트 권한지갑·위임 실행 플랫폼 — 기획서"
   },
   "docs/03-item-08-zkp-minimal-disclosure-auth.md": {
-    "pageId": "2024734785",
+    "pageId": "2024636605",
     "title": "ZKP 기반 개인정보 최소제공 인증 서비스 — 기획서"
   },
   "docs/10-pre-design/README.md": {
-    "pageId": "2024144928",
+    "pageId": "2024603821",
     "title": "PoC 개발 설계 전 정리"
   },
   "docs/10-pre-design/01-item-04-pre-design.md": {
-    "pageId": "2025062466",
+    "pageId": "2024931549",
     "title": "ITEM-04 개발 설계 전 정리 — AI 모델 거버넌스 감사 추적"
   },
   "docs/10-pre-design/02-item-06-pre-design.md": {
-    "pageId": "2024341566",
+    "pageId": "2024538265",
     "title": "ITEM-06 개발 설계 전 정리 — AI 에이전트 권한지갑·위임 실행"
   },
   "docs/10-pre-design/03-item-08-pre-design.md": {
-    "pageId": "2024243313",
+    "pageId": "2024538284",
     "title": "ITEM-08 개발 설계 전 정리 — ZKP 기반 개인정보 최소제공 인증"
   },
   "docs/20-design/README.md": {
-    "pageId": "2025390140",
+    "pageId": "2025062528",
     "title": "PoC 개발 설계서"
   },
   "docs/20-design/01-item-04-design.md": {
-    "pageId": "2024865885",
+    "pageId": "2024210584",
     "title": "ITEM-04 개발 설계서 — AI 모델 거버넌스 감사 추적"
   },
   "docs/20-design/02-item-06-design.md": {
-    "pageId": "2024439897",
+    "pageId": "2024603852",
     "title": "ITEM-06 개발 설계서 — AI 에이전트 권한지갑·위임 실행"
   },
   "docs/20-design/03-item-08-design.md": {
-    "pageId": "2024898624",
+    "pageId": "2024144969",
     "title": "ITEM-08 개발 설계서 — ZKP 기반 개인정보 최소제공 인증"
   },
   "docs/90-glossary.md": {
-    "pageId": "2024636528",
+    "pageId": "2024243388",
     "title": "용어사전 (Glossary)"
   },
   "docs/91-WORKLOG.md": {
-    "pageId": "2024800320",
+    "pageId": "2024341691",
     "title": "작업 로그 및 에이전트 인계 메모"
   }
 }
