@@ -101,28 +101,51 @@ function collectMarkdown(dir: string): string[] {
   return out;
 }
 
+/** 파일명이 (넘버링 prefix 포함) README 인지 — 폴더 대표 페이지 판정 */
+const isReadme = (base: string) => /README\.md$/.test(base);
+
+/** 폴더(dir) → 그 폴더의 대표 README 경로 맵 */
+function buildFolderIndex(relPaths: string[]): Record<string, string> {
+  const idx: Record<string, string> = {};
+  for (const p of relPaths) {
+    const parts = p.split('/');
+    const base = parts[parts.length - 1];
+    if (isReadme(base)) idx[parts.slice(0, -1).join('/')] = p;
+  }
+  return idx;
+}
+
 /**
  * 폴더=계층 매핑의 부모 결정.
  * - docs 직계 파일(docs/X.md) → null(루트: CONFLUENCE_PARENT_PAGE_ID)
- * - 하위 폴더의 README.md(폴더 대표) → null(루트 바로 아래)
- * - 하위 폴더의 일반 파일 → 같은 폴더의 README.md (그 폴더 대표 페이지의 자식)
+ * - 하위 폴더의 대표 README(00-README.md 등) → null(루트 바로 아래)
+ * - 하위 폴더의 일반 파일 → 같은 폴더의 대표 README (그 폴더 대표 페이지의 자식)
  * 반환은 mapping 의 key(레포 상대경로)이거나 null.
  */
-function parentKeyOf(relPath: string): string | null {
-  const parts = relPath.split('/'); // 예: ['docs','design','item-04-design.md']
+function parentKeyOf(relPath: string, folderIndex: Record<string, string>): string | null {
+  const parts = relPath.split('/'); // 예: ['docs','20-design','01-item-04-design.md']
   if (parts.length <= 2) return null; // docs/X.md
   const base = parts[parts.length - 1];
-  if (base === 'README.md') return null; // 폴더 대표는 루트 아래
-  return `${parts.slice(0, -1).join('/')}/README.md`;
+  if (isReadme(base)) return null; // 폴더 대표는 루트 아래
+  return folderIndex[parts.slice(0, -1).join('/')] ?? null; // 같은 폴더 대표 README
 }
 
-/** 부모가 자식보다 먼저 생성되도록 정렬(루트직속 먼저, 그다음 경로순) */
-function sortParentsFirst(relPaths: string[]): string[] {
+/**
+ * 정렬 키: 같은 폴더 안에서 README(폴더 대표, prefix 무관)를 맨 앞에 두고,
+ * 나머지는 파일명순으로 정렬한다. 결과는 트리 순서이며, 폴더 README가 그 폴더의
+ * 자식보다 항상 먼저 오므로 부모 페이지 생성 순서도 자동 보장된다.
+ */
+function sortKey(relPath: string): string {
+  const parts = relPath.split('/');
+  const base = parts[parts.length - 1];
+  const dir = parts.slice(0, -1).join('/');
+  return dir + '/' + (isReadme(base) ? '' : base);
+}
+
+function sortForSync(relPaths: string[]): string[] {
   return [...relPaths].sort((a, b) => {
-    const ga = parentKeyOf(a) ? 1 : 0;
-    const gb = parentKeyOf(b) ? 1 : 0;
-    if (ga !== gb) return ga - gb;
-    return a < b ? -1 : a > b ? 1 : 0;
+    const ka = sortKey(a), kb = sortKey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
 }
 
@@ -196,13 +219,15 @@ async function upsertPage(
 
 async function main() {
   if (!DRY_RUN) requireEnv();
-  const files = sortParentsFirst(collectMarkdown(DOCS_DIR).map((f) => relative(REPO_ROOT, f)));
+  const relPaths = collectMarkdown(DOCS_DIR).map((f) => relative(REPO_ROOT, f));
+  const folderIndex = buildFolderIndex(relPaths);
+  const files = sortForSync(relPaths);
   console.log(`문서 ${files.length}건 (${relative(REPO_ROOT, DOCS_DIR)}/)`);
 
   if (DRY_RUN) {
     for (const rel of files) {
       const { title } = splitTitleAndBody(readFileSync(resolve(REPO_ROOT, rel), 'utf8'), rel);
-      const pk = parentKeyOf(rel);
+      const pk = parentKeyOf(rel, folderIndex);
       console.log(`  [dry] ${rel}  →  "${title}"  (부모: ${pk ?? 'ROOT'})`);
     }
     console.log('\n--dry-run: 실제 호출 없음.');
@@ -221,7 +246,7 @@ async function main() {
     const raw = readFileSync(resolve(REPO_ROOT, rel), 'utf8');
     const { title, body } = splitTitleAndBody(raw, rel);
     const storage = toStorage(body);
-    const pk = parentKeyOf(rel);
+    const pk = parentKeyOf(rel, folderIndex);
     const parentId = pk ? work[pk]?.pageId : CONFLUENCE_PARENT_PAGE_ID;
     if (pk && !parentId) {
       console.error(`  ✗ 건너뜀  ${rel}  (부모 '${pk}' 페이지가 아직 없음)`);
