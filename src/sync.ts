@@ -6,6 +6,7 @@
  *   npm run sync -- --base <dir>       동기화 루트 지정(필수, 또는 env CONFLUENCE_SYNC_BASE)
  *   npm run sync -- --mapping <path>   매핑 파일 위치 지정(기본 <base>/.confluence-sync.json)
  *   npm run sync -- --force            변경 감지 무시, 전체 강제 갱신
+ *   npm run sync -- --verify           변경 없는 문서도 페이지 존재 확인(삭제됐으면 재생성)
  *   npm run sync:dry                   호출 없이 대상·상태(신규/변경/동일)·링크·이미지 출력
  *   npm run sync:rebuild               매핑된 페이지 전부 삭제 후 재생성
  *   npm run list                       base에서 인식된 문서·제목·계층만 출력(인증 불필요)
@@ -32,6 +33,7 @@ const DRY_RUN = argv.includes('--dry-run');
 const LIST = argv.includes('--list');
 const REBUILD = argv.includes('--rebuild');
 const FORCE = argv.includes('--force');
+const VERIFY = argv.includes('--verify'); // 변경 없는 문서도 페이지 존재를 확인(삭제 시 재생성)
 function optVal(name: string): string | undefined {
   const i = argv.indexOf(name);
   return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined;
@@ -98,6 +100,16 @@ async function api(path: string, init?: RequestInit): Promise<any> {
   return res.status === 204 ? null : res.json();
 }
 
+/** 페이지 조회. 삭제(휴지통)·부재면 404 → null 반환(그 외 오류는 throw) */
+async function getPageOrNull(pageId: string): Promise<any | null> {
+  const res = await fetch(`${CONFLUENCE_BASE_URL}/api/v2/pages/${pageId}`, {
+    headers: { Authorization: authHeader(), Accept: 'application/json' },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Confluence API ${res.status} ${res.statusText}\n/api/v2/pages/${pageId}\n${await res.text()}`);
+  return res.json();
+}
+
 const escapeXml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const hashOf = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -111,8 +123,9 @@ type RenderCtx = {
   images: { filename: string; abs: string }[];
   internalLinks: number;
   linkStack: boolean[];
+  linkedTitles: Set<string>;             // 이 문서가 내부 링크로 가리키는 대상 제목들
 };
-let ctx: RenderCtx = { fileDir: '', titleIndex: {}, images: [], internalLinks: 0, linkStack: [] };
+let ctx: RenderCtx = { fileDir: '', titleIndex: {}, images: [], internalLinks: 0, linkStack: [], linkedTitles: new Set() };
 
 /** 링크 href 가 base 내부 .md 면 그 페이지 제목 반환 */
 function resolveInternalLink(href: string): string | null {
@@ -137,6 +150,7 @@ md.renderer.rules.link_open = (tokens, idx, opts, _env, self) => {
   if (targetTitle) {
     ctx.linkStack.push(true);
     ctx.internalLinks++;
+    ctx.linkedTitles.add(targetTitle);
     return `<ac:link><ri:page ri:content-title="${escapeXml(targetTitle)}" /><ac:link-body>`;
   }
   ctx.linkStack.push(false);
@@ -166,11 +180,11 @@ function splitTitleAndBody(markdown: string, fallback: string): { title: string;
   return { title, body: lines.join('\n') };
 }
 
-type Rendered = { storage: string; images: { filename: string; abs: string }[]; internalLinks: number };
+type Rendered = { storage: string; images: { filename: string; abs: string }[]; internalLinks: number; linkedTitles: string[] };
 function toStorage(markdown: string, rel: string, titleIndex: Record<string, string>): Rendered {
-  ctx = { fileDir: dirname(rel) === '.' ? '' : dirname(rel), titleIndex, images: [], internalLinks: 0, linkStack: [] };
+  ctx = { fileDir: dirname(rel) === '.' ? '' : dirname(rel), titleIndex, images: [], internalLinks: 0, linkStack: [], linkedTitles: new Set() };
   const storage = md.render(markdown);
-  return { storage, images: ctx.images, internalLinks: ctx.internalLinks };
+  return { storage, images: ctx.images, internalLinks: ctx.internalLinks, linkedTitles: [...ctx.linkedTitles] };
 }
 
 // ---- 문서 수집 (base 상대 경로 반환) ----
@@ -304,28 +318,46 @@ async function uploadAttachment(pageId: string, filename: string, abs: string) {
   if (!res.ok) throw new Error(`attachment ${res.status} ${res.statusText}\n${await res.text()}`);
 }
 
-type UpsertResult = 'created' | 'updated' | 'skipped';
+/** 페이지의 로컬 이미지들을 업로드. 성공 개수 반환. */
+async function uploadImages(pageId: string, images: { filename: string; abs: string }[]): Promise<number> {
+  let ok = 0;
+  for (const img of images) {
+    if (!existsSync(img.abs)) { console.error(`    ⚠ 이미지 없음: ${relative(BASE_DIR, img.abs)}`); continue; }
+    try { await uploadAttachment(pageId, img.filename, img.abs); ok++; }
+    catch (e) { console.error(`    ✗ 이미지 업로드 실패 ${img.filename}\n${(e as Error).message}`); }
+  }
+  return ok;
+}
+
+type UpsertResult = 'created' | 'updated' | 'skipped' | 'recreated';
 async function upsertPage(
   mapping: Mapping, spaceId: string, key: string,
   title: string, storage: string, hash: string, parentId: string | undefined,
+  forceUpdate = false,
 ): Promise<UpsertResult> {
   const existing = mapping[key];
   if (existing?.pageId) {
-    if (existing.hash === hash && !FORCE) return 'skipped'; // 변경 없음 → 건드리지 않음
-    const cur = await api(`/api/v2/pages/${existing.pageId}`);
-    const nextVersion = (cur.version?.number ?? 1) + 1;
-    await api(`/api/v2/pages/${existing.pageId}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        id: existing.pageId,
-        status: 'current',
-        title,
-        body: { representation: 'storage', value: storage },
-        version: { number: nextVersion, message: `sync from git: ${key}` },
-      }),
-    });
-    mapping[key] = { pageId: existing.pageId, title, hash };
-    return 'updated';
+    const changed = existing.hash !== hash || FORCE || forceUpdate;
+    // 변경 없고 검증(--verify)도 안 하면 호출 없이 스킵
+    if (!changed && !VERIFY) return 'skipped';
+    const cur = await getPageOrNull(existing.pageId);
+    if (cur) {
+      if (!changed) return 'skipped'; // 페이지 존재 확인됨, 내용도 동일
+      const nextVersion = (cur.version?.number ?? 1) + 1;
+      await api(`/api/v2/pages/${existing.pageId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          id: existing.pageId,
+          status: 'current',
+          title,
+          body: { representation: 'storage', value: storage },
+          version: { number: nextVersion, message: `sync from git: ${key}` },
+        }),
+      });
+      mapping[key] = { pageId: existing.pageId, title, hash };
+      return 'updated';
+    }
+    // cur === null: Confluence 에서 삭제됨 → 아래에서 신규 생성으로 복구
   }
   const body: Record<string, unknown> = {
     spaceId, status: 'current', title,
@@ -334,7 +366,7 @@ async function upsertPage(
   if (parentId) body.parentId = parentId;
   const created = await api(`/api/v2/pages`, { method: 'POST', body: JSON.stringify(body) });
   mapping[key] = { pageId: created.id, title, hash };
-  return 'created';
+  return existing?.pageId ? 'recreated' : 'created';
 }
 
 async function main() {
@@ -383,13 +415,19 @@ async function main() {
   if (REBUILD) await deleteAll(mapping);
   const work: Mapping = REBUILD ? {} : mapping;
 
-  let created = 0, updated = 0, skipped = 0;
+  let created = 0, updated = 0, skipped = 0, recreated = 0, relinked = 0;
+  type R = { title: string; storage: string; hash: string; parentId: string | undefined; images: { filename: string; abs: string }[]; linkedTitles: string[] };
+  const rendered = new Map<string, R>();
+  const recreatedTitles = new Set<string>(); // 이번에 재생성된 문서의 제목
+  const touched = new Set<string>();          // 이번에 발행(생성/갱신/재생성)된 문서
+
   for (const rel of files) {
     const { title, body } = splitTitleAndBody(readFileSync(resolve(BASE_DIR, rel), 'utf8'), rel);
-    const { storage, images } = toStorage(body, rel, titleIndex);
+    const { storage, images, linkedTitles } = toStorage(body, rel, titleIndex);
     const hash = hashOf(title + '\0' + storage);
     const pk = parentKeyOf(rel, folderIndex);
     const parentId = pk ? work[pk]?.pageId : CONFLUENCE_PARENT_PAGE_ID;
+    rendered.set(rel, { title, storage, hash, parentId, images, linkedTitles });
     if (pk && !parentId) {
       console.error(`  ✗ 건너뜀  ${rel}  (부모 '${pk}' 페이지가 아직 없음)`);
       continue;
@@ -402,20 +440,39 @@ async function main() {
         skipped++;
         continue;
       }
-      let imgOk = 0;
-      for (const img of images) {
-        if (!existsSync(img.abs)) { console.error(`    ⚠ 이미지 없음: ${relative(BASE_DIR, img.abs)}`); continue; }
-        try { await uploadAttachment(work[rel].pageId, img.filename, img.abs); imgOk++; }
-        catch (e) { console.error(`    ✗ 이미지 업로드 실패 ${img.filename}\n${(e as Error).message}`); }
-      }
+      const imgOk = await uploadImages(work[rel].pageId, images);
       const imgNote = images.length ? `, 이미지 ${imgOk}/${images.length}` : '';
-      console.log(`  ${result === 'created' ? '＋ 생성' : '↻ 갱신'}  ${rel}  →  "${title}"  (부모: ${pk ?? 'ROOT'}${imgNote})`);
-      result === 'created' ? created++ : updated++;
+      const label = result === 'created' ? '＋ 생성' : result === 'recreated' ? '♻ 재생성(삭제 복구)' : '↻ 갱신';
+      console.log(`  ${label}  ${rel}  →  "${title}"  (부모: ${pk ?? 'ROOT'}${imgNote})`);
+      if (result === 'created') created++;
+      else if (result === 'recreated') { recreated++; recreatedTitles.add(title); }
+      else updated++;
+      touched.add(rel);
     } catch (e) {
       console.error(`  ✗ 실패  ${rel}\n${(e as Error).message}`);
     }
   }
-  console.log(`\n완료: 생성 ${created}, 갱신 ${updated}, 변경없음 ${skipped}, 대상 ${files.length}`);
+
+  // 링크 정합성: 재생성된 문서를 가리키던, 이번에 발행 안 된(스킵된) 문서를 강제 재발행해 링크를 새 페이지로 재연결
+  if (recreatedTitles.size) {
+    for (const rel of files) {
+      if (touched.has(rel)) continue;
+      const r = rendered.get(rel);
+      if (!r || !work[rel]?.pageId) continue;
+      if (!r.linkedTitles.some((t) => recreatedTitles.has(t))) continue;
+      try {
+        await upsertPage(work, spaceId, rel, r.title, r.storage, r.hash, r.parentId, true);
+        saveMapping(work);
+        await uploadImages(work[rel].pageId, r.images);
+        console.log(`  🔗 링크 재연결  ${rel}  →  "${r.title}"`);
+        relinked++;
+      } catch (e) {
+        console.error(`  ✗ 링크 재연결 실패  ${rel}\n${(e as Error).message}`);
+      }
+    }
+  }
+
+  console.log(`\n완료: 생성 ${created}, 갱신 ${updated}, 재생성 ${recreated}, 링크재연결 ${relinked}, 변경없음 ${skipped}, 대상 ${files.length}`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
