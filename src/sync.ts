@@ -4,10 +4,13 @@
  *   npm run sync                       base 전체 중 "변경된" 문서만 갱신(+신규)
  *   npm run sync -- <경로...>          지정한 파일/폴더만 동기화(부모 README 자동 포함)
  *   npm run sync -- --base <dir>       동기화 루트 지정(필수, 또는 env CONFLUENCE_SYNC_BASE)
+ *   npm run sync -- --mapping <path>   매핑 파일 위치 지정(기본 <base>/.confluence-sync.json)
  *   npm run sync -- --force            변경 감지 무시, 전체 강제 갱신
  *   npm run sync:dry                   호출 없이 대상·상태(신규/변경/동일)·링크·이미지 출력
  *   npm run sync:rebuild               매핑된 페이지 전부 삭제 후 재생성
  *   npm run list                       base에서 인식된 문서·제목·계층만 출력(인증 불필요)
+ *
+ * 매핑(파일 경로↔pageId↔hash)은 base 루트의 .confluence-sync.json 에 저장되어 그 문서셋과 함께 버전관리된다.
  *
  * 폴더 = 계층: 폴더의 README.md 가 대표 페이지가 되고 같은 폴더 문서는 그 자식이 된다.
  * 내부 .md 링크는 페이지 링크(ri:page)로, 로컬 이미지는 첨부로 변환된다.
@@ -22,7 +25,6 @@ import { createHash } from 'node:crypto';
 import MarkdownIt from 'markdown-it';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const MAPPING_PATH = resolve(__dirname, '../mapping.json');
 
 // ---- CLI 인자 ----
 const argv = process.argv.slice(2);
@@ -44,10 +46,13 @@ if (!baseInput) {
   process.exit(1);
 }
 const BASE_DIR = resolve(baseInput);
+// mapping 은 base 루트에 둔다(문서셋에 종속). --mapping 으로 위치 override 가능.
+const mappingOpt = optVal('--mapping');
+const MAPPING_PATH = mappingOpt ? resolve(mappingOpt) : resolve(BASE_DIR, '.confluence-sync.json');
 // 위치 인자(선택 경로): 플래그·옵션값 제외
 const positionals: string[] = [];
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === '--base') { i++; continue; }
+  if (argv[i] === '--base' || argv[i] === '--mapping') { i++; continue; }
   if (argv[i].startsWith('--')) continue;
   positionals.push(argv[i]);
 }
