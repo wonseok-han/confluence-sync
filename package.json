@@ -1,0 +1,21 @@
+{
+  "name": "confluence-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "docs/*.md 를 Confluence Cloud 페이지로 단방향 동기화하는 수동 실행 도구",
+  "scripts": {
+    "sync": "tsx src/sync.ts",
+    "sync:dry": "tsx src/sync.ts --dry-run"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
