@@ -7,7 +7,7 @@ git 이 원천(SoT)이고 Confluence 는 미러입니다. 양방향 동기화는
 
 1. 의존성 설치
    ```bash
-   cd tools/confluence-sync
+   cd confluence-sync
    npm install
    ```
 2. `.env` 생성 후 값 채우기
@@ -51,7 +51,7 @@ https://<your-domain>.atlassian.net/_edge/tenant_info
 >
 > ⚠️ **npm 사용 시 주의**:
 > - 스크립트 인자(`--base`, 폴더명 등)는 반드시 **`--` 뒤에** 둬야 합니다. `npm run list --base ./docs`(✗)는 npm이 `--base`를 가로채니, `npm run list -- --base ./docs`(✓)로 쓰세요.
-> - 상대경로는 **실행 cwd 기준**입니다(`npm run`의 cwd는 `tools/confluence-sync`). 혼선을 막으려면 **절대경로**를 쓰거나, **`.env`의 `CONFLUENCE_SYNC_BASE`에 절대경로**를 넣어 인자 없이 실행하세요.
+> - 상대경로는 **실행 cwd 기준**입니다(`npm run`의 cwd는 이 레포 루트). 혼선을 막으려면 **절대경로**를 쓰거나, **`.env`의 `CONFLUENCE_SYNC_BASE`에 절대경로**를 넣어 인자 없이 실행하세요.
 
 ```bash
 npm run list              # base에서 인식된 문서·제목·계층만 출력 (Confluence 호출·인증 없음)
