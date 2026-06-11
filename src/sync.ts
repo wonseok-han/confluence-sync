@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Markdown 디렉토리 → Confluence Cloud 단방향 동기화 (수동 실행)
  *
@@ -21,11 +22,8 @@
 import 'dotenv/config';
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, resolve, relative, dirname, basename } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import MarkdownIt from 'markdown-it';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---- CLI 인자 ----
 const argv = process.argv.slice(2);

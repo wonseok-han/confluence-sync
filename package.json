@@ -1,14 +1,25 @@
 {
-  "name": "confluence-sync",
+  "name": "@wonseok-han/confluence-sync",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "Markdown 디렉토리를 Confluence Cloud 페이지로 단방향 동기화하는 수동 실행 도구",
+  "bin": {
+    "confluence-sync": "dist/sync.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
     "sync": "tsx src/sync.ts",
     "sync:dry": "tsx src/sync.ts --dry-run",
     "sync:rebuild": "tsx src/sync.ts --rebuild",
     "list": "tsx src/sync.ts --list"
+  },
+  "publishConfig": {
+    "registry": "https://git.internal.example/api/v4/projects/0/packages/npm/"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

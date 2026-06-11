@@ -3,17 +3,34 @@
 지정한 디렉토리(`--base`)의 `*.md`(하위 폴더 포함)를 **Confluence Cloud** 페이지로 **단방향 동기화**하는 수동 실행 도구입니다.
 git 이 원천(SoT)이고 Confluence 는 미러입니다. 양방향 동기화는 하지 않습니다.
 
+## 설치
+
+### 글로벌 CLI (권장) — 어디서나 `confluence-sync` 실행
+
+1. Git 호스팅 Package Registry 인증. `read_package_registry` 스코프의 **Personal Access Token** 또는 **Deploy Token**을 발급한 뒤 `~/.npmrc`에 추가합니다. `@wonseok-han` 스코프는 이 프로젝트(ID 130) 레지스트리로 매핑합니다.
+   ```
+   @wonseok-han:registry=https://git.internal.example/api/v4/projects/0/packages/npm/
+   //git.internal.example/api/v4/projects/0/packages/npm/:_authToken=<TOKEN>
+   ```
+2. 설치
+   ```bash
+   npm i -g @wonseok-han/confluence-sync
+   ```
+
+### 로컬 개발 (소스에서 실행)
+
+```bash
+git clone https://git.internal.example/wonseok-han/confluence-sync.git
+cd confluence-sync
+npm install
+```
+
 ## 설정
 
-1. 의존성 설치
-   ```bash
-   cd confluence-sync
-   npm install
-   ```
-2. `.env` 생성 후 값 채우기
-   ```bash
-   cp .env.example .env
-   ```
+`.env` 생성 후 값 채우기. 글로벌 CLI는 **실행 위치(cwd)의 `.env`**(또는 셸 환경변수)를 읽으므로, 동기화할 문서 디렉토리(또는 그 상위)에서 실행하세요.
+```bash
+cp .env.example .env   # 로컬 개발 시. 글로벌 사용 시에는 작업 디렉토리에 직접 생성
+```
    | 변수 | 설명 |
    | --- | --- |
    | `CONFLUENCE_BASE_URL` | `https://api.atlassian.com/ex/confluence/<CLOUD_ID>/wiki` (scoped 토큰용) |
@@ -47,25 +64,34 @@ https://<your-domain>.atlassian.net/_edge/tenant_info
 
 ## 실행
 
-> 동기화 루트는 **`CONFLUENCE_SYNC_BASE`(env) 또는 `--base`로 반드시 지정**해야 합니다(기본값 없음). 미지정 시 에러로 중단됩니다.
->
-> ⚠️ **npm 사용 시 주의**:
-> - 스크립트 인자(`--base`, 폴더명 등)는 반드시 **`--` 뒤에** 둬야 합니다. `npm run list --base ./docs`(✗)는 npm이 `--base`를 가로채니, `npm run list -- --base ./docs`(✓)로 쓰세요.
-> - 상대경로는 **실행 cwd 기준**입니다(`npm run`의 cwd는 이 레포 루트). 혼선을 막으려면 **절대경로**를 쓰거나, **`.env`의 `CONFLUENCE_SYNC_BASE`에 절대경로**를 넣어 인자 없이 실행하세요.
+> 동기화 루트는 **`CONFLUENCE_SYNC_BASE`(env) 또는 `--base`로 반드시 지정**해야 합니다(기본값 없음). 미지정 시 에러로 중단됩니다. 상대경로는 **실행 cwd 기준**이므로 혼선을 막으려면 절대경로를 쓰거나 `.env`의 `CONFLUENCE_SYNC_BASE`에 절대경로를 넣으세요.
+
+### 글로벌 CLI
 
 ```bash
-npm run list              # base에서 인식된 문서·제목·계층만 출력 (Confluence 호출·인증 없음)
-npm run sync:dry          # 호출 없이 대상·상태(신규/변경/동일)·링크·이미지 확인 (먼저 권장)
-npm run sync              # 변경된 문서만 갱신 (+신규 생성)
-npm run sync:rebuild      # 매핑된 페이지 전부 삭제 후 재생성
+confluence-sync --list                 # base에서 인식된 문서·제목·계층만 출력 (Confluence 호출·인증 없음)
+confluence-sync --dry-run              # 호출 없이 대상·상태(신규/변경/동일)·링크·이미지 확인 (먼저 권장)
+confluence-sync                        # 변경된 문서만 갱신 (+신규 생성)
+confluence-sync --rebuild              # 매핑된 페이지 전부 삭제 후 재생성
 
-# 인자(npm 에서는 `--` 뒤에 전달)
-npm run sync -- --base /abs/path/docs # 동기화 루트 지정 (env 미설정 시 필수)
-npm run sync -- 20-design             # 지정 폴더만 (대표 README 자동 포함)
-npm run sync -- 90-glossary.md        # 단일 문서만
-npm run sync -- --force               # 변경 감지 무시, 전체 강제 갱신
-npm run sync -- --verify              # 변경 없는 문서도 페이지 존재 확인(삭제됐으면 재생성)
+# 인자
+confluence-sync --base /abs/path/docs  # 동기화 루트 지정 (env 미설정 시 필수)
+confluence-sync 20-design              # 지정 폴더만 (대표 README 자동 포함)
+confluence-sync 90-glossary.md         # 단일 문서만
+confluence-sync --force                # 변경 감지 무시, 전체 강제 갱신
+confluence-sync --verify               # 변경 없는 문서도 페이지 존재 확인(삭제됐으면 재생성)
 ```
+
+### 로컬 개발 (npm run)
+
+소스에서 직접 실행할 때는 `npm run` 스크립트를 씁니다. 인자는 반드시 **`--` 뒤에** 둬야 합니다(npm이 가로채지 않도록). 예) `npm run list -- --base ./docs`.
+
+| 글로벌 | 로컬 dev |
+| --- | --- |
+| `confluence-sync` | `npm run sync` |
+| `confluence-sync --dry-run` | `npm run sync:dry` |
+| `confluence-sync --rebuild` | `npm run sync:rebuild` |
+| `confluence-sync --list` | `npm run list` |
 
 - **변경 감지**: 각 문서의 `제목 + 변환 결과`를 해시로 매핑 파일에 저장하고, 같으면 **건드리지 않고 스킵**(`= 변경없음`)합니다. 실제로 바뀐 문서만 새 버전이 됩니다. `--force`로 무시할 수 있습니다.
 - **삭제 복구**: Confluence에서 페이지가 삭제됐는데 그 문서를 갱신하려 하면, 404를 감지해 **자동으로 재생성**(`♻ 재생성`)합니다. 단 내용이 그대로(스킵)면 호출을 안 해서 못 잡으므로, 이때는 `--verify`로 **존재까지 확인**해 재생성하세요(매 문서 조회가 생겨 느려짐).
@@ -101,6 +127,33 @@ npm run sync -- --verify              # 변경 없는 문서도 페이지 존재
 
 - `delete:page:confluence` 스코프가 토큰에 있어야 합니다.
 - 매핑 파일(`.confluence-sync.json`)에 기록된 페이지만 삭제하므로, 수동으로 만든 페이지는 건드리지 않습니다.
+
+## 릴리스 (배포)
+
+릴리즈 노트(changelog) 작성이 배포의 시작점입니다. **changelog를 `main`에 올리면 → Git 호스팅 Release+태그가 생기고 → 그 태그가 npm publish를 트리거**합니다.
+
+```bash
+# 1) package.json 버전 bump (changelog 파일명과 반드시 일치)
+npm version 0.2.0 --no-git-tag-version
+
+# 2) 릴리즈 노트 작성 (changelogs/TEMPLATE.md 참고)
+cp changelogs/TEMPLATE.md changelogs/v0.2.0.md   # 편집해서 Added/Fixed/Changed 채우기
+
+# 3) main 에 커밋·푸시
+git add package.json changelogs/v0.2.0.md
+git commit -m "chore: release v0.2.0"
+git push origin main
+```
+
+이후 CI가 자동으로:
+1. `create_release` 잡(`ci/.git-host-ci.release.yml`)이 `changelogs/` 변경을 감지 → 최신 `v*.md`로 **Git 호스팅 Release + `v0.2.0` 태그** 생성
+2. 생성된 태그가 `publish` 잡을 트리거 → **Git 호스팅 Package Registry에 npm publish**
+
+> **사전 설정 (1회)**: `create_release`는 Git 호스팅 Release API를 호출하므로, `api` 스코프의 Personal Access Token을 프로젝트 **Settings → CI/CD → Variables**에 `GITLAB_TOKEN`(Masked)으로 등록해야 합니다. publish는 `CI_JOB_TOKEN`을 자동으로 사용합니다.
+
+- 릴리즈 노트는 `changelogs/vX.Y.Z.md`에 수동 작성하며, 파일명 버전 = `package.json` 버전이어야 publish 버전이 맞습니다.
+- 같은 버전은 재배포 불가하므로 항상 버전을 올립니다(`create_release`는 태그가 이미 있으면 skip).
+- 로컬에서 수동 배포하려면 `~/.npmrc`에 `write_package_registry` 토큰을 설정하고 `npm publish` 하면 됩니다(`prepublishOnly`가 자동 빌드).
 
 ## 현재 한계 (개선 여지)
 
