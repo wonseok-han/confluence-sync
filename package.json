@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "docs/*.md 를 Confluence Cloud 페이지로 단방향 동기화하는 수동 실행 도구",
+  "description": "Markdown 디렉토리를 Confluence Cloud 페이지로 단방향 동기화하는 수동 실행 도구",
   "scripts": {
     "sync": "tsx src/sync.ts",
     "sync:dry": "tsx src/sync.ts --dry-run",
-    "sync:rebuild": "tsx src/sync.ts --rebuild"
+    "sync:rebuild": "tsx src/sync.ts --rebuild",
+    "list": "tsx src/sync.ts --list"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

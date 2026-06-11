@@ -1,58 +1,72 @@
 {
-  "docs/README.md": {
+  "README.md": {
     "pageId": "2024341644",
-    "title": "Web3 × AI PoC 기획 문서"
+    "title": "Web3 × AI PoC 기획 문서",
+    "hash": "82437688729490dbfa3f084a9a3480eeace64f0196ca253a502d7ba09f3f40e8"
   },
-  "docs/01-item-04-ai-model-governance-audit.md": {
+  "01-item-04-ai-model-governance-audit.md": {
     "pageId": "2024472692",
-    "title": "공공·기업용 AI 모델 거버넌스 감사 추적 플랫폼 — 기획서"
+    "title": "공공·기업용 AI 모델 거버넌스 감사 추적 플랫폼 — 기획서",
+    "hash": "26a9f8b14e1d311179617ef6fc14a00b80b756b08c4ae8c4d13e6ee4048deb2e"
   },
-  "docs/02-item-06-ai-agent-permission-wallet.md": {
+  "02-item-06-ai-agent-permission-wallet.md": {
     "pageId": "2025521225",
-    "title": "기업형 AI 에이전트 권한지갑·위임 실행 플랫폼 — 기획서"
+    "title": "기업형 AI 에이전트 권한지갑·위임 실행 플랫폼 — 기획서",
+    "hash": "29feb20bb04b21de57f2907ff0e9398c896b9b54d50555f33876b37b453b3437"
   },
-  "docs/03-item-08-zkp-minimal-disclosure-auth.md": {
+  "03-item-08-zkp-minimal-disclosure-auth.md": {
     "pageId": "2024636605",
-    "title": "ZKP 기반 개인정보 최소제공 인증 서비스 — 기획서"
+    "title": "ZKP 기반 개인정보 최소제공 인증 서비스 — 기획서",
+    "hash": "e66e0e101a6b729c3f961c806670a00700b9068814fc81bc86de3ed10f97ace8"
   },
-  "docs/10-pre-design/README.md": {
+  "10-pre-design/README.md": {
     "pageId": "2024603821",
-    "title": "PoC 개발 설계 전 정리"
+    "title": "PoC 개발 설계 전 정리",
+    "hash": "466ca6f9b33ef7c64332af39e570065b65cb7a08df5c23d8e056836467b6db12"
   },
-  "docs/10-pre-design/01-item-04-pre-design.md": {
+  "10-pre-design/01-item-04-pre-design.md": {
     "pageId": "2024931549",
-    "title": "ITEM-04 개발 설계 전 정리 — AI 모델 거버넌스 감사 추적"
+    "title": "ITEM-04 개발 설계 전 정리 — AI 모델 거버넌스 감사 추적",
+    "hash": "3310585d056708ef565e5970162b42f6e757e51f43122a42e492b748b96da04e"
   },
-  "docs/10-pre-design/02-item-06-pre-design.md": {
+  "10-pre-design/02-item-06-pre-design.md": {
     "pageId": "2024538265",
-    "title": "ITEM-06 개발 설계 전 정리 — AI 에이전트 권한지갑·위임 실행"
+    "title": "ITEM-06 개발 설계 전 정리 — AI 에이전트 권한지갑·위임 실행",
+    "hash": "32ca090938663d02a6984a7a2c8909486aa34f91bc85cda469bd9cdc7b5d4e0c"
   },
-  "docs/10-pre-design/03-item-08-pre-design.md": {
+  "10-pre-design/03-item-08-pre-design.md": {
     "pageId": "2024538284",
-    "title": "ITEM-08 개발 설계 전 정리 — ZKP 기반 개인정보 최소제공 인증"
+    "title": "ITEM-08 개발 설계 전 정리 — ZKP 기반 개인정보 최소제공 인증",
+    "hash": "ee2da8027a9ccdd2f6ee99ed994d9a3244a4b03602fe94c5add215bdc0f88989"
   },
-  "docs/20-design/README.md": {
+  "20-design/README.md": {
     "pageId": "2025062528",
-    "title": "PoC 개발 설계서"
+    "title": "PoC 개발 설계서",
+    "hash": "b66c69bd159e9a499fd2b35e885e218b908d739978d186e9f06f9a201762e579"
   },
-  "docs/20-design/01-item-04-design.md": {
+  "20-design/01-item-04-design.md": {
     "pageId": "2024210584",
-    "title": "ITEM-04 개발 설계서 — AI 모델 거버넌스 감사 추적"
+    "title": "ITEM-04 개발 설계서 — AI 모델 거버넌스 감사 추적",
+    "hash": "135945eac2d68b6eeaee3b50cb894e3162b4bdf4a10ce3d40e0c90381c022343"
   },
-  "docs/20-design/02-item-06-design.md": {
+  "20-design/02-item-06-design.md": {
     "pageId": "2024603852",
-    "title": "ITEM-06 개발 설계서 — AI 에이전트 권한지갑·위임 실행"
+    "title": "ITEM-06 개발 설계서 — AI 에이전트 권한지갑·위임 실행",
+    "hash": "82a022020a744801f7b13925d025a600722593375013438ce367cbfbe19df98d"
   },
-  "docs/20-design/03-item-08-design.md": {
+  "20-design/03-item-08-design.md": {
     "pageId": "2024144969",
-    "title": "ITEM-08 개발 설계서 — ZKP 기반 개인정보 최소제공 인증"
+    "title": "ITEM-08 개발 설계서 — ZKP 기반 개인정보 최소제공 인증",
+    "hash": "c4081521093402ef1e66ed5a9af1645c7a6d1296d3c7c897e0a6c3c446981bd7"
   },
-  "docs/90-glossary.md": {
+  "90-glossary.md": {
     "pageId": "2024243388",
-    "title": "용어사전 (Glossary)"
+    "title": "용어사전 (Glossary)",
+    "hash": "51fd6b30f6b77237d89ad95a3d09bf13b39dee8233c6021897e38be1ff86087c"
   },
-  "docs/91-WORKLOG.md": {
+  "91-WORKLOG.md": {
     "pageId": "2024341691",
-    "title": "작업 로그 및 에이전트 인계 메모"
+    "title": "작업 로그 및 에이전트 인계 메모",
+    "hash": "5c6a2d868757ffff1dff3cfbb4adb69f08a4848d0ae8b1c9234019ad3592f1c1"
   }
 }
