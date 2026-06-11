@@ -1,10 +1,12 @@
 /**
  * docs/*.md → Confluence Cloud 단방향 동기화 (수동 실행)
  *
- *   npm run sync         실제 생성/업데이트
- *   npm run sync:dry     호출 없이 대상·제목만 출력(--dry-run)
+ *   npm run sync           실제 생성/업데이트 (계층 구조 유지)
+ *   npm run sync:dry       호출 없이 대상·제목·부모만 출력(--dry-run)
+ *   npm run sync -- --rebuild   기존 매핑 페이지 전부 삭제 후 처음부터 재생성
  *
- * 매핑(파일 경로 ↔ pageId)은 mapping.json 에 저장되어 재실행 시 같은 페이지를 갱신한다.
+ * 폴더 = 계층: 하위 폴더의 README.md 가 그 폴더의 대표 페이지가 되고,
+ * 같은 폴더의 다른 문서는 그 README 의 자식으로 생성된다.
  * git 이 원천(SoT)이며 Confluence 는 미러다. 양방향 동기화는 하지 않는다.
  */
 import 'dotenv/config';
@@ -18,6 +20,7 @@ const REPO_ROOT = resolve(__dirname, '../../..');
 const DOCS_DIR = resolve(REPO_ROOT, 'docs');
 const MAPPING_PATH = resolve(__dirname, '../mapping.json');
 const DRY_RUN = process.argv.includes('--dry-run');
+const REBUILD = process.argv.includes('--rebuild');
 
 // ---- 환경변수 ----
 const {
@@ -98,6 +101,31 @@ function collectMarkdown(dir: string): string[] {
   return out;
 }
 
+/**
+ * 폴더=계층 매핑의 부모 결정.
+ * - docs 직계 파일(docs/X.md) → null(루트: CONFLUENCE_PARENT_PAGE_ID)
+ * - 하위 폴더의 README.md(폴더 대표) → null(루트 바로 아래)
+ * - 하위 폴더의 일반 파일 → 같은 폴더의 README.md (그 폴더 대표 페이지의 자식)
+ * 반환은 mapping 의 key(레포 상대경로)이거나 null.
+ */
+function parentKeyOf(relPath: string): string | null {
+  const parts = relPath.split('/'); // 예: ['docs','design','item-04-design.md']
+  if (parts.length <= 2) return null; // docs/X.md
+  const base = parts[parts.length - 1];
+  if (base === 'README.md') return null; // 폴더 대표는 루트 아래
+  return `${parts.slice(0, -1).join('/')}/README.md`;
+}
+
+/** 부모가 자식보다 먼저 생성되도록 정렬(루트직속 먼저, 그다음 경로순) */
+function sortParentsFirst(relPaths: string[]): string[] {
+  return [...relPaths].sort((a, b) => {
+    const ga = parentKeyOf(a) ? 1 : 0;
+    const gb = parentKeyOf(b) ? 1 : 0;
+    if (ga !== gb) return ga - gb;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+}
+
 // ---- 매핑 ----
 type Mapping = Record<string, { pageId: string; title?: string }>;
 function loadMapping(): Mapping {
@@ -114,12 +142,28 @@ async function getSpaceId(key: string): Promise<string> {
   return space.id;
 }
 
+/** --rebuild: 매핑에 기록된 모든 페이지를 삭제(휴지통)하고 매핑을 비운다. (delete:page:confluence 스코프 필요) */
+async function deleteAll(mapping: Mapping) {
+  const entries = Object.entries(mapping);
+  console.log(`--rebuild: 기존 페이지 ${entries.length}건 삭제`);
+  for (const [key, { pageId }] of entries) {
+    try {
+      await api(`/api/v2/pages/${pageId}`, { method: 'DELETE' });
+      console.log(`  🗑  삭제 ${key} (#${pageId})`);
+    } catch (e) {
+      console.error(`  ✗ 삭제 실패 ${key}\n${(e as Error).message}`);
+    }
+  }
+  saveMapping({});
+}
+
 async function upsertPage(
   spaceId: string,
   mapping: Mapping,
   key: string,
   title: string,
   storage: string,
+  parentId: string | undefined,
 ): Promise<'created' | 'updated'> {
   const existing = mapping[key];
   if (existing?.pageId) {
@@ -144,7 +188,7 @@ async function upsertPage(
     title,
     body: { representation: 'storage', value: storage },
   };
-  if (CONFLUENCE_PARENT_PAGE_ID) body.parentId = CONFLUENCE_PARENT_PAGE_ID;
+  if (parentId) body.parentId = parentId;
   const created = await api(`/api/v2/pages`, { method: 'POST', body: JSON.stringify(body) });
   mapping[key] = { pageId: created.id, title };
   return 'created';
@@ -152,14 +196,14 @@ async function upsertPage(
 
 async function main() {
   if (!DRY_RUN) requireEnv();
-  const files = collectMarkdown(DOCS_DIR).sort();
+  const files = sortParentsFirst(collectMarkdown(DOCS_DIR).map((f) => relative(REPO_ROOT, f)));
   console.log(`문서 ${files.length}건 (${relative(REPO_ROOT, DOCS_DIR)}/)`);
 
   if (DRY_RUN) {
-    for (const f of files) {
-      const rel = relative(REPO_ROOT, f);
-      const { title } = splitTitleAndBody(readFileSync(f, 'utf8'), rel);
-      console.log(`  [dry] ${rel}  →  "${title}"`);
+    for (const rel of files) {
+      const { title } = splitTitleAndBody(readFileSync(resolve(REPO_ROOT, rel), 'utf8'), rel);
+      const pk = parentKeyOf(rel);
+      console.log(`  [dry] ${rel}  →  "${title}"  (부모: ${pk ?? 'ROOT'})`);
     }
     console.log('\n--dry-run: 실제 호출 없음.');
     return;
@@ -167,17 +211,26 @@ async function main() {
 
   const spaceId = await getSpaceId(CONFLUENCE_SPACE_KEY!);
   const mapping = loadMapping();
-  let created = 0, updated = 0;
 
-  for (const f of files) {
-    const rel = relative(REPO_ROOT, f);
-    const raw = readFileSync(f, 'utf8');
+  if (REBUILD) await deleteAll(mapping);
+  // deleteAll 이 mapping 을 비웠으므로 메모리상 객체도 초기화
+  const work: Mapping = REBUILD ? {} : mapping;
+
+  let created = 0, updated = 0;
+  for (const rel of files) {
+    const raw = readFileSync(resolve(REPO_ROOT, rel), 'utf8');
     const { title, body } = splitTitleAndBody(raw, rel);
     const storage = toStorage(body);
+    const pk = parentKeyOf(rel);
+    const parentId = pk ? work[pk]?.pageId : CONFLUENCE_PARENT_PAGE_ID;
+    if (pk && !parentId) {
+      console.error(`  ✗ 건너뜀  ${rel}  (부모 '${pk}' 페이지가 아직 없음)`);
+      continue;
+    }
     try {
-      const result = await upsertPage(spaceId, mapping, rel, title, storage);
-      saveMapping(mapping); // 건별 저장 — 중간 실패해도 진행분 보존
-      console.log(`  ${result === 'created' ? '＋ 생성' : '↻ 갱신'}  ${rel}  →  "${title}"`);
+      const result = await upsertPage(spaceId, work, rel, title, storage, parentId);
+      saveMapping(work); // 건별 저장 — 중간 실패해도 진행분 보존
+      console.log(`  ${result === 'created' ? '＋ 생성' : '↻ 갱신'}  ${rel}  →  "${title}"  (부모: ${pk ?? 'ROOT'})`);
       result === 'created' ? created++ : updated++;
     } catch (e) {
       console.error(`  ✗ 실패  ${rel}\n${(e as Error).message}`);
