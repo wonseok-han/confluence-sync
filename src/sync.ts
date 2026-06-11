@@ -2,16 +2,18 @@
  * docs/*.md → Confluence Cloud 단방향 동기화 (수동 실행)
  *
  *   npm run sync           실제 생성/업데이트 (계층 구조 유지)
- *   npm run sync:dry       호출 없이 대상·제목·부모만 출력(--dry-run)
+ *   npm run sync:dry       호출 없이 대상·제목·부모·링크·이미지 수 출력(--dry-run)
  *   npm run sync -- --rebuild   기존 매핑 페이지 전부 삭제 후 처음부터 재생성
  *
  * 폴더 = 계층: 하위 폴더의 README.md 가 그 폴더의 대표 페이지가 되고,
  * 같은 폴더의 다른 문서는 그 README 의 자식으로 생성된다.
+ * - 내부 .md 링크는 Confluence 페이지 링크(ri:page content-title)로 자동 변환된다.
+ * - 로컬 이미지는 페이지 첨부(attachment)로 업로드되고 ri:attachment 로 참조된다.
  * git 이 원천(SoT)이며 Confluence 는 미러다. 양방향 동기화는 하지 않는다.
  */
 import 'dotenv/config';
-import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
-import { join, resolve, relative, dirname } from 'node:path';
+import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
+import { join, resolve, relative, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import MarkdownIt from 'markdown-it';
 
@@ -63,17 +65,65 @@ async function api(path: string, init?: RequestInit): Promise<any> {
   return res.status === 204 ? null : res.json();
 }
 
+const escapeXml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 // ---- Markdown → Confluence storage format ----
 const md = new MarkdownIt({ html: true, linkify: true, breaks: false });
 
-// 코드펜스는 Confluence code 매크로로 변환
+/** 렌더 컨텍스트: 파일별로 toStorage()가 설정한다. */
+type RenderCtx = {
+  fileDir: string;                       // REPO_ROOT 기준 현재 파일의 디렉토리
+  titleIndex: Record<string, string>;    // 내부 .md 경로 → 페이지 제목(H1)
+  images: { filename: string; abs: string }[]; // 업로드할 로컬 이미지
+  internalLinks: number;                 // 내부 페이지 링크로 변환된 수
+  linkStack: boolean[];                  // link_open/close 매칭(내부=true)
+};
+let ctx: RenderCtx = { fileDir: '', titleIndex: {}, images: [], internalLinks: 0, linkStack: [] };
+
+/** 링크 href 가 docs 내부 .md 면 그 페이지 제목을 반환, 아니면 null */
+function resolveInternalLink(href: string): string | null {
+  if (!href || /^(https?:|mailto:|#)/i.test(href)) return null;
+  const pathPart = href.split('#')[0];
+  if (!pathPart || !/\.md$/i.test(pathPart)) return null;
+  const rel = relative(REPO_ROOT, resolve(REPO_ROOT, ctx.fileDir, pathPart));
+  return ctx.titleIndex[rel] ?? null;
+}
+
+// 코드펜스 → code 매크로
 md.renderer.rules.fence = (tokens, idx) => {
   const t = tokens[idx];
   const lang = (t.info || '').trim().split(/\s+/)[0];
-  // CDATA 안에 ']]>' 가 있으면 분할(표준 회피 트릭)
-  const safe = t.content.split(']]>').join(']]]]><![CDATA[>');
+  const safe = t.content.split(']]>').join(']]]]><![CDATA[>'); // CDATA 안 ']]>' 회피
   const langParam = lang ? `<ac:parameter ac:name="language">${lang}</ac:parameter>` : '';
   return `<ac:structured-macro ac:name="code">${langParam}<ac:plain-text-body><![CDATA[${safe}]]></ac:plain-text-body></ac:structured-macro>\n`;
+};
+
+// 내부 .md 링크 → Confluence 페이지 링크 (ri:page content-title)
+md.renderer.rules.link_open = (tokens, idx, _opts, _env, self) => {
+  const href = tokens[idx].attrGet('href') || '';
+  const targetTitle = resolveInternalLink(href);
+  if (targetTitle) {
+    ctx.linkStack.push(true);
+    ctx.internalLinks++;
+    return `<ac:link><ri:page ri:content-title="${escapeXml(targetTitle)}" /><ac:link-body>`;
+  }
+  ctx.linkStack.push(false);
+  return self.renderToken(tokens, idx, _opts); // 외부/일반 링크는 기본 <a>
+};
+md.renderer.rules.link_close = (tokens, idx, _opts, _env, self) =>
+  ctx.linkStack.pop() ? '</ac:link-body></ac:link>' : self.renderToken(tokens, idx, _opts);
+
+// 이미지 → 로컬은 첨부(ri:attachment), 외부 URL 은 ri:url
+md.renderer.rules.image = (tokens, idx) => {
+  const src = tokens[idx].attrGet('src') || '';
+  if (/^https?:\/\//i.test(src)) {
+    return `<ac:image><ri:url ri:value="${escapeXml(src)}" /></ac:image>`;
+  }
+  const abs = resolve(REPO_ROOT, ctx.fileDir, src.split('#')[0]);
+  const filename = basename(abs);
+  ctx.images.push({ filename, abs });
+  return `<ac:image><ri:attachment ri:filename="${escapeXml(filename)}" /></ac:image>`;
 };
 
 /** 첫 H1(`# 제목`)을 제목으로 추출하고 본문에서 제거 */
@@ -86,8 +136,11 @@ function splitTitleAndBody(markdown: string, fallback: string): { title: string;
   return { title, body: lines.join('\n') };
 }
 
-function toStorage(markdown: string): string {
-  return md.render(markdown);
+type Rendered = { storage: string; images: { filename: string; abs: string }[]; internalLinks: number };
+function toStorage(markdown: string, relPath: string, titleIndex: Record<string, string>): Rendered {
+  ctx = { fileDir: dirname(relPath), titleIndex, images: [], internalLinks: 0, linkStack: [] };
+  const storage = md.render(markdown);
+  return { storage, images: ctx.images, internalLinks: ctx.internalLinks };
 }
 
 // ---- 문서 수집 ----
@@ -101,6 +154,16 @@ function collectMarkdown(dir: string): string[] {
   return out;
 }
 
+/** 모든 문서의 경로 → 제목(H1) 맵 (내부 링크 변환용) */
+function buildTitleIndex(relPaths: string[]): Record<string, string> {
+  const idx: Record<string, string> = {};
+  for (const rel of relPaths) {
+    const { title } = splitTitleAndBody(readFileSync(resolve(REPO_ROOT, rel), 'utf8'), rel);
+    idx[rel] = title;
+  }
+  return idx;
+}
+
 /** 파일명이 (넘버링 prefix 포함) README 인지 — 폴더 대표 페이지 판정 */
 const isReadme = (base: string) => /README\.md$/.test(base);
 
@@ -109,39 +172,30 @@ function buildFolderIndex(relPaths: string[]): Record<string, string> {
   const idx: Record<string, string> = {};
   for (const p of relPaths) {
     const parts = p.split('/');
-    const base = parts[parts.length - 1];
-    if (isReadme(base)) idx[parts.slice(0, -1).join('/')] = p;
+    if (isReadme(parts[parts.length - 1])) idx[parts.slice(0, -1).join('/')] = p;
   }
   return idx;
 }
 
 /**
  * 폴더=계층 매핑의 부모 결정.
- * - docs 직계 파일(docs/X.md) → null(루트: CONFLUENCE_PARENT_PAGE_ID)
- * - 하위 폴더의 대표 README(00-README.md 등) → null(루트 바로 아래)
- * - 하위 폴더의 일반 파일 → 같은 폴더의 대표 README (그 폴더 대표 페이지의 자식)
- * 반환은 mapping 의 key(레포 상대경로)이거나 null.
+ * - docs 직계 파일 → null(루트: CONFLUENCE_PARENT_PAGE_ID)
+ * - 하위 폴더의 대표 README → null(루트 바로 아래)
+ * - 하위 폴더의 일반 파일 → 같은 폴더의 대표 README
  */
 function parentKeyOf(relPath: string, folderIndex: Record<string, string>): string | null {
-  const parts = relPath.split('/'); // 예: ['docs','20-design','01-item-04-design.md']
-  if (parts.length <= 2) return null; // docs/X.md
-  const base = parts[parts.length - 1];
-  if (isReadme(base)) return null; // 폴더 대표는 루트 아래
-  return folderIndex[parts.slice(0, -1).join('/')] ?? null; // 같은 폴더 대표 README
+  const parts = relPath.split('/');
+  if (parts.length <= 2) return null;
+  if (isReadme(parts[parts.length - 1])) return null;
+  return folderIndex[parts.slice(0, -1).join('/')] ?? null;
 }
 
-/**
- * 정렬 키: 같은 폴더 안에서 README(폴더 대표, prefix 무관)를 맨 앞에 두고,
- * 나머지는 파일명순으로 정렬한다. 결과는 트리 순서이며, 폴더 README가 그 폴더의
- * 자식보다 항상 먼저 오므로 부모 페이지 생성 순서도 자동 보장된다.
- */
+/** README(폴더 대표)를 폴더 맨 앞에, 나머지는 파일명순 → 부모가 자식보다 먼저 */
 function sortKey(relPath: string): string {
   const parts = relPath.split('/');
   const base = parts[parts.length - 1];
-  const dir = parts.slice(0, -1).join('/');
-  return dir + '/' + (isReadme(base) ? '' : base);
+  return parts.slice(0, -1).join('/') + '/' + (isReadme(base) ? '' : base);
 }
-
 function sortForSync(relPaths: string[]): string[] {
   return [...relPaths].sort((a, b) => {
     const ka = sortKey(a), kb = sortKey(b);
@@ -165,7 +219,7 @@ async function getSpaceId(key: string): Promise<string> {
   return space.id;
 }
 
-/** --rebuild: 매핑에 기록된 모든 페이지를 삭제(휴지통)하고 매핑을 비운다. (delete:page:confluence 스코프 필요) */
+/** --rebuild: 매핑에 기록된 모든 페이지를 삭제(휴지통)하고 매핑을 비운다. (delete:page:confluence 필요) */
 async function deleteAll(mapping: Mapping) {
   const entries = Object.entries(mapping);
   console.log(`--rebuild: 기존 페이지 ${entries.length}건 삭제`);
@@ -178,6 +232,26 @@ async function deleteAll(mapping: Mapping) {
     }
   }
   saveMapping({});
+}
+
+/**
+ * 로컬 이미지를 페이지 첨부로 업로드(v1, multipart).
+ * POST /child/attachment 는 첨부를 추가하며, 같은 파일명이 이미 있으면 새 버전으로 갱신한다(멱등).
+ * (write:attachment:confluence 스코프 필요)
+ */
+async function uploadAttachment(pageId: string, filename: string, abs: string) {
+  const buf = readFileSync(abs);
+  const form = new FormData();
+  form.append('file', new Blob([buf]), filename);
+  form.append('minorEdit', 'true');
+  const res = await fetch(`${CONFLUENCE_BASE_URL}/rest/api/content/${pageId}/child/attachment`, {
+    method: 'POST',
+    headers: { Authorization: authHeader(), 'X-Atlassian-Token': 'nocheck' },
+    body: form as any,
+  });
+  if (!res.ok) {
+    throw new Error(`attachment ${res.status} ${res.statusText}\n${await res.text()}`);
+  }
 }
 
 async function upsertPage(
@@ -221,14 +295,16 @@ async function main() {
   if (!DRY_RUN) requireEnv();
   const relPaths = collectMarkdown(DOCS_DIR).map((f) => relative(REPO_ROOT, f));
   const folderIndex = buildFolderIndex(relPaths);
+  const titleIndex = buildTitleIndex(relPaths);
   const files = sortForSync(relPaths);
   console.log(`문서 ${files.length}건 (${relative(REPO_ROOT, DOCS_DIR)}/)`);
 
   if (DRY_RUN) {
     for (const rel of files) {
-      const { title } = splitTitleAndBody(readFileSync(resolve(REPO_ROOT, rel), 'utf8'), rel);
+      const { title, body } = splitTitleAndBody(readFileSync(resolve(REPO_ROOT, rel), 'utf8'), rel);
+      const { images, internalLinks } = toStorage(body, rel, titleIndex);
       const pk = parentKeyOf(rel, folderIndex);
-      console.log(`  [dry] ${rel}  →  "${title}"  (부모: ${pk ?? 'ROOT'})`);
+      console.log(`  [dry] ${rel}  →  "${title}"  (부모: ${pk ?? 'ROOT'}, 내부링크: ${internalLinks}, 이미지: ${images.length})`);
     }
     console.log('\n--dry-run: 실제 호출 없음.');
     return;
@@ -238,14 +314,13 @@ async function main() {
   const mapping = loadMapping();
 
   if (REBUILD) await deleteAll(mapping);
-  // deleteAll 이 mapping 을 비웠으므로 메모리상 객체도 초기화
   const work: Mapping = REBUILD ? {} : mapping;
 
   let created = 0, updated = 0;
   for (const rel of files) {
     const raw = readFileSync(resolve(REPO_ROOT, rel), 'utf8');
     const { title, body } = splitTitleAndBody(raw, rel);
-    const storage = toStorage(body);
+    const { storage, images } = toStorage(body, rel, titleIndex);
     const pk = parentKeyOf(rel, folderIndex);
     const parentId = pk ? work[pk]?.pageId : CONFLUENCE_PARENT_PAGE_ID;
     if (pk && !parentId) {
@@ -255,7 +330,24 @@ async function main() {
     try {
       const result = await upsertPage(spaceId, work, rel, title, storage, parentId);
       saveMapping(work); // 건별 저장 — 중간 실패해도 진행분 보존
-      console.log(`  ${result === 'created' ? '＋ 생성' : '↻ 갱신'}  ${rel}  →  "${title}"  (부모: ${pk ?? 'ROOT'})`);
+      const pageId = work[rel].pageId;
+
+      // 이미지 첨부 업로드
+      let imgOk = 0;
+      for (const img of images) {
+        if (!existsSync(img.abs)) {
+          console.error(`    ⚠ 이미지 없음: ${relative(REPO_ROOT, img.abs)}`);
+          continue;
+        }
+        try {
+          await uploadAttachment(pageId, img.filename, img.abs);
+          imgOk++;
+        } catch (e) {
+          console.error(`    ✗ 이미지 업로드 실패 ${img.filename}\n${(e as Error).message}`);
+        }
+      }
+      const imgNote = images.length ? `, 이미지 ${imgOk}/${images.length}` : '';
+      console.log(`  ${result === 'created' ? '＋ 생성' : '↻ 갱신'}  ${rel}  →  "${title}"  (부모: ${pk ?? 'ROOT'}${imgNote})`);
       result === 'created' ? created++ : updated++;
     } catch (e) {
       console.error(`  ✗ 실패  ${rel}\n${(e as Error).message}`);
