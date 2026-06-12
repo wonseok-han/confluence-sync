@@ -3,19 +3,45 @@
 지정한 디렉토리(`--base`)의 `*.md`(하위 폴더 포함)를 **Confluence Cloud** 페이지로 **단방향 동기화**하는 수동 실행 도구입니다.
 git 이 원천(SoT)이고 Confluence 는 미러입니다. 양방향 동기화는 하지 않습니다.
 
+## 빠른 시작 (3단계)
+
+이미 설치돼 있다면 동기화할 문서 폴더에서:
+```bash
+cd /path/to/docs            # 동기화할 .md 들이 있는 폴더
+confluence-sync init        # 대화형으로 .env 생성(토큰 입력은 가려짐)
+confluence-sync --dry-run   # 무엇이 올라갈지 미리보기 → 문제 없으면
+confluence-sync             # 실제 동기화
+```
+처음이라면 아래 **설치 → 설정** 순서를 따르세요. 막히면 `confluence-sync --help`.
+
 ## 설치
 
 ### 글로벌 CLI (권장) — 어디서나 `confluence-sync` 실행
 
-1. Git 호스팅 Package Registry 인증. `read_package_registry` 스코프의 **Personal Access Token** 또는 **Deploy Token**을 발급한 뒤 `~/.npmrc`에 추가합니다. `@wonseok-han` 스코프는 이 프로젝트(ID 130) 레지스트리로 매핑합니다.
+이 패키지는 사내 **Git 호스팅 Package Registry**에 올라가 있어, npm 에게 "`@wonseok-han` 스코프는 Git 호스팅 에서 받아라"라고 한 번 알려줘야 합니다. (공개 npm 에 없으므로 이 설정이 없으면 설치가 404 로 실패합니다.)
+
+**1) 액세스 토큰 발급** — Git 호스팅 에서 패키지를 내려받을 권한.
+   - Git 호스팅 → 우상단 프로필 → **Edit profile → Access Tokens** → **`read_package_registry`** 스코프로 토큰 생성(만료일 지정 권장).
+   - 또는 confluence-sync 프로젝트의 **Settings → Repository → Deploy tokens** 에서 `read_package_registry` 토큰 발급.
+
+**2) `~/.npmrc` 에 스코프 매핑 추가** — 홈 디렉토리의 `~/.npmrc` 파일(없으면 새로 만듦)에 아래 두 줄을 넣고 `<TOKEN>` 을 1)에서 받은 값으로 교체합니다.
    ```
    @wonseok-han:registry=https://git.internal.example/api/v4/projects/0/packages/npm/
    //git.internal.example/api/v4/projects/0/packages/npm/:_authToken=<TOKEN>
    ```
-2. 설치
+   명령으로 넣어도 됩니다(`<TOKEN>` 교체):
+   ```bash
+   npm config set @wonseok-han:registry "https://git.internal.example/api/v4/projects/0/packages/npm/"
+   npm config set "//git.internal.example/api/v4/projects/0/packages/npm/:_authToken" "<TOKEN>"
+   ```
+
+**3) 설치 & 확인**
    ```bash
    npm i -g @wonseok-han/confluence-sync
+   confluence-sync --version   # 버전이 찍히면 성공
+   confluence-sync --help      # 사용법
    ```
+   > 설치가 `registry.npmjs.org ... 404` 로 실패하면 2)의 스코프 매핑이 빠졌거나 `~/.npmrc` 위치가 잘못된 것입니다. 인증 실패(401/403)면 토큰 권한·만료를 확인하세요.
 
 ### 로컬 개발 (소스에서 실행)
 
@@ -27,10 +53,17 @@ npm install
 
 ## 설정
 
-`.env` 생성 후 값 채우기. 글로벌 CLI는 **실행 위치(cwd)의 `.env`**(또는 셸 환경변수)를 읽으므로, 동기화할 문서 디렉토리(또는 그 상위)에서 실행하세요.
+동기화하려면 Confluence 접속 정보를 담은 `.env` 가 **실행 위치(cwd)** 에 있어야 합니다(또는 셸 환경변수). 그러니 **동기화할 문서 디렉토리에서** 아래 중 하나로 만드세요.
+
+**권장: 대화형 마법사**
 ```bash
-cp .env.example .env   # 로컬 개발 시. 글로벌 사용 시에는 작업 디렉토리에 직접 생성
+confluence-sync init     # 각 항목을 안내에 따라 입력 → cwd 에 .env 생성. API 토큰 입력은 *로 가려짐
 ```
+- 이미 `.env` 가 있으면 덮어쓸지 물어봅니다(`--force` 로 건너뜀).
+- 토큰 발급·CLOUD_ID 확인 방법은 아래 [API 토큰 발급](#api-토큰-발급-scoped-필수)·[cloudId 확인](#cloudid-확인-base_url-구성에-필요) 참고.
+
+**수동 작성**: 아래 표를 보고 직접 `.env` 를 작성해도 됩니다(로컬 개발 시 `cp .env.example .env`).
+
    | 변수 | 설명 |
    | --- | --- |
    | `CONFLUENCE_BASE_URL` | `https://api.atlassian.com/ex/confluence/<CLOUD_ID>/wiki` (scoped 토큰용) |
@@ -69,6 +102,8 @@ https://<your-domain>.atlassian.net/_edge/tenant_info
 ### 글로벌 CLI
 
 ```bash
+confluence-sync init                   # 대화형으로 .env 생성
+confluence-sync --help                 # 사용법, -v/--version 버전
 confluence-sync --list                 # base에서 인식된 문서·제목·계층만 출력 (Confluence 호출·인증 없음)
 confluence-sync --dry-run              # 호출 없이 대상·상태(신규/변경/동일)·링크·이미지 확인 (먼저 권장)
 confluence-sync                        # 변경된 문서만 갱신 (+신규 생성)

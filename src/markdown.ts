@@ -1,0 +1,98 @@
+/**
+ * Markdown → Confluence storage format 변환.
+ * - 코드블록 → code 매크로
+ * - 내부 .md 링크 → 페이지 링크(ri:page, 대상 제목 기반)
+ * - 로컬 이미지 → 첨부 참조(ri:attachment), 외부 URL 이미지는 그대로
+ * 모든 경로는 baseDir 기준 상대경로로 해석한다.
+ */
+import { resolve, relative, dirname, basename } from 'node:path';
+import { createHash } from 'node:crypto';
+import MarkdownIt from 'markdown-it';
+
+export const escapeXml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+export const hashOf = (s: string) => createHash('sha256').update(s).digest('hex');
+
+type RenderCtx = {
+  fileDir: string; // baseDir 기준 현재 파일 디렉토리
+  titleIndex: Record<string, string>; // 내부 .md(base 상대) → 제목
+  images: { filename: string; abs: string }[];
+  internalLinks: number;
+  linkStack: boolean[];
+  linkedTitles: Set<string>; // 이 문서가 내부 링크로 가리키는 대상 제목들
+};
+
+const md = new MarkdownIt({ html: true, linkify: true, breaks: false });
+
+// 렌더 규칙은 md 인스턴스에 한 번만 등록되므로, 현재 변환 컨텍스트를 모듈 변수로 공유한다.
+let ctx: RenderCtx = { fileDir: '', titleIndex: {}, images: [], internalLinks: 0, linkStack: [], linkedTitles: new Set() };
+let baseDir = '';
+
+/** 링크 href 가 base 내부 .md 면 그 페이지 제목 반환 */
+function resolveInternalLink(href: string): string | null {
+  if (!href || /^(https?:|mailto:|#)/i.test(href)) return null;
+  const pathPart = href.split('#')[0];
+  if (!pathPart || !/\.md$/i.test(pathPart)) return null;
+  const rel = relative(baseDir, resolve(baseDir, ctx.fileDir, pathPart));
+  return ctx.titleIndex[rel] ?? null;
+}
+
+md.renderer.rules.fence = (tokens, idx) => {
+  const t = tokens[idx];
+  const lang = (t.info || '').trim().split(/\s+/)[0];
+  const safe = t.content.split(']]>').join(']]]]><![CDATA[>');
+  const langParam = lang ? `<ac:parameter ac:name="language">${lang}</ac:parameter>` : '';
+  return `<ac:structured-macro ac:name="code">${langParam}<ac:plain-text-body><![CDATA[${safe}]]></ac:plain-text-body></ac:structured-macro>\n`;
+};
+
+md.renderer.rules.link_open = (tokens, idx, opts, _env, self) => {
+  const href = tokens[idx].attrGet('href') || '';
+  const targetTitle = resolveInternalLink(href);
+  if (targetTitle) {
+    ctx.linkStack.push(true);
+    ctx.internalLinks++;
+    ctx.linkedTitles.add(targetTitle);
+    return `<ac:link><ri:page ri:content-title="${escapeXml(targetTitle)}" /><ac:link-body>`;
+  }
+  ctx.linkStack.push(false);
+  return self.renderToken(tokens, idx, opts);
+};
+md.renderer.rules.link_close = (tokens, idx, opts, _env, self) =>
+  ctx.linkStack.pop() ? '</ac:link-body></ac:link>' : self.renderToken(tokens, idx, opts);
+
+md.renderer.rules.image = (tokens, idx) => {
+  const src = tokens[idx].attrGet('src') || '';
+  if (/^https?:\/\//i.test(src)) {
+    return `<ac:image><ri:url ri:value="${escapeXml(src)}" /></ac:image>`;
+  }
+  const abs = resolve(baseDir, ctx.fileDir, src.split('#')[0]);
+  const filename = basename(abs);
+  ctx.images.push({ filename, abs });
+  return `<ac:image><ri:attachment ri:filename="${escapeXml(filename)}" /></ac:image>`;
+};
+
+/** 첫 H1(`# 제목`)을 제목으로 추출하고 본문에서 제거 */
+export function splitTitleAndBody(markdown: string, fallback: string): { title: string; body: string } {
+  const lines = markdown.split('\n');
+  const i = lines.findIndex((l) => /^#\s+/.test(l));
+  if (i === -1) return { title: fallback, body: markdown };
+  const title = lines[i].replace(/^#\s+/, '').trim();
+  lines.splice(i, 1);
+  return { title, body: lines.join('\n') };
+}
+
+export type Rendered = {
+  storage: string;
+  images: { filename: string; abs: string }[];
+  internalLinks: number;
+  linkedTitles: string[];
+};
+
+/** 본문 markdown 을 storage format 으로 변환(base 기준 상대경로로 링크·이미지 해석). */
+export function toStorage(markdown: string, rel: string, titleIndex: Record<string, string>, base: string): Rendered {
+  baseDir = base;
+  ctx = { fileDir: dirname(rel) === '.' ? '' : dirname(rel), titleIndex, images: [], internalLinks: 0, linkStack: [], linkedTitles: new Set() };
+  const storage = md.render(markdown);
+  return { storage, images: ctx.images, internalLinks: ctx.internalLinks, linkedTitles: [...ctx.linkedTitles] };
+}
