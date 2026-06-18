@@ -1,6 +1,6 @@
 {
   "name": "@wonseok-han/confluence-sync",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Markdown 디렉토리를 Confluence Cloud 페이지로 단방향 동기화하는 수동 실행 도구",
   "bin": {

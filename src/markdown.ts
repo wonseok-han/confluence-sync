@@ -61,15 +61,24 @@ md.renderer.rules.link_open = (tokens, idx, opts, _env, self) => {
 md.renderer.rules.link_close = (tokens, idx, opts, _env, self) =>
   ctx.linkStack.pop() ? '</ac:link-body></ac:link>' : self.renderToken(tokens, idx, opts);
 
+// 이미지 기본 최대 표시 폭(px). Confluence 본문 폭을 넘는 큰 원본이 영역을 벗어나는 것을 막는다.
+// 개별 이미지는 markdown title 로 덮어쓴다: ![alt](src "width=900")
+const DEFAULT_IMAGE_WIDTH = 760;
+
 md.renderer.rules.image = (tokens, idx) => {
-  const src = tokens[idx].attrGet('src') || '';
+  const token = tokens[idx];
+  const src = token.attrGet('src') || '';
+  const title = token.attrGet('title') || '';
+  const m = title.match(/width\s*=\s*(\d+)/i);
+  const width = m ? m[1] : String(DEFAULT_IMAGE_WIDTH);
+  const widthAttr = width ? ` ac:width="${escapeXml(width)}"` : '';
   if (/^https?:\/\//i.test(src)) {
-    return `<ac:image><ri:url ri:value="${escapeXml(src)}" /></ac:image>`;
+    return `<ac:image${widthAttr}><ri:url ri:value="${escapeXml(src)}" /></ac:image>`;
   }
   const abs = resolve(baseDir, ctx.fileDir, src.split('#')[0]);
   const filename = basename(abs);
   ctx.images.push({ filename, abs });
-  return `<ac:image><ri:attachment ri:filename="${escapeXml(filename)}" /></ac:image>`;
+  return `<ac:image${widthAttr}><ri:attachment ri:filename="${escapeXml(filename)}" /></ac:image>`;
 };
 
 /** 첫 H1(`# 제목`)을 제목으로 추출하고 본문에서 제거 */
