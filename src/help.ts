@@ -20,8 +20,9 @@ export function printHelp(): void {
 ${dim('Markdown 디렉토리를 Confluence Cloud 페이지로 단방향 동기화합니다.')}
 
 ${h('사용법:')}
-  ${o('confluence-sync')} [옵션] [경로...]      문서를 동기화
+  ${o('confluence-sync')} [옵션] [경로...]      문서를 동기화(md → Confluence)
   ${o('confluence-sync init')}                  대화형으로 .env 설정 파일 생성
+  ${o('confluence-sync pull <pageId|url>')}     Confluence 페이지/폴더를 .md 로 가져오기(역방향)
   ${o('confluence-sync --help | --version')}
 
 ${h('동기화 옵션:')}
@@ -39,6 +40,11 @@ ${h('동기화 옵션:')}
 ${h('경로 인자:')}
   파일/폴더를 주면 그 문서만 동기화합니다(부모 README 자동 포함).
   예)  ${o('confluence-sync 20-design')}        ${o('confluence-sync 90-glossary.md')}
+
+${h('pull(역방향) 옵션:')}
+  ${o('--out <dir>')}       .md 를 생성할 디렉토리(기본: 현재 폴더)
+  ${o('--children')}        하위 페이지까지 재귀적으로 가져와 폴더 트리로 복원
+  예)  ${o('confluence-sync pull https://.../pages/12345/Title --out ./docs --children')}
 
 ${h('설정(.env):')}
   실행 위치(cwd)의 .env 또는 셸 환경변수를 읽습니다.

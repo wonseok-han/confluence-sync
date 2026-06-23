@@ -25,6 +25,7 @@ import {
 import { loadMapping, saveMapping, type Mapping } from './mapping.js';
 import { createClient } from './confluence.js';
 import { runInit } from './init.js';
+import { runPull } from './pull.js';
 import { printHelp, readPkgVersion } from './help.js';
 import { bold, dim, red, green, yellow, magenta, cyan, gray } from './colors.js';
 
@@ -53,6 +54,7 @@ for (let i = 0; i < argv.length; i++) {
 if (HELP) { printHelp(); process.exit(0); }
 if (VERSION) { console.log(readPkgVersion()); process.exit(0); }
 if (positionals[0] === 'init') { await runInit(argv); process.exit(0); }
+if (positionals[0] === 'pull') { await runPull(argv); process.exit(0); }
 
 const baseInput = optVal('--base') ?? process.env.CONFLUENCE_SYNC_BASE;
 if (!baseInput) {

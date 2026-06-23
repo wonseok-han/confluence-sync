@@ -147,5 +147,69 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     return existing?.pageId ? 'recreated' : 'created';
   }
 
-  return { api, getPageOrNull, getSpaceId, deleteAll, uploadImages, upsertPage };
+  // ---- pull(역방향) 전용 ----
+
+  /** v1 GET. api() 와 달리 /rest/api 계열 + 임의 expand 응답을 그대로 돌려준다. */
+  async function getV1(path: string): Promise<any> {
+    const res = await fetch(`${cfg.baseUrl}${path}`, {
+      headers: { Authorization: authHeader(), Accept: 'application/json' },
+    });
+    if (!res.ok) throw new Error(`Confluence API ${res.status} ${res.statusText}\n${path}\n${await res.text()}`);
+    return res.json();
+  }
+
+  /** 콘텐츠 노드 조회. type('page'|'folder' 등) + 제목 + (페이지면) export_view(HTML). */
+  async function getNode(id: string): Promise<{ id: string; type: string; title: string; html: string }> {
+    const data = await getV1(`/rest/api/content/${id}?expand=body.export_view`);
+    return {
+      id: data.id,
+      type: data.type ?? 'page',
+      title: data.title ?? id,
+      html: data.body?.export_view?.value ?? '',
+    };
+  }
+
+  /** 자식 노드 목록(kind = page|folder, 전체 페이지네이션). */
+  async function listChildren(id: string, kind: 'page' | 'folder'): Promise<{ id: string; title: string }[]> {
+    const out: { id: string; title: string }[] = [];
+    let path: string | null = `/rest/api/content/${id}/child/${kind}?limit=100`;
+    while (path) {
+      const data: any = await getV1(path);
+      for (const c of data.results ?? []) out.push({ id: c.id, title: c.title });
+      const next = data._links?.next;
+      path = next ? (next.startsWith('/') ? next : `/${next}`) : null;
+    }
+    return out;
+  }
+  const getChildPages = (id: string) => listChildren(id, 'page');
+  const getChildFolders = (id: string) => listChildren(id, 'folder');
+
+  /** 페이지 첨부 목록(파일명 + 다운로드 경로). */
+  async function listAttachments(pageId: string): Promise<{ filename: string; downloadPath: string }[]> {
+    const out: { filename: string; downloadPath: string }[] = [];
+    let path: string | null = `/rest/api/content/${pageId}/child/attachment?limit=100`;
+    while (path) {
+      const data: any = await getV1(path);
+      for (const a of data.results ?? []) {
+        const downloadPath = a._links?.download;
+        if (downloadPath) out.push({ filename: a.title, downloadPath });
+      }
+      const next = data._links?.next;
+      path = next ? (next.startsWith('/') ? next : `/${next}`) : null;
+    }
+    return out;
+  }
+
+  /** 첨부 바이너리 다운로드. */
+  async function downloadAttachment(downloadPath: string): Promise<Buffer> {
+    const url = downloadPath.startsWith('http') ? downloadPath : `${cfg.baseUrl}${downloadPath}`;
+    const res = await fetch(url, { headers: { Authorization: authHeader() } });
+    if (!res.ok) throw new Error(`download ${res.status} ${res.statusText}\n${downloadPath}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  return {
+    api, getPageOrNull, getSpaceId, deleteAll, uploadImages, upsertPage,
+    getNode, getChildPages, getChildFolders, listAttachments, downloadAttachment,
+  };
 }
