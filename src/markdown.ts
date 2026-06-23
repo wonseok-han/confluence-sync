@@ -5,6 +5,7 @@
  * - 로컬 이미지 → 첨부 참조(ri:attachment), 외부 URL 이미지는 그대로
  * 모든 경로는 baseDir 기준 상대경로로 해석한다.
  */
+import { readFileSync, existsSync } from 'node:fs';
 import { resolve, relative, dirname, basename } from 'node:path';
 import { createHash } from 'node:crypto';
 import MarkdownIt from 'markdown-it';
@@ -104,4 +105,23 @@ export function toStorage(markdown: string, rel: string, titleIndex: Record<stri
   ctx = { fileDir: dirname(rel) === '.' ? '' : dirname(rel), titleIndex, images: [], internalLinks: 0, linkStack: [], linkedTitles: new Set() };
   const storage = md.render(markdown);
   return { storage, images: ctx.images, internalLinks: ctx.internalLinks, linkedTitles: [...ctx.linkedTitles] };
+}
+
+/**
+ * 변경 감지용 문서 해시: 제목 + storage + 참조 로컬 이미지의 내용 해시.
+ * 이미지 내용을 포함하므로, 같은 파일명으로 이미지만 교체해도 해시가 바뀌어 재동기화 대상이 된다.
+ * 이미지가 없으면 hashOf(title + '\0' + storage) 와 동일(이미지 없는 문서는 기존 해시 유지).
+ */
+export function docHash(title: string, r: Rendered): string {
+  const parts = [title, r.storage];
+  for (const img of r.images) {
+    let digest = 'missing';
+    try {
+      if (existsSync(img.abs)) digest = createHash('sha256').update(readFileSync(img.abs)).digest('hex');
+    } catch {
+      /* 읽기 실패 시 'missing' 으로 둔다 */
+    }
+    parts.push(`${img.filename}:${digest}`);
+  }
+  return hashOf(parts.join('\0'));
 }

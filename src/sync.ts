@@ -17,7 +17,7 @@ import 'dotenv/config';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { readEnv, requireEnv } from './config.js';
-import { toStorage, splitTitleAndBody, hashOf, type Rendered } from './markdown.js';
+import { toStorage, splitTitleAndBody, docHash, type Rendered } from './markdown.js';
 import {
   collectMarkdown, buildTitleIndex, buildFolderIndex,
   parentKeyOf, sortForSync, resolveSelection, withParents,
@@ -105,12 +105,12 @@ async function main() {
   if (DRY_RUN) {
     for (const rel of files) {
       const { title, body } = splitTitleAndBody(readFileSync(resolve(BASE_DIR, rel), 'utf8'), rel);
-      const { storage, images, internalLinks } = toStorage(body, rel, titleIndex, BASE_DIR);
-      const hash = hashOf(title + '\0' + storage);
+      const r = toStorage(body, rel, titleIndex, BASE_DIR);
+      const hash = docHash(title, r);
       const ex = mapping[rel];
       const status = !ex?.pageId ? green('신규') : ex.hash === hash ? gray('동일') : yellow('변경');
       const pk = parentKeyOf(rel, folderIndex);
-      console.log(`  [${status}] ${rel}  ${dim('→')}  ${cyan(`"${title}"`)}  ${dim(`(부모: ${pk ?? 'ROOT'}, 내부링크: ${internalLinks}, 이미지: ${images.length})`)}`);
+      console.log(`  [${status}] ${rel}  ${dim('→')}  ${cyan(`"${title}"`)}  ${dim(`(부모: ${pk ?? 'ROOT'}, 내부링크: ${r.internalLinks}, 이미지: ${r.images.length})`)}`);
     }
     console.log('\n' + dim('--dry-run: 실제 호출 없음.'));
     return;
@@ -132,7 +132,7 @@ async function main() {
   for (const rel of files) {
     const { title, body } = splitTitleAndBody(readFileSync(resolve(BASE_DIR, rel), 'utf8'), rel);
     const r = toStorage(body, rel, titleIndex, BASE_DIR);
-    const hash = hashOf(title + '\0' + r.storage);
+    const hash = docHash(title, r);
     const pk = parentKeyOf(rel, folderIndex);
     const parentId = pk ? work[pk]?.pageId : env.parentPageId;
     rendered.set(rel, { ...r, title, hash, parentId });

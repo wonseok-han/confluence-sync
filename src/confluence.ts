@@ -62,13 +62,33 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     }
   }
 
-  /** 로컬 이미지를 페이지 첨부로 업로드(v1 POST, multipart). 같은 파일명은 새 버전으로 갱신. */
+  /** 페이지의 기존 첨부 중 같은 파일명의 attachmentId 를 찾는다(없으면 null). */
+  async function findAttachmentId(pageId: string, filename: string): Promise<string | null> {
+    try {
+      const data = await api(
+        `/rest/api/content/${pageId}/child/attachment?filename=${encodeURIComponent(filename)}`,
+      );
+      return data?.results?.[0]?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 로컬 이미지를 페이지 첨부로 업로드(v1, multipart).
+   * 같은 파일명 첨부가 이미 있으면 데이터만 새 버전으로 갱신(중복 생성 400 방지),
+   * 없으면 신규 생성한다.
+   */
   async function uploadAttachment(pageId: string, filename: string, abs: string): Promise<void> {
     const buf = readFileSync(abs);
     const form = new FormData();
     form.append('file', new Blob([buf]), filename);
     form.append('minorEdit', 'true');
-    const res = await fetch(`${cfg.baseUrl}/rest/api/content/${pageId}/child/attachment`, {
+    const attId = await findAttachmentId(pageId, filename);
+    const path = attId
+      ? `/rest/api/content/${pageId}/child/attachment/${attId}/data` // 기존 첨부 데이터 갱신
+      : `/rest/api/content/${pageId}/child/attachment`; // 신규 첨부 생성
+    const res = await fetch(`${cfg.baseUrl}${path}`, {
       method: 'POST',
       headers: { Authorization: authHeader(), 'X-Atlassian-Token': 'nocheck' },
       body: form as any,
