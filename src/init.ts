@@ -78,7 +78,7 @@ export async function runInit(argv: string[]): Promise<void> {
     { key: 'CONFLUENCE_EMAIL', hint: 'Atlassian 계정 이메일' },
     { key: 'CONFLUENCE_API_TOKEN', hint: 'Scoped API 토큰 (id.atlassian.com → Create API token with scopes). 입력은 가려집니다', secret: true },
     { key: 'CONFLUENCE_SPACE_KEY', hint: 'URL .../wiki/spaces/<KEY>/... 의 KEY' },
-    { key: 'CONFLUENCE_PARENT_PAGE_ID', hint: '비우면 공간 최상위에 생성', optional: true },
+    { key: 'CONFLUENCE_PARENT_ID', hint: '루트 앵커(페이지 또는 폴더 id). 비우면 공간 최상위', optional: true },
     { key: 'CONFLUENCE_SYNC_BASE', hint: `동기화 루트 디렉토리 (기본: ${process.cwd()})`, optional: true, def: process.cwd() },
   ];
 

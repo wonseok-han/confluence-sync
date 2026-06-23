@@ -39,17 +39,43 @@ export function buildFolderIndex(rels: string[]): Record<string, string> {
   return idx;
 }
 
+const parentDirOf = (dir: string) => (dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : '');
+
 /**
- * 부모 결정(base 상대):
- * - base 직계 파일 → null(루트: CONFLUENCE_PARENT_PAGE_ID)
- * - 폴더 대표 README → null(루트 바로 아래)
- * - 폴더 내 일반 파일 → 같은 폴더의 대표 README
+ * dir 의 직계 자식을 담는 "컨테이너"의 mapping 키.
+ * - 루트('') → null (CONFLUENCE_PARENT_ID)
+ * - README 가 있는 폴더 → 그 README 페이지 키
+ * - README 가 없는 폴더 → 폴더 노드 키(`<dir>/`, 끝에 슬래시로 구분)
+ */
+export function containerKeyOf(dir: string, folderIndex: Record<string, string>): string | null {
+  if (dir === '') return null;
+  return folderIndex[dir] ?? `${dir}/`;
+}
+
+/**
+ * 부모 결정(base 상대): 컨테이너 모델.
+ * - 일반 파일 → 자신이 속한 dir 의 컨테이너
+ * - 폴더 대표 README → 그 폴더의 "부모 dir" 컨테이너(README 는 자기 폴더를 대표하므로)
  */
 export function parentKeyOf(rel: string, folderIndex: Record<string, string>): string | null {
   const parts = rel.split('/');
-  if (parts.length === 1) return null;
-  if (isReadme(parts[parts.length - 1])) return null;
-  return folderIndex[parts.slice(0, -1).join('/')] ?? null;
+  const dir = parts.slice(0, -1).join('/');
+  return isReadme(parts[parts.length - 1])
+    ? containerKeyOf(parentDirOf(dir), folderIndex)
+    : containerKeyOf(dir, folderIndex);
+}
+
+/** README 가 없어 Confluence 폴더로 만들어야 하는 dir 들(파일들의 모든 상위 dir 중 folderIndex 에 없는 것). */
+export function neededFolderDirs(rels: string[], folderIndex: Record<string, string>): string[] {
+  const set = new Set<string>();
+  for (const rel of rels) {
+    let dir = parentDirOf(rel);
+    while (dir !== '') {
+      if (!folderIndex[dir]) set.add(dir);
+      dir = parentDirOf(dir);
+    }
+  }
+  return [...set];
 }
 
 /** README(폴더 대표)를 폴더 맨 앞에, 나머지는 파일명순 → 부모가 자식보다 먼저 */
@@ -85,12 +111,15 @@ export function resolveSelection(rels: string[], positionals: string[], baseDir:
   return [...set];
 }
 
-/** 선택된 문서의 부모 README 들을 재귀적으로 포함(부모 pageId 확보용) */
+/** 선택된 문서의 상위 폴더 대표 README 들을 포함(부모 pageId 확보용). 폴더 노드는 neededFolderDirs 로 따로 생성. */
 export function withParents(selected: string[], folderIndex: Record<string, string>): string[] {
   const out = new Set(selected);
   for (const rel of selected) {
-    let pk = parentKeyOf(rel, folderIndex);
-    while (pk && !out.has(pk)) { out.add(pk); pk = parentKeyOf(pk, folderIndex); }
+    let dir = parentDirOf(rel);
+    while (dir !== '') {
+      if (folderIndex[dir]) out.add(folderIndex[dir]);
+      dir = parentDirOf(dir);
+    }
   }
   return [...out];
 }

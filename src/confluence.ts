@@ -50,11 +50,14 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
 
   /** 매핑에 기록된 페이지를 모두 삭제(휴지통). 매핑 파일 영속화는 호출자 책임. */
   async function deleteAll(mapping: Mapping): Promise<void> {
-    const entries = Object.entries(mapping);
-    console.log(yellow(`--rebuild: 기존 페이지 ${entries.length}건 삭제`));
-    for (const [key, { pageId }] of entries) {
+    // 페이지(자식) 먼저, 폴더(컨테이너) 나중에 삭제
+    const entries = Object.entries(mapping).sort(
+      ([, a], [, b]) => (a.type === 'folder' ? 1 : 0) - (b.type === 'folder' ? 1 : 0),
+    );
+    console.log(yellow(`--rebuild: 기존 ${entries.length}건 삭제`));
+    for (const [key, { pageId, type }] of entries) {
       try {
-        await api(`/api/v2/pages/${pageId}`, { method: 'DELETE' });
+        await api(type === 'folder' ? `/api/v2/folders/${pageId}` : `/api/v2/pages/${pageId}`, { method: 'DELETE' });
         console.log(`  ${yellow('🗑  삭제')} ${key} ${dim(`(#${pageId})`)}`);
       } catch (e) {
         console.error(red(`  ✗ 삭제 실패 ${key}`) + `\n${(e as Error).message}`);
@@ -208,8 +211,34 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     return Buffer.from(await res.arrayBuffer());
   }
 
+  // ---- 폴더(README 없는 디렉토리 컨테이너) ----
+
+  /** 콘텐츠(페이지/폴더) 존재 확인. 404 → null (v1, 폴더 read 스코프 없이도 동작). */
+  async function getContentOrNull(id: string): Promise<any | null> {
+    const res = await fetch(`${cfg.baseUrl}/rest/api/content/${id}`, {
+      headers: { Authorization: authHeader(), Accept: 'application/json' },
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Confluence API ${res.status} ${res.statusText}\n/rest/api/content/${id}\n${await res.text()}`);
+    return res.json();
+  }
+
+  /** 폴더 생성(write:folder 필요). parentId 없으면 공간 최상위. 생성된 folder id 반환. */
+  async function createFolder(spaceId: string, title: string, parentId?: string): Promise<string> {
+    const body: Record<string, unknown> = { spaceId, title };
+    if (parentId) body.parentId = parentId;
+    const created = await api(`/api/v2/folders`, { method: 'POST', body: JSON.stringify(body) });
+    return created.id;
+  }
+
+  /** 폴더 삭제(--rebuild). */
+  async function deleteFolder(id: string): Promise<void> {
+    await api(`/api/v2/folders/${id}`, { method: 'DELETE' });
+  }
+
   return {
     api, getPageOrNull, getSpaceId, deleteAll, uploadImages, upsertPage,
     getNode, getChildPages, getChildFolders, listAttachments, downloadAttachment,
+    getContentOrNull, createFolder, deleteFolder,
   };
 }

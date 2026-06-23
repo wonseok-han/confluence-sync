@@ -49,6 +49,6 @@ ${h('pull(역방향) 옵션:')}
 ${h('설정(.env):')}
   실행 위치(cwd)의 .env 또는 셸 환경변수를 읽습니다.
   필수: CONFLUENCE_BASE_URL, CONFLUENCE_EMAIL, CONFLUENCE_API_TOKEN, CONFLUENCE_SPACE_KEY
-  선택: CONFLUENCE_PARENT_PAGE_ID, CONFLUENCE_SYNC_BASE
+  선택: CONFLUENCE_PARENT_ID(페이지/폴더 id), CONFLUENCE_SYNC_BASE
   ${o("'confluence-sync init'")} 으로 대화형 생성 가능.`);
 }

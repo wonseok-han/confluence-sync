@@ -4,7 +4,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 
-export type Mapping = Record<string, { pageId: string; title?: string; hash?: string }>;
+export type Mapping = Record<string, { pageId: string; title?: string; hash?: string; type?: 'page' | 'folder' }>;
 
 export function loadMapping(path: string): Mapping {
   try {

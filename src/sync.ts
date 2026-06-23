@@ -20,7 +20,7 @@ import { readEnv, requireEnv } from './config.js';
 import { toStorage, splitTitleAndBody, docHash, type Rendered } from './markdown.js';
 import {
   collectMarkdown, buildTitleIndex, buildFolderIndex,
-  parentKeyOf, sortForSync, resolveSelection, withParents,
+  parentKeyOf, containerKeyOf, sortForSync, resolveSelection, withParents,
 } from './docs.js';
 import { loadMapping, saveMapping, type Mapping } from './mapping.js';
 import { createClient } from './confluence.js';
@@ -92,12 +92,29 @@ async function main() {
   const scope = positionals.length ? `선택 ${files.length}/${allRel.length}건` : `${files.length}건`;
   console.log(`${dim('base:')} ${cyan(BASE_DIR)}\n${dim('대상:')} ${scope}`);
 
+  // ---- 경로 헬퍼 ----
+  const isReadmeFile = (p: string) => /README\.md$/.test(p);
+  const segOf = (s: string) => (s === '' ? 0 : s.split('/').length);
+  const dirOf = (p: string) => p.split('/').slice(0, -1).join('/');
+  const parentDirOf = (d: string) => (d.includes('/') ? d.slice(0, d.lastIndexOf('/')) : '');
+  const fileDepth = (rel: string) => (isReadmeFile(rel) ? Math.max(0, segOf(dirOf(rel)) - 1) : segOf(dirOf(rel)));
+  const folderDepth = (d: string) => Math.max(0, segOf(d) - 1);
+  // 파일의 README 없는(=폴더로 만들) 조상 dir들, shallow→deep
+  const ancestorFolderDirs = (rel: string) => {
+    const out: string[] = [];
+    for (let d = dirOf(rel); d !== ''; d = parentDirOf(d)) if (!folderIndex[d]) out.unshift(d);
+    return out;
+  };
+
   // --list: base에서 인식된 문서·제목·계층만 출력(Confluence 호출 없음)
   if (LIST) {
+    const seen = new Set<string>();
     for (const rel of files) {
-      let depth = 0;
-      for (let pk = parentKeyOf(rel, folderIndex); pk; pk = parentKeyOf(pk, folderIndex)) depth++;
-      console.log(`  ${'  '.repeat(depth)}${rel}  ${dim('—')}  ${cyan(`"${titleIndex[rel]}"`)}`);
+      for (const d of ancestorFolderDirs(rel)) if (!seen.has(d)) {
+        seen.add(d);
+        console.log(`  ${'  '.repeat(folderDepth(d))}${cyan(`📁 ${d}/`)}`);
+      }
+      console.log(`  ${'  '.repeat(fileDepth(rel))}${rel}  ${dim('—')}  ${cyan(`"${titleIndex[rel]}"`)}`);
     }
     return;
   }
@@ -105,7 +122,13 @@ async function main() {
   const mapping = loadMapping(MAPPING_PATH);
 
   if (DRY_RUN) {
+    const seen = new Set<string>();
     for (const rel of files) {
+      for (const d of ancestorFolderDirs(rel)) if (!seen.has(d)) {
+        seen.add(d);
+        const fex = mapping[`${d}/`];
+        console.log(`  [${fex?.pageId ? gray('폴더') : green('폴더+')}] 📁 ${d}/`);
+      }
       const { title, body } = splitTitleAndBody(readFileSync(resolve(BASE_DIR, rel), 'utf8'), rel);
       const r = toStorage(body, rel, titleIndex, BASE_DIR);
       const hash = docHash(title, r);
@@ -126,20 +149,57 @@ async function main() {
   if (REBUILD) { await client.deleteAll(mapping); saveMapping(MAPPING_PATH, {}); }
   const work: Mapping = REBUILD ? {} : mapping;
 
-  let created = 0, updated = 0, skipped = 0, recreated = 0, relinked = 0;
+  let created = 0, updated = 0, skipped = 0, recreated = 0, relinked = 0, foldersMade = 0;
   const rendered = new Map<string, Rendered & { title: string; hash: string; parentId: string | undefined }>();
   const recreatedTitles = new Set<string>(); // 이번에 재생성된 문서의 제목
   const touched = new Set<string>();          // 이번에 발행(생성/갱신/재생성)된 문서
+  const handledFolders = new Set<string>();   // 이번 실행에서 처리한 폴더 dir
+
+  // README 없는 폴더를 Confluence 폴더로 생성(없으면)하고 work 에 등록. 성공 여부 반환.
+  const ensureFolder = async (dir: string): Promise<boolean> => {
+    const key = `${dir}/`;
+    const pcKey = containerKeyOf(parentDirOf(dir), folderIndex);
+    const parentId = pcKey ? work[pcKey]?.pageId : env.parentId;
+    if (pcKey && !parentId) {
+      console.error(yellow(`  ✗ 폴더 건너뜀  ${dir}/  (부모 '${pcKey}' 가 아직 없음)`));
+      return false;
+    }
+    const ex = work[key];
+    if (ex?.pageId && ex.type === 'folder' && (await client.getContentOrNull(ex.pageId))) {
+      return true; // 이미 존재
+    }
+    try {
+      const title = dir.split('/').pop()!;
+      const fid = await client.createFolder(spaceId, title, parentId);
+      work[key] = { pageId: fid, title, type: 'folder' };
+      saveMapping(MAPPING_PATH, work);
+      console.log(`  ${cyan('📁 폴더')}  ${dir}/  ${dim(`(부모: ${pcKey ?? 'ROOT'})`)}`);
+      foldersMade++;
+      return true;
+    } catch (e) {
+      console.error(red(`  ✗ 폴더 생성 실패  ${dir}/`) + `\n${(e as Error).message}`);
+      return false;
+    }
+  };
 
   for (const rel of files) {
+    // 상위 README-less 폴더들 보장(shallow→deep)
+    let folderOk = true;
+    for (const d of ancestorFolderDirs(rel)) {
+      if (!handledFolders.has(d)) { handledFolders.add(d); if (!(await ensureFolder(d))) folderOk = false; }
+      else if (!work[`${d}/`]?.pageId) folderOk = false;
+      if (!folderOk) break;
+    }
+    if (!folderOk) { console.error(yellow(`  ✗ 건너뜀  ${rel}  (상위 폴더 미생성)`)); continue; }
+
     const { title, body } = splitTitleAndBody(readFileSync(resolve(BASE_DIR, rel), 'utf8'), rel);
     const r = toStorage(body, rel, titleIndex, BASE_DIR);
     const hash = docHash(title, r);
     const pk = parentKeyOf(rel, folderIndex);
-    const parentId = pk ? work[pk]?.pageId : env.parentPageId;
+    const parentId = pk ? work[pk]?.pageId : env.parentId;
     rendered.set(rel, { ...r, title, hash, parentId });
     if (pk && !parentId) {
-      console.error(yellow(`  ✗ 건너뜀  ${rel}  (부모 '${pk}' 페이지가 아직 없음)`));
+      console.error(yellow(`  ✗ 건너뜀  ${rel}  (부모 '${pk}' 가 아직 없음)`));
       continue;
     }
     try {
@@ -191,6 +251,7 @@ async function main() {
     `  ${magenta(`재생성 ${recreated}`)}` +
     `  ${cyan(`링크재연결 ${relinked}`)}` +
     `  ${gray(`변경없음 ${skipped}`)}` +
+    (foldersMade ? `  ${cyan(`폴더 ${foldersMade}`)}` : '') +
     `  ${dim(`대상 ${files.length}`)}`,
   );
 }
