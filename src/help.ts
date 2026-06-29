@@ -28,6 +28,7 @@ ${h('사용법:')}
 ${h('동기화 옵션:')}
   ${o('--base <dir>')}      동기화 루트 (또는 env CONFLUENCE_SYNC_BASE). 미지정 시 중단
   ${o('--mapping <path>')}  매핑 파일 위치 (기본: <base>/.confluence-sync.json)
+  ${o('--exclude <glob>')}  동기화 제외 패턴(반복 가능). <base>/.confluence-syncignore(.gitignore 방식)도 사용
   ${o('--dry-run')}         호출 없이 대상·상태(신규/변경/동일)·링크·이미지 출력
   ${o('--list')}            인식된 문서·제목·계층만 출력 (Confluence 호출·인증 없음)
   ${o('--force')}           변경 감지 무시, 전체 강제 갱신

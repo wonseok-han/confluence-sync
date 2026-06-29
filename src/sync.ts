@@ -26,6 +26,7 @@ import { loadMapping, saveMapping, type Mapping } from './mapping.js';
 import { createClient } from './confluence.js';
 import { runInit } from './init.js';
 import { runPull } from './pull.js';
+import { buildIgnorer } from './ignore.js';
 import { printHelp, readPkgVersion } from './help.js';
 import { bold, dim, red, green, yellow, magenta, cyan, gray } from './colors.js';
 
@@ -42,10 +43,17 @@ function optVal(name: string): string | undefined {
   const i = argv.indexOf(name);
   return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined;
 }
+/** 반복 가능한 옵션의 모든 값 수집(예: --exclude a --exclude b) */
+function optVals(name: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) if (argv[i] === name && i + 1 < argv.length) out.push(argv[++i]);
+  return out;
+}
+const EXCLUDES = optVals('--exclude');
 // 위치 인자(선택 경로/서브커맨드): 플래그·옵션값 제외
 const positionals: string[] = [];
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === '--base' || argv[i] === '--mapping') { i++; continue; }
+  if (argv[i] === '--base' || argv[i] === '--mapping' || argv[i] === '--exclude') { i++; continue; }
   if (argv[i].startsWith('-')) continue;
   positionals.push(argv[i]);
 }
@@ -81,7 +89,10 @@ async function main() {
   }
   if (!DRY_RUN && !LIST) requireEnv(env); // list/dry 는 Confluence 호출이 없어 인증 불필요
 
-  const allRel = collectMarkdown(BASE_DIR).map((f) => relative(BASE_DIR, f));
+  const ignorer = buildIgnorer(BASE_DIR, EXCLUDES);
+  const collected = collectMarkdown(BASE_DIR).map((f) => relative(BASE_DIR, f));
+  const allRel = collected.filter((r) => !ignorer.ignores(r)); // 제외된 문서는 모든 단계에서 빠짐
+  const ignoredCount = collected.length - allRel.length;
   const folderIndex = buildFolderIndex(allRel);
   const titleIndex = buildTitleIndex(allRel, BASE_DIR); // 링크 변환은 항상 전체 기준
 
@@ -90,7 +101,8 @@ async function main() {
     : allRel;
   const files = sortForSync(selected);
   const scope = positionals.length ? `선택 ${files.length}/${allRel.length}건` : `${files.length}건`;
-  console.log(`${dim('base:')} ${cyan(BASE_DIR)}\n${dim('대상:')} ${scope}`);
+  const ignoredNote = ignoredCount ? dim(`  (제외 ${ignoredCount})`) : '';
+  console.log(`${dim('base:')} ${cyan(BASE_DIR)}\n${dim('대상:')} ${scope}${ignoredNote}`);
 
   // ---- 경로 헬퍼 ----
   const isReadmeFile = (p: string) => /README\.md$/.test(p);
