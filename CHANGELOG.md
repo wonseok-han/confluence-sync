@@ -2,7 +2,7 @@
 
 ## 1.0.0
 
-첫 공개 릴리스. 사내 Git 호스팅에서 개발하던 0.x 를 정리해 공개 npm(`@wonseok-han/confluence-sync`)으로 통합했습니다.
+첫 릴리스.
 
 ### Push (Markdown → Confluence)
 
