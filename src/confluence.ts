@@ -11,6 +11,16 @@ export type ConfluenceConfig = { baseUrl: string; email: string; token: string }
 export type ClientOpts = { force: boolean; verify: boolean };
 export type UpsertResult = 'created' | 'updated' | 'skipped' | 'recreated';
 export type ImageRef = { filename: string; abs: string };
+/** getNode 결과: 본문(HTML/storage) + 출처 메타(frontmatter 용). */
+export type ContentNode = {
+  id: string;
+  type: string;
+  title: string;
+  html: string;
+  storage: string;
+  url?: string;
+  updated?: string;
+};
 
 export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   const authHeader = () => 'Basic ' + Buffer.from(`${cfg.email}:${cfg.token}`).toString('base64');
@@ -167,17 +177,22 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   }
 
   /**
-   * 콘텐츠 노드 조회. type + 제목 + export_view(HTML) + storage(원본 XHTML).
+   * 콘텐츠 노드 조회. type + 제목 + export_view(HTML) + storage(원본 XHTML) + 출처 메타.
    * storage 는 코드블록의 "진짜" 언어를 얻는 데 쓴다(export_view 는 언어 미지정 시 brush:java 기본값이 붙어 신뢰 불가).
+   * url/updated 는 frontmatter 의 출처 정보로 쓰이며, 응답에 없으면 undefined.
    */
-  async function getNode(id: string): Promise<{ id: string; type: string; title: string; html: string; storage: string }> {
-    const data = await getV1(`/rest/api/content/${id}?expand=body.export_view,body.storage`);
+  async function getNode(id: string): Promise<ContentNode> {
+    const data = await getV1(`/rest/api/content/${id}?expand=body.export_view,body.storage,version`);
+    const base = data._links?.base;
+    const webui = data._links?.webui;
     return {
       id: data.id,
       type: data.type ?? 'page',
       title: data.title ?? id,
       html: data.body?.export_view?.value ?? '',
       storage: data.body?.storage?.value ?? '',
+      url: base && webui ? `${base}${webui}` : undefined,
+      updated: data.version?.when,
     };
   }
 

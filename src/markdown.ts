@@ -9,6 +9,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, relative, dirname, basename } from 'node:path';
 import { createHash } from 'node:crypto';
 import MarkdownIt from 'markdown-it';
+import { resolveWikilinks, type LinkResolver } from './obsidian.js';
 
 export const escapeXml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -105,11 +106,21 @@ export type Rendered = {
   linkedTitles: string[];
 };
 
-/** 본문 markdown 을 storage format 으로 변환(base 기준 상대경로로 링크·이미지 해석). */
-export function toStorage(markdown: string, rel: string, titleIndex: Record<string, string>, base: string): Rendered {
+/**
+ * 본문 markdown 을 storage format 으로 변환(base 기준 상대경로로 링크·이미지 해석).
+ * resolveLink 를 주면 Obsidian 의 [[wikilink]]·![[embed]] 를 먼저 표준 링크로 정규화한다.
+ */
+export function toStorage(
+  markdown: string,
+  rel: string,
+  titleIndex: Record<string, string>,
+  base: string,
+  resolveLink?: LinkResolver,
+): Rendered {
   baseDir = base;
   ctx = { fileDir: dirname(rel) === '.' ? '' : dirname(rel), titleIndex, images: [], internalLinks: 0, linkStack: [], linkedTitles: new Set() };
-  const storage = md.render(markdown);
+  const src = resolveLink ? resolveWikilinks(markdown, resolveLink) : markdown;
+  const storage = md.render(src);
   return { storage, images: ctx.images, internalLinks: ctx.internalLinks, linkedTitles: [...ctx.linkedTitles] };
 }
 

@@ -5,7 +5,9 @@
 - **push** — 로컬 `.md` 디렉토리를 Confluence 페이지 트리로 발행. 폴더 구조가 그대로 페이지 계층이 됩니다.
 - **pull** — Confluence 페이지·폴더·**스페이스 전체**를 읽어 `.md` 로 가져옵니다.
 
-문서를 git으로 관리하면서(docs-as-code) Confluence를 미러로 두거나, 반대로 Confluence에 쌓인 문서를 마크다운으로 내려받아 쓸 수 있습니다. 내려받은 마크다운은 Obsidian·VS Code 등 어디서든 그대로 열립니다.
+문서를 git으로 관리하면서(docs-as-code) Confluence를 미러로 두거나, 반대로 Confluence에 쌓인 문서를 마크다운으로 내려받아 쓸 수 있습니다.
+
+**[Obsidian](#obsidian) vault 와 그대로 맞물립니다** — pull 한 문서는 내부 링크가 이어져 그래프 뷰가 동작하고, vault 에서 쓴 `[[wikilink]]`·`![[embed]]`·frontmatter 를 push 가 그대로 이해합니다.
 
 ---
 
@@ -19,6 +21,8 @@ confluence-sync --help
 ```
 
 공개 npm 패키지라 **토큰이나 `.npmrc` 설정이 필요 없습니다.** (Node 20+)
+
+> 짧은 이름 **`csync`** 도 같이 설치됩니다 — 아래 예시의 `confluence-sync` 는 전부 `csync` 로 바꿔 쓸 수 있습니다.
 
 ## 빠른 시작
 
@@ -122,10 +126,11 @@ docs/                      → [CONFLUENCE_PARENT_ID 또는 공간 최상위]
 
 ### 변환 규칙
 
-- 각 문서의 **첫 `# 제목`** 이 페이지 제목이 되고, 본문은 storage format 으로 변환됩니다.
+- 페이지 제목은 **frontmatter `title` → 첫 `# 제목` → 파일명** 순으로 정해지고, 본문은 storage format 으로 변환됩니다.
 - 코드블록 → **code 매크로**, 표·리스트·헤딩은 그대로.
-- **내부 `.md` 링크** → Confluence 페이지 링크로 자동 변환.
-- **로컬 이미지** → 페이지 첨부로 업로드 후 참조 (같은 파일명은 새 버전으로 갱신). 외부 URL 이미지는 그대로.
+- **내부 `.md` 링크**와 **`[[wikilink]]`** → Confluence 페이지 링크로 자동 변환.
+- **로컬 이미지**와 **`![[embed]]`** → 페이지 첨부로 업로드 후 참조 (같은 파일명은 새 버전으로 갱신). 외부 URL 이미지는 그대로.
+- **YAML frontmatter** 는 메타데이터로만 쓰이고 본문에 새지 않습니다.
 
 ### 변경 감지와 매핑
 
@@ -162,15 +167,113 @@ confluence-sync pull <pageId|url>                  # 한 페이지를 현재 폴
 confluence-sync pull <url> --out ./docs            # 출력 디렉토리 지정
 confluence-sync pull <url> --out ./docs --children # 하위 페이지·폴더까지 트리로 복원
 confluence-sync pull --space --out ./docs          # 스페이스 전체 (홈페이지부터 전부)
+confluence-sync pull --space --obsidian --out ~/MyVault   # 내부 링크를 [[wikilink]] 로
 ```
 
 - 대상은 **숫자 ID** 또는 **URL** (`.../pages/<ID>/...` 페이지, `.../folder/<ID>` 폴더) 둘 다 됩니다.
 - **`--children`** — 하위를 재귀 복원합니다. 자식이 있는 페이지는 `<제목>/README.md` 폴더로 펼쳐져 **push 계층 관례와 맞물립니다**.
 - **`--space`** — 대상 없이 스페이스 전체를 가져옵니다. 페이지가 많으면 시간이 걸립니다.
 - **이미지/첨부** 는 문서별로 `attachments/<문서명>/` 아래에 내려받고 링크를 그 경로로 씁니다 (문서 폴더가 이미지로 지저분해지지 않음). 다운로드에는 `read:attachment` 스코프가 필요합니다.
+- **내부 링크** 는 같은 실행에서 함께 받은 페이지끼리 **상대 `.md` 링크로 이어집니다.** 받지 않은 페이지는 절대 URL 로 남습니다(깨진 링크를 만들지 않음).
+- 각 문서 머리에 **frontmatter** 가 붙습니다 — `title` · `pageId` · `spaceKey` · `source` · `updated`. `pageId` 가 다시 push 할 때의 앵커입니다.
+- 제목은 frontmatter 의 `title` 로만 들어가고 **본문에 `# 제목` 을 따로 넣지 않습니다** — 제목을 별도로 표시하는 뷰어(Obsidian 등)에서 두 번 보이기 때문입니다. push 는 `title` 을 먼저 읽으므로 왕복에 문제가 없습니다.
 - 본문은 `export_view`(HTML)를 [turndown](https://github.com/mixmark-io/turndown) 으로 변환합니다 — 코드블록(언어 포함, 미지정은 `plaintext`), GFM 표, 리스트 등.
 
-> **무손실 왕복은 아닙니다.** Confluence storage → Markdown 은 근사 변환이라 일부 매크로·레이아웃은 단순화됩니다. 내부 페이지 링크는 절대 URL로 유지됩니다.
+> **무손실 왕복은 아닙니다.** Confluence storage → Markdown 은 근사 변환이라 일부 매크로·레이아웃은 단순화됩니다.
+
+---
+
+## Obsidian
+
+pull 이 만드는 마크다운은 **vault 에 그대로 열립니다.** 별도 플러그인이 필요 없습니다.
+
+```bash
+cd ~/MyVault
+confluence-sync pull --space --out .              # 스페이스 전체를 vault 로
+confluence-sync pull --space --out . --obsidian   # 내부 링크를 [[wikilink]] 로
+```
+
+- 내부 링크가 이어져 있어 **그래프 뷰·백링크가 그대로 동작**합니다. 기본값인 상대 `.md` 링크도 Obsidian 에서 정상 동작하며 GitHub·VS Code 에서도 열립니다. vault 안에서만 쓸 거라면 `--obsidian` 으로 `[[wikilink]]` 를 받으세요.
+- frontmatter 는 Obsidian 속성 패널에 표시되고, `source` 로 원본 페이지를 바로 열 수 있습니다.
+
+---
+
+## `convert` — 이미 받아둔 문서 손보기
+
+**다시 pull 하지 않고** 로컬 `.md` 트리를 제자리에서 고칩니다. Confluence 를 호출하지 않으니 인증도 필요 없습니다.
+
+```bash
+confluence-sync convert --to obsidian ./docs            # 상대 .md 링크 → [[wikilink]]
+confluence-sync convert --to markdown ./docs            # 되돌리기
+confluence-sync convert --fix ./docs                    # 옛 pull 결과 보정
+confluence-sync convert --to obsidian --fix ./docs      # 둘 다
+confluence-sync convert --fix ./docs --dry-run          # 바뀔 파일만 미리보기
+```
+
+### 대상 지정
+
+파일·폴더를 **여러 개** 줄 수 있고, 안 주면 base 전체가 대상입니다.
+
+```bash
+confluence-sync convert --fix ./docs/가이드/설치.md          # 파일 하나만
+confluence-sync convert --fix ./docs/a.md ./docs/나머지/     # 파일 + 폴더 혼합
+```
+
+`--base` 는 **링크를 해석하는 범위**입니다. 파일 하나만 고칠 때도 주변 문서를 알아야 이름이 유일한지, 링크 대상이 실재하는지 판정할 수 있기 때문입니다. 지정하지 않으면 준 경로들의 공통 상위 폴더가 되며, `--to` 로 링크를 바꿀 때는 **문서 트리 루트를 `--base` 로 알려주는 편이 정확합니다.**
+
+```bash
+confluence-sync convert --to obsidian ./docs/가이드/설치.md --base ./docs
+```
+
+### 다른 곳에 내보내기 — `--out`
+
+`--out` 없이 실행하면 **원본을 덮어씁니다.** 원본을 그대로 두고 결과만 따로 받으려면:
+
+```bash
+confluence-sync convert --to obsidian --fix ./docs --out ~/MyVault
+```
+
+- base 기준 상대 경로를 그대로 재현하고, **본문이 참조하는 첨부(이미지)도 같이 복사**합니다 — 안 그러면 링크가 깨집니다.
+- 안 바뀐 문서도 함께 내보내 **온전한 트리**가 나옵니다.
+- `--out` 이 base 안이면 원본을 오염시키므로 거부합니다.
+
+### 링크 표기 (`--to`)
+
+두 방향은 서로의 역변환이라 **왕복해도 내용이 보존됩니다.** 안전하게 바꿀 수 있는 링크만 건드립니다.
+
+- 외부 URL·이미지·깨진 링크(대상 파일 없음)는 **그대로 둡니다.**
+- 파일명이 트리 안에서 겹치면(`README.md` 여러 개 등) `[[wikilink]]` 로 바꾸지 않고 상대 링크를 유지합니다 — 이름만으로는 어느 노트인지 확정할 수 없기 때문입니다.
+- 코드블록·인라인 코드 안의 링크는 손대지 않습니다.
+
+### 보정 (`--fix`)
+
+변환기가 개선되기 전에 pull 한 문서에는 옛 결함의 흔적이 남아 있습니다. 스페이스를 통째로 다시 받지 않고 그 흔적만 되돌립니다.
+
+| 증상 | 보정 |
+| --- | --- |
+| frontmatter `title` 과 본문 `# 제목` 이 중복 | 겹치는 H1 제거 (Obsidian 에서 제목이 두 번 보임) |
+| 모든 코드블록이 ` ```java ` | 실제 Java 가 아니면 `plaintext` 로 (Confluence 가 언어 미지정 시 `brush: java` 를 붙이는 탓) |
+| 제목에 `[data-colorid=…]{color:#…}` | 본문에 새어 나온 CSS 제거 |
+| `:11\_eleven\_blue:` · `\[선택 가능\]` · `**7️⃣**\-**1️⃣**` | 불필요한 `\` 이스케이프 해제 |
+| 리스트 항목마다 빈 줄 | 같은 종류 항목끼리 붙임 (번호↔글머리 경계는 유지) |
+| 코드블록 안 줄 끝 공백 | 정리 |
+
+**멱등적입니다** — 두 번 돌려도 더 바뀌지 않고, 최신 pull 결과에는 아무것도 하지 않습니다. 애매하면 손대지 않는 쪽을 택하므로 진짜 Java 코드블록은 그대로 남습니다. 파일을 덮어쓰니 `--dry-run` 으로 먼저 확인하세요.
+
+반대로 **vault 를 그대로 push** 할 수 있습니다. Obsidian 문법을 그대로 이해합니다.
+
+| vault 에서 쓴 것 | Confluence 에 올라가는 것 |
+| --- | --- |
+| `[[설계]]` · `[[구조/설계\|설계 문서]]` | 페이지 링크 (짧은 이름·경로 모두 인식) |
+| `![[diagram.png]]` | 첨부 이미지 |
+| frontmatter `title:` | 페이지 제목 |
+| frontmatter `pageId:` | **그 페이지를 갱신** (새로 만들지 않음) |
+
+- 코드블록·인라인 코드 안의 `[[...]]` 는 건드리지 않고, **대상을 못 찾은 링크는 원문 그대로** 둡니다(조용히 사라지지 않습니다).
+- `.obsidian/` `.trash/` 등 숨김 폴더는 동기화 대상에서 제외됩니다.
+- `pageId` 덕분에 매핑 파일(`.confluence-sync.json`)을 잃어버려도 **중복 페이지가 생기지 않습니다** — 원본을 찾아가 갱신합니다(`[연결]` 로 표시).
+
+> pull → 편집 → push 왕복이 목적이라면 frontmatter 를 지우지 마세요. `pageId` 가 원본 페이지를 가리키는 유일한 단서입니다.
 
 ---
 
@@ -202,7 +305,7 @@ git push && git push --tags
 
 워크플로는 `package.json` 버전과 태그가 일치하는지 검증한 뒤 배포합니다. 변경 이력은 [CHANGELOG.md](CHANGELOG.md) 를 참고하세요.
 
-> 사전 설정: npm Automation 토큰을 저장소 **Settings → Secrets and variables → Actions** 에 `NPM_TOKEN` 으로 등록해야 합니다.
+> npm 발행은 **Trusted Publishing(OIDC)** 을 씁니다 — 장기 토큰 없이 GitHub Actions 가 단기 자격증명으로 배포합니다.
 
 ## 라이선스
 

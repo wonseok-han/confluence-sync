@@ -37,7 +37,7 @@ const linkDest = (p: string) => (/\s/.test(p) ? `<${p}>` : p);
  * (예: `**7️⃣**\-**1️⃣**` — 두 굵은 글씨 사이 텍스트 노드가 "-" 하나라 노드 시작으로 취급)
  * 줄 맨 앞의 진짜 마커 이스케이프는 보존하고, 그 뒤(줄 중간)의 것만 되돌린다. 코드블록은 건드리지 않는다.
  */
-function relaxEscapes(md: string): string {
+export function relaxEscapes(md: string): string {
   let inFence = false;
   return md
     .split('\n')
@@ -53,6 +53,8 @@ function relaxEscapes(md: string): string {
         .slice(head.length)
         // 줄 중간의 - + . > 는 마커가 아니므로 이스케이프 불필요
         .replace(/\\([-+.>])/g, '$1')
+        // 단어 내부 밑줄은 CommonMark 에서 강조가 아니다 (:11_eleven_square_blue: 같은 이모지 코드)
+        .replace(/(\w)\\_(?=\w)/g, '$1_')
         // 링크가 아닌 대괄호 쌍(뒤에 ( 나 [ 가 오지 않음)은 이스케이프 불필요
         .replace(/\\\[([^[\]\n]*)\\\](?!\s*[([])/g, '[$1]');
       return head + rest;

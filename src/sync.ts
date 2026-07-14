@@ -14,18 +14,19 @@
  * 세부 로직은 ./markdown ./docs ./mapping ./confluence ./config ./init ./help 모듈에 있다.
  */
 import 'dotenv/config';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { readEnv, requireEnv } from './config.js';
-import { toStorage, splitTitleAndBody, docHash, type Rendered } from './markdown.js';
+import { toStorage, docHash, type Rendered } from './markdown.js';
 import {
-  collectMarkdown, buildTitleIndex, buildFolderIndex,
+  collectMarkdown, collectAssets, buildTitleIndex, buildFolderIndex, buildVault, vaultResolver, readDoc,
   parentKeyOf, containerKeyOf, sortForSync, resolveSelection, withParents,
 } from './docs.js';
 import { loadMapping, saveMapping, type Mapping } from './mapping.js';
 import { createClient } from './confluence.js';
 import { runInit } from './init.js';
 import { runPull } from './pull.js';
+import { runConvert } from './convert.js';
 import { buildIgnorer } from './ignore.js';
 import { printHelp, readPkgVersion } from './help.js';
 import { bold, dim, red, green, yellow, magenta, cyan, gray } from './colors.js';
@@ -53,7 +54,8 @@ const EXCLUDES = optVals('--exclude');
 // 위치 인자(선택 경로/서브커맨드): 플래그·옵션값 제외
 const positionals: string[] = [];
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === '--base' || argv[i] === '--mapping' || argv[i] === '--exclude') { i++; continue; }
+  if (argv[i] === '--base' || argv[i] === '--mapping' || argv[i] === '--exclude'
+    || argv[i] === '--to' || argv[i] === '--out') { i++; continue; }
   if (argv[i].startsWith('-')) continue;
   positionals.push(argv[i]);
 }
@@ -63,6 +65,7 @@ if (HELP) { printHelp(); process.exit(0); }
 if (VERSION) { console.log(readPkgVersion()); process.exit(0); }
 if (positionals[0] === 'init') { await runInit(argv); process.exit(0); }
 if (positionals[0] === 'pull') { await runPull(argv); process.exit(0); }
+if (positionals[0] === 'convert') { await runConvert(argv); process.exit(0); }
 
 const baseInput = optVal('--base') ?? process.env.CONFLUENCE_SYNC_BASE;
 if (!baseInput) {
@@ -95,6 +98,9 @@ async function main() {
   const ignoredCount = collected.length - allRel.length;
   const folderIndex = buildFolderIndex(allRel);
   const titleIndex = buildTitleIndex(allRel, BASE_DIR); // 링크 변환은 항상 전체 기준
+  // Obsidian [[wikilink]] 해석용 이름 인덱스. 제외된 문서는 링크 대상에서도 빠진다.
+  const vault = buildVault(allRel, collectAssets(BASE_DIR).map((f) => relative(BASE_DIR, f)));
+  const render = (rel: string, body: string) => toStorage(body, rel, titleIndex, BASE_DIR, vaultResolver(rel, vault));
 
   const selected = positionals.length
     ? withParents(resolveSelection(allRel, positionals, BASE_DIR), folderIndex)
@@ -141,11 +147,14 @@ async function main() {
         const fex = mapping[`${d}/`];
         console.log(`  [${fex?.pageId ? gray('폴더') : green('폴더+')}] 📁 ${d}/`);
       }
-      const { title, body } = splitTitleAndBody(readFileSync(resolve(BASE_DIR, rel), 'utf8'), rel);
-      const r = toStorage(body, rel, titleIndex, BASE_DIR);
+      const { title, body, fm } = readDoc(BASE_DIR, rel);
+      const r = render(rel, body);
       const hash = docHash(title, r);
       const ex = mapping[rel];
-      const status = !ex?.pageId ? green('신규') : ex.hash === hash ? gray('동일') : yellow('변경');
+      // 매핑엔 없지만 frontmatter 에 pageId 가 있으면 신규 생성이 아니라 기존 페이지에 연결된다
+      const status = !ex?.pageId
+        ? (fm.pageId ? cyan('연결') : green('신규'))
+        : ex.hash === hash ? gray('동일') : yellow('변경');
       const pk = parentKeyOf(rel, folderIndex);
       console.log(`  [${status}] ${rel}  ${dim('→')}  ${cyan(`"${title}"`)}  ${dim(`(부모: ${pk ?? 'ROOT'}, 내부링크: ${r.internalLinks}, 이미지: ${r.images.length})`)}`);
     }
@@ -161,7 +170,7 @@ async function main() {
   if (REBUILD) { await client.deleteAll(mapping); saveMapping(MAPPING_PATH, {}); }
   const work: Mapping = REBUILD ? {} : mapping;
 
-  let created = 0, updated = 0, skipped = 0, recreated = 0, relinked = 0, foldersMade = 0;
+  let created = 0, updated = 0, skipped = 0, recreated = 0, relinked = 0, foldersMade = 0, linked = 0;
   const rendered = new Map<string, Rendered & { title: string; hash: string; parentId: string | undefined }>();
   const recreatedTitles = new Set<string>(); // 이번에 재생성된 문서의 제목
   const touched = new Set<string>();          // 이번에 발행(생성/갱신/재생성)된 문서
@@ -204,8 +213,8 @@ async function main() {
     }
     if (!folderOk) { console.error(yellow(`  ✗ 건너뜀  ${rel}  (상위 폴더 미생성)`)); continue; }
 
-    const { title, body } = splitTitleAndBody(readFileSync(resolve(BASE_DIR, rel), 'utf8'), rel);
-    const r = toStorage(body, rel, titleIndex, BASE_DIR);
+    const { title, body, fm } = readDoc(BASE_DIR, rel);
+    const r = render(rel, body);
     const hash = docHash(title, r);
     const pk = parentKeyOf(rel, folderIndex);
     const parentId = pk ? work[pk]?.pageId : env.parentId;
@@ -214,6 +223,24 @@ async function main() {
       console.error(yellow(`  ✗ 건너뜀  ${rel}  (부모 '${pk}' 가 아직 없음)`));
       continue;
     }
+
+    // pull 로 받은 문서(frontmatter 에 pageId)는 매핑이 없어도 원본 페이지에 다시 연결한다.
+    // 매핑 파일을 잃었거나 vault 를 다른 곳에 복제한 경우 중복 생성을 막아준다.
+    if (!work[rel]?.pageId && fm.pageId) {
+      try {
+        if (await client.getContentOrNull(fm.pageId)) {
+          work[rel] = { pageId: fm.pageId, title };
+          saveMapping(MAPPING_PATH, work);
+          console.log(`  ${cyan('🔗 연결')}  ${rel}  ${dim(`→ 기존 페이지 #${fm.pageId}`)}`);
+          linked++;
+        } else {
+          console.error(yellow(`  ⚠ frontmatter 의 pageId #${fm.pageId} 를 찾을 수 없습니다 → 새로 생성  (${rel})`));
+        }
+      } catch (e) {
+        console.error(yellow(`  ⚠ pageId 확인 실패 #${fm.pageId}: ${(e as Error).message}`));
+      }
+    }
+
     try {
       const result = await client.upsertPage(work, spaceId, rel, title, r.storage, hash, parentId);
       saveMapping(MAPPING_PATH, work);
@@ -263,6 +290,7 @@ async function main() {
     `  ${magenta(`재생성 ${recreated}`)}` +
     `  ${cyan(`링크재연결 ${relinked}`)}` +
     `  ${gray(`변경없음 ${skipped}`)}` +
+    (linked ? `  ${cyan(`연결 ${linked}`)}` : '') +
     (foldersMade ? `  ${cyan(`폴더 ${foldersMade}`)}` : '') +
     `  ${dim(`대상 ${files.length}`)}`,
   );

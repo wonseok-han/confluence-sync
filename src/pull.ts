@@ -2,19 +2,43 @@
  * `confluence-sync pull <pageId|url> [--out <dir>] [--children]`
  * Confluence 페이지를 읽어 Markdown(.md) 으로 생성한다(역방향).
  * 자식이 있는 페이지는 push 관례를 역으로 적용해 <slug>/README.md 폴더로 펼친다.
- * 첨부는 .md 옆에 내려받고 이미지 링크를 로컬 파일명으로 재작성한다.
+ * 첨부는 attachments/<문서명>/ 하위에 내려받고 이미지 링크를 그 경로로 재작성한다.
+ *
+ * 함께 받은 페이지끼리의 내부 링크는 마지막에 상대 .md 경로로 이어 붙인다(Obsidian 그래프·백링크가 살아난다).
+ * 각 문서 머리에 pageId 를 담은 frontmatter 를 남겨, 매핑 파일 없이도 push 가 원본 페이지를 다시 찾아간다.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { resolve, join, dirname, basename } from 'node:path';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { resolve, join, dirname, basename, relative } from 'node:path';
 import { readEnv, requireEnv } from './config.js';
-import { createClient } from './confluence.js';
+import { createClient, type ContentNode } from './confluence.js';
 import { htmlToMarkdown, codeLanguagesFromStorage } from './html2md.js';
+import { buildFrontmatter } from './obsidian.js';
 import { cyan, dim, green, red, yellow } from './colors.js';
 
 type Client = ReturnType<typeof createClient>;
 
 // 첨부 이미지는 항상 <md위치>/attachments/<문서명>/ 하위에 저장한다.
 const ASSETS_DIR = 'attachments';
+
+/** 마크다운 링크 중 Confluence 페이지를 가리키는 것: [text](https://.../pages/<id>/...) */
+const PAGE_LINK = /\[([^\]]*)\]\(<?(https?:\/\/[^\s)<>]*?\/pages\/(\d+)[^\s)<>]*?)>?\)/g;
+
+type Opts = {
+  withChildren: boolean;
+  /** Obsidian vault 로 받는다: 내부 링크를 [[wikilink]] 로 쓴다(기본은 어디서나 열리는 상대 .md 링크). */
+  obsidian: boolean;
+  spaceKey: string;
+};
+
+type Ctx = Opts & {
+  client: Client;
+  /** 이번 실행에서 만든 .md 절대경로 (링크 재작성 대상) */
+  written: string[];
+  /** pageId → .md 절대경로 (내부 링크를 상대경로로 바꾸는 데 쓴다) */
+  pathById: Map<string, string>;
+};
+
+type Counts = { pages: number; folders: number };
 
 function optVal(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(name);
@@ -36,12 +60,12 @@ function slug(title: string): string {
   return title.replace(/[\/\\:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim() || 'untitled';
 }
 
-type Counts = { pages: number; folders: number };
-
-type Node = { id: string; type: string; title: string; html: string; storage: string };
+/** 공백이 있으면 <...> 로 감싼 마크다운 링크 목적지 */
+const dest = (p: string) => (/\s/.test(p) ? `<${p}>` : p);
 
 /** 페이지 1건을 .md 로 생성(자식 페이지/폴더가 있으면 <slug>/README.md 폴더로). */
-async function pullPage(client: Client, node: Node, destDir: string, withChildren: boolean): Promise<Counts> {
+async function pullPage(ctx: Ctx, node: ContentNode, destDir: string): Promise<Counts> {
+  const { client, withChildren } = ctx;
   const { id, title, html, storage } = node;
   // 페이지도 하위 페이지 + 하위 폴더를 모두 가질 수 있다(폴더가 페이지 밑에 올 수 있음).
   const childFolders = withChildren ? await client.getChildFolders(id) : [];
@@ -79,20 +103,36 @@ async function pullPage(client: Client, node: Node, destDir: string, withChildre
     }
   }
 
-  writeFileSync(filePath, `# ${title}\n\n${body}`);
+  // frontmatter 의 pageId 는 push 왕복의 앵커다(매핑 파일이 없어도 원본 페이지를 찾아간다).
+  // 취향 옵션이 아니라 중복 페이지 생성을 막는 장치이므로 항상 쓴다. Obsidian 은 이를 속성으로 보여준다.
+  const fm = buildFrontmatter({
+    title,
+    pageId: id,
+    spaceKey: ctx.spaceKey,
+    source: node.url ?? '',
+    updated: node.updated ?? '',
+  });
+
+  // 제목은 frontmatter 의 title 하나로 충분하다. 본문에 `# 제목` 을 또 넣으면
+  // 제목을 따로 표시하는 뷰어(Obsidian 등)에서 두 번 보인다. push 도 title 속성을 먼저 읽는다.
+  writeFileSync(filePath, fm ? `${fm}${body}` : `# ${title}\n\n${body}`);
+  ctx.written.push(filePath);
+  ctx.pathById.set(id, filePath);
+
   const imgNote = referenced.size ? `, 이미지 ${referenced.size}` : '';
   console.log(`  ${green('＋ 생성')}  ${filePath}  ${dim(`(#${id}${imgNote})`)}`);
 
   const counts: Counts = { pages: 1, folders: 0 };
-  for (const f of childFolders) add(counts, await pullNode(client, f.id, folder, withChildren));
-  for (const c of childPages) add(counts, await pullNode(client, c.id, folder, withChildren));
+  for (const f of childFolders) add(counts, await pullNode(ctx, f.id, folder));
+  for (const c of childPages) add(counts, await pullNode(ctx, c.id, folder));
   return counts;
 }
 
 function add(acc: Counts, c: Counts) { acc.pages += c.pages; acc.folders += c.folders; }
 
 /** 노드(페이지/폴더)를 재귀적으로 가져온다. 폴더는 디렉토리(본문 없음)로 만든다. 노드 하나 실패는 스킵. */
-async function pullNode(client: Client, id: string, destDir: string, withChildren: boolean): Promise<Counts> {
+async function pullNode(ctx: Ctx, id: string, destDir: string): Promise<Counts> {
+  const { client, withChildren } = ctx;
   try {
     const node = await client.getNode(id);
 
@@ -102,8 +142,8 @@ async function pullNode(client: Client, id: string, destDir: string, withChildre
       console.log(`  ${cyan('📁 폴더')}  ${dir}  ${dim(`(#${id})`)}`);
       const counts: Counts = { pages: 0, folders: 1 };
       if (withChildren) {
-        for (const f of await client.getChildFolders(id)) add(counts, await pullNode(client, f.id, dir, true));
-        for (const p of await client.getChildPages(id)) add(counts, await pullNode(client, p.id, dir, true));
+        for (const f of await client.getChildFolders(id)) add(counts, await pullNode(ctx, f.id, dir));
+        for (const p of await client.getChildPages(id)) add(counts, await pullNode(ctx, p.id, dir));
       } else {
         console.log(dim('     (하위 내용은 --children 으로 가져옵니다)'));
       }
@@ -111,11 +151,44 @@ async function pullNode(client: Client, id: string, destDir: string, withChildre
     }
 
     // page: getNode 결과(html + storage) 그대로 사용
-    return await pullPage(client, node, destDir, withChildren);
+    return await pullPage(ctx, node, destDir);
   } catch (e) {
     console.error(red(`  ✗ 실패  #${id}`) + `\n${(e as Error).message}`);
     return { pages: 0, folders: 0 };
   }
+}
+
+/**
+ * 함께 받은 페이지를 가리키는 절대 Confluence URL 을 상대 .md 링크(또는 [[wikilink]])로 바꾼다.
+ * 이번에 받지 않은 페이지의 링크는 절대 URL 그대로 둔다(깨진 링크를 만들지 않는다).
+ * 반환값은 재작성한 링크 수.
+ */
+export function relinkPass(written: string[], pathById: Map<string, string>, wikilinks: boolean): number {
+  const noExt = (p: string) => basename(p).replace(/\.md$/i, '');
+  // wikilink 는 vault 어디서든 "이름"으로 찾으므로, 파일명이 유일할 때만 안전하게 쓸 수 있다.
+  const nameCount = new Map<string, number>();
+  for (const p of pathById.values()) nameCount.set(noExt(p), (nameCount.get(noExt(p)) ?? 0) + 1);
+
+  let count = 0;
+  for (const file of written) {
+    const before = readFileSync(file, 'utf8');
+    const after = before.replace(PAGE_LINK, (whole, text: string, url: string, id: string) => {
+      const target = pathById.get(id);
+      if (!target || target === file) return whole; // 못 받은 페이지·자기 자신 → 원본 URL 유지
+      count++;
+      const name = noExt(target);
+      const label = (text || name).trim();
+
+      if (wikilinks && nameCount.get(name) === 1) {
+        return label === name ? `[[${name}]]` : `[[${name}|${label}]]`;
+      }
+      const anchor = url.includes('#') ? '#' + url.split('#').slice(1).join('#') : '';
+      const rel = relative(dirname(file), target).split('\\').join('/');
+      return `[${label}](${dest(rel + anchor)})`;
+    });
+    if (after !== before) writeFileSync(file, after);
+  }
+  return count;
 }
 
 export async function runPull(argv: string[]): Promise<void> {
@@ -130,6 +203,23 @@ export async function runPull(argv: string[]): Promise<void> {
     { force: false, verify: false },
   );
 
+  const ctx: Ctx = {
+    client,
+    withChildren,
+    obsidian: argv.includes('--obsidian'),
+    spaceKey: env.spaceKey!,
+    written: [],
+    pathById: new Map(),
+  };
+
+  const done = (c: Counts) => {
+    const relinked = relinkPass(ctx.written, ctx.pathById, ctx.obsidian);
+    console.log(
+      `\n${green('완료')}  페이지 ${c.pages}개${c.folders ? `, 폴더 ${c.folders}개` : ''} 생성` +
+      (relinked ? `  ${cyan(`내부링크 ${relinked}개 연결`)}` : ''),
+    );
+  };
+
   // --space: 스페이스 홈페이지(콘텐츠 트리 루트)부터 전체를 재귀적으로 가져옴
   if (wholeSpace) {
     const { homepageId } = await client.getSpaceInfo(env.spaceKey!);
@@ -138,8 +228,8 @@ export async function runPull(argv: string[]): Promise<void> {
       process.exit(1);
     }
     console.log(`${dim('pull:')} space ${cyan(env.spaceKey!)} ${dim('→')} ${cyan(outDir)} ${dim('(전체)')}`);
-    const { pages, folders } = await pullNode(client, homepageId, outDir, true);
-    console.log(`\n${green('완료')}  페이지 ${pages}개${folders ? `, 폴더 ${folders}개` : ''} 생성`);
+    ctx.withChildren = true;
+    done(await pullNode(ctx, homepageId, outDir));
     return;
   }
 
@@ -162,6 +252,5 @@ export async function runPull(argv: string[]): Promise<void> {
   }
 
   console.log(`${dim('pull:')} #${contentId} ${dim('→')} ${cyan(outDir)}${withChildren ? dim(' (+children)') : ''}`);
-  const { pages, folders } = await pullNode(client, contentId, outDir, withChildren);
-  console.log(`\n${green('완료')}  페이지 ${pages}개${folders ? `, 폴더 ${folders}개` : ''} 생성`);
+  done(await pullNode(ctx, contentId, outDir));
 }
