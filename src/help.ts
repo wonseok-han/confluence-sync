@@ -45,7 +45,10 @@ ${h('경로 인자:')}
 ${h('pull(역방향) 옵션:')}
   ${o('--out <dir>')}       .md 를 생성할 디렉토리(기본: 현재 폴더)
   ${o('--children')}        하위 페이지까지 재귀적으로 가져와 폴더 트리로 복원
+  ${o('--space')}          대상 없이 스페이스(CONFLUENCE_SPACE_KEY) 홈페이지부터 전체를 가져옴
+  (이미지는 항상 attachments/<문서명>/ 하위에 저장됨)
   예)  ${o('confluence-sync pull https://.../pages/12345/Title --out ./docs --children')}
+       ${o('confluence-sync pull --space --out ./docs')}
 
 ${h('설정(.env):')}
   실행 위치(cwd)의 .env 또는 셸 환경변수를 읽습니다.

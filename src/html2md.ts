@@ -8,7 +8,12 @@ import TurndownService from 'turndown';
 export type Html2MdOpts = {
   /** 본문에서 참조된 로컬 첨부 파일명을 통지(다운로드 대상 수집용) */
   onImage?: (filename: string) => void;
+  /** 로컬 첨부 이미지 링크에 붙일 상대 경로 접두사(예: 'attachments/문서명'). 없으면 파일명만 */
+  assetPrefix?: string;
 };
+
+/** 공백이 있으면 <...> 로 감싼 마크다운 링크 목적지(공백 있는 경로도 안전하게 파싱되도록) */
+const linkDest = (p: string) => (/\s/.test(p) ? `<${p}>` : p);
 
 export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
   const td = new TurndownService({
@@ -43,12 +48,13 @@ export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
         el.getAttribute('data-linked-resource-type') === 'attachment' ||
         /\/download\/(attachments|thumbnails)\//.test(src);
       if (!isAttachment && /^https?:\/\//i.test(src)) {
-        return `![${alt}](${src})`;
+        return `![${alt}](${linkDest(src)})`;
       }
       const alias = el.getAttribute('data-linked-resource-default-alias') || '';
       const name = alias || decodeURIComponent((src.split('?')[0].split('/').pop() || '').trim());
       if (name) opts.onImage?.(name);
-      return `![${alt || name}](${name})`;
+      const dest = opts.assetPrefix ? `${opts.assetPrefix}/${name}` : name;
+      return `![${alt || name}](${linkDest(dest)})`;
     },
   });
 

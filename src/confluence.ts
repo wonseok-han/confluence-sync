@@ -42,10 +42,15 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   }
 
   async function getSpaceId(key: string): Promise<string> {
+    return (await getSpaceInfo(key)).id;
+  }
+
+  /** 스페이스 id + 홈페이지 id(=콘텐츠 트리 루트). */
+  async function getSpaceInfo(key: string): Promise<{ id: string; homepageId?: string }> {
     const data = await api(`/api/v2/spaces?keys=${encodeURIComponent(key)}`);
     const space = data.results?.[0];
     if (!space) throw new Error(`Space key '${key}' 를 찾을 수 없습니다.`);
-    return space.id;
+    return { id: space.id, homepageId: space.homepageId };
   }
 
   /** 매핑에 기록된 페이지를 모두 삭제(휴지통). 매핑 파일 영속화는 호출자 책임. */
@@ -237,7 +242,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   }
 
   return {
-    api, getPageOrNull, getSpaceId, deleteAll, uploadImages, upsertPage,
+    api, getPageOrNull, getSpaceId, getSpaceInfo, deleteAll, uploadImages, upsertPage,
     getNode, getChildPages, getChildFolders, listAttachments, downloadAttachment,
     getContentOrNull, createFolder, deleteFolder,
   };

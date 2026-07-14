@@ -15,6 +15,11 @@ export const escapeXml = (s: string) =>
 
 export const hashOf = (s: string) => createHash('sha256').update(s).digest('hex');
 
+/** markdown-it 이 퍼센트 인코딩한 링크/이미지 경로를 실제 경로로 디코드(실패 시 원본). */
+const decodePath = (s: string) => {
+  try { return decodeURIComponent(s); } catch { return s; }
+};
+
 type RenderCtx = {
   fileDir: string; // baseDir 기준 현재 파일 디렉토리
   titleIndex: Record<string, string>; // 내부 .md(base 상대) → 제목
@@ -35,7 +40,7 @@ function resolveInternalLink(href: string): string | null {
   if (!href || /^(https?:|mailto:|#)/i.test(href)) return null;
   const pathPart = href.split('#')[0];
   if (!pathPart || !/\.md$/i.test(pathPart)) return null;
-  const rel = relative(baseDir, resolve(baseDir, ctx.fileDir, pathPart));
+  const rel = relative(baseDir, resolve(baseDir, ctx.fileDir, decodePath(pathPart)));
   return ctx.titleIndex[rel] ?? null;
 }
 
@@ -76,7 +81,8 @@ md.renderer.rules.image = (tokens, idx) => {
   if (/^https?:\/\//i.test(src)) {
     return `<ac:image${widthAttr}><ri:url ri:value="${escapeXml(src)}" /></ac:image>`;
   }
-  const abs = resolve(baseDir, ctx.fileDir, src.split('#')[0]);
+  // markdown-it 이 링크 경로를 퍼센트 인코딩하므로 디코드해서 실제 파일명/경로로 복원(한글·공백 대응)
+  const abs = resolve(baseDir, ctx.fileDir, decodePath(src.split('#')[0]));
   const filename = basename(abs);
   ctx.images.push({ filename, abs });
   return `<ac:image${widthAttr}><ri:attachment ri:filename="${escapeXml(filename)}" /></ac:image>`;

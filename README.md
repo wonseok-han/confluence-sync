@@ -87,7 +87,7 @@ confluence-sync init     # 각 항목을 안내에 따라 입력 → cwd 에 .en
    | 이미지/첨부 업로드 | `read:content-details:confluence` + `write:attachment:confluence` (**둘 다**) |
    | README 없는 폴더 생성 | `write:folder:confluence` |
    | `--rebuild` (삭제 후 재생성) | `delete:page:confluence` (매핑에 폴더 있으면 `delete:folder:confluence` 추가) |
-   | 역방향 `pull` (읽기 전용) | `read:page:confluence` + `read:content-details:confluence` |
+   | 역방향 `pull` (읽기 전용) | `read:page:confluence` + `read:content-details:confluence` (첨부 이미지 다운로드까지 하려면 `read:attachment:confluence` 추가) |
 
 4. 생성 후 토큰 즉시 복사
 5. 토큰 계정은 대상 Space에 **페이지 추가/편집·첨부(및 rebuild 시 삭제) 권한**이 있어야 함
@@ -190,14 +190,17 @@ confluence-sync --exclude '*-draft.md' # 동기화 제외(반복 가능). .confl
 ```bash
 confluence-sync pull <pageId|url>                       # 한 페이지를 현재 폴더에 .md 로
 confluence-sync pull <url> --out ./docs                 # 출력 디렉토리 지정
-confluence-sync pull <url> --out ./docs --children      # 하위 페이지까지 폴더 트리로 복원
+confluence-sync pull <url> --out ./docs --children      # 하위 페이지·폴더까지 트리로 복원
+confluence-sync pull --space --out ./docs               # 스페이스(CONFLUENCE_SPACE_KEY) 전체를 가져오기
 ```
 
 - 식별자는 **숫자 ID** 또는 **URL**(`.../pages/<ID>/...` 페이지, `.../folder/<ID>` 폴더) 모두 됩니다.
+- **`--space`**: 대상을 주지 않고 **스페이스 홈페이지부터 전체**를 재귀적으로 가져옵니다(페이지+폴더). 페이지가 많으면 시간이 걸립니다.
+- 첨부 이미지까지 내려받으려면 토큰에 `read:attachment:confluence` 스코프가 필요합니다(없으면 `![](파일명)` 링크만 생성되고 파일은 미다운로드).
 - **폴더**를 주면 디렉토리로 만들고 그 안의 폴더·페이지를 재귀적으로 가져옵니다(폴더 자체는 본문이 없어 README 없음).
 - `--children`: 하위를 재귀적으로 가져오며, 자식이 있는 페이지는 `<제목>/README.md` 폴더로 펼칩니다(push 계층 관례의 역).
 - 본문은 Confluence `export_view`(HTML)를 [turndown](https://github.com/mixmark-io/turndown)으로 변환합니다. 코드블록 → ``` 펜스(언어 포함), 표 → GFM 표.
-- **이미지/첨부**는 `.md` 옆에 내려받고 `![](파일명)` 으로 링크를 로컬화합니다. 외부 URL 이미지는 그대로 둡니다.
+- **이미지/첨부**는 각 문서 옆 `attachments/<문서명>/` 하위에 내려받고 `![](attachments/문서명/파일명)` 으로 링크를 로컬화합니다(외부 URL 이미지는 그대로).
 - 필요 스코프는 [API 토큰 발급](#api-토큰-발급-scoped-필수)의 스코프 표 참고(pull 은 읽기 전용 스코프만).
 
 > ⚠️ **무손실 왕복은 아닙니다.** storage/export_view → Markdown 은 근사 변환이라 일부 매크로·레이아웃이 단순화될 수 있습니다. 또 내부 페이지 링크는 현재 **절대 URL로 유지**됩니다(상대 `.md` 링크 재작성은 미지원).
