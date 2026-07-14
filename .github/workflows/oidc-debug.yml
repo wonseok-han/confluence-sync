@@ -1,0 +1,50 @@
+name: OIDC debug
+
+# npm Trusted Publishing(OIDC) 이 왜 시도조차 안 되는지 확인하기 위한 임시 워크플로.
+# 원인을 잡으면 삭제한다. 실제 배포는 하지 않는다(--dry-run).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install -g npm@latest
+
+      - name: 환경 점검
+        run: |
+          echo "npm            : $(npm --version)"
+          echo "registry       : $(npm config get registry)"
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL   설정됨? : ${ACTIONS_ID_TOKEN_REQUEST_URL:+YES}${ACTIONS_ID_TOKEN_REQUEST_URL:-NO}"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN 설정됨? : ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:+YES}${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-NO}"
+          echo "NODE_AUTH_TOKEN 설정됨? : ${NODE_AUTH_TOKEN:+YES}${NODE_AUTH_TOKEN:-NO}"
+          echo "--- .npmrc (userconfig=$NPM_CONFIG_USERCONFIG) ---"
+          cat "${NPM_CONFIG_USERCONFIG:-/dev/null}" 2>/dev/null || echo "(없음)"
+          echo "--- OIDC 토큰을 직접 받아본다 ---"
+          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" \
+              | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{
+                  const t=JSON.parse(s).value;
+                  if(!t){console.log('토큰 없음:',s);process.exit(0);}
+                  const c=JSON.parse(Buffer.from(t.split('.')[1],'base64url').toString());
+                  console.log('OIDC claims:', JSON.stringify({sub:c.sub,repository:c.repository,workflow_ref:c.workflow_ref,aud:c.aud},null,2));
+                })"
+          else
+            echo "id-token 권한이 실제로 부여되지 않았다"
+          fi
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: publish --dry-run (인증 경로만 확인)
+        run: npm publish --provenance --access public --dry-run
