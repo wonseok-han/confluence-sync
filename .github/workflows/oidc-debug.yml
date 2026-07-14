@@ -43,8 +43,20 @@ jobs:
             echo "id-token 권한이 실제로 부여되지 않았다"
           fi
 
+      - name: npm 레지스트리에 OIDC 토큰 교환을 직접 요청 (거절 사유 확인)
+        run: |
+          JWT=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | node -p "JSON.parse(require('fs').readFileSync(0)).value")
+          echo "--- POST /-/npm/v1/oidc/token/exchange ---"
+          curl -sS -i -X POST \
+            -H "Authorization: Bearer $JWT" \
+            -H "Content-Type: application/json" \
+            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@wonseok-han%2fconfluence-sync" \
+            | /usr/bin/head -30
+
       - run: npm ci
       - run: npm run build
 
-      - name: publish --dry-run (인증 경로만 확인)
-        run: npm publish --provenance --access public --dry-run
+      - name: publish 시도 (verbose — OIDC 경로를 타는지 확인)
+        continue-on-error: true
+        run: npm publish --provenance --access public --loglevel verbose 2>&1 | grep -iE "oidc|trusted|auth|error|http" | head -30
