@@ -1,6 +1,6 @@
 name: Release
 
-# v* 태그를 푸시하면 빌드 → npm(공개) 배포 → GitHub Release 생성
+# v* 태그를 푸시하면: 빌드 → npm(공개) 배포 → 릴리즈노트 작성 → GitHub Release 생성
 on:
   push:
     tags:
@@ -8,13 +8,15 @@ on:
 
 permissions:
   contents: write # GitHub Release 생성
-  id-token: write # npm provenance
+  id-token: write # npm provenance (배포 출처 증명)
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 이전 태그를 알아야 비교 링크를 만들 수 있음
 
       - uses: actions/setup-node@v4
         with:
@@ -24,12 +26,12 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      # package.json 버전과 태그가 어긋나면 중단(잘못된 버전 배포 방지)
+      # package.json 버전과 태그가 어긋난 채 배포되는 사고 방지
       - name: Verify version matches tag
         run: |
           PKG=$(node -p "require('./package.json').version")
           TAG="${GITHUB_REF_NAME#v}"
-          echo "package.json=$PKG, tag=$TAG"
+          echo "package.json=$PKG / tag=$TAG"
           [ "$PKG" = "$TAG" ] || { echo "::error::package.json($PKG) != tag($TAG)"; exit 1; }
 
       - name: Publish to npm
@@ -37,7 +39,35 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      # CHANGELOG.md 의 해당 버전 섹션을 릴리즈노트로 사용하고,
+      # 없으면 이전 태그 이후 커밋 목록으로 대체한다.
+      - name: Build release notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v want="## $VERSION" '
+            $0 == want { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > NOTES.md
+
+          # 섹션이 비어 있으면(=CHANGELOG 에 해당 버전 없음) 커밋 목록으로 대체
+          if ! grep -q '[^[:space:]]' NOTES.md; then
+            echo "### Commits" > NOTES.md
+            PREV=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+            RANGE=${PREV:+$PREV..}${GITHUB_REF_NAME}
+            git log --no-merges --pretty='- %s' "$RANGE" >> NOTES.md
+          fi
+
+          PREV=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          if [ -n "$PREV" ]; then
+            printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
+              "$GITHUB_REPOSITORY" "$PREV" "$GITHUB_REF_NAME" >> NOTES.md
+          fi
+
+          printf '\n📦 npm: https://www.npmjs.com/package/@wonseok-han/confluence-sync/v/%s\n' "$VERSION" >> NOTES.md
+          echo "----- release notes -----"; cat NOTES.md
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file NOTES.md
