@@ -23,6 +23,9 @@ jobs:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
 
+      # Trusted Publishing(OIDC) 은 npm 11.5.1+ 필요 (setup-node 기본은 10.x)
+      - run: npm install -g npm@latest
+
       - run: npm ci
       - run: npm run build
 
@@ -34,10 +37,10 @@ jobs:
           echo "package.json=$PKG / tag=$TAG"
           [ "$PKG" = "$TAG" ] || { echo "::error::package.json($PKG) != tag($TAG)"; exit 1; }
 
-      - name: Publish to npm
+      # Trusted Publishing(OIDC): npm 에 이 저장소·워크플로를 신뢰 발행자로 등록해두면
+      # 장기 토큰 없이 단기 OIDC 토큰으로 발행된다 (id-token: write 권한 사용).
+      - name: Publish to npm (trusted publishing)
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # CHANGELOG.md 의 해당 버전 섹션을 릴리즈노트로 사용하고,
       # 없으면 이전 태그 이후 커밋 목록으로 대체한다.
