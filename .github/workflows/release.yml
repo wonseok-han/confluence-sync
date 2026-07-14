@@ -18,13 +18,18 @@ jobs:
         with:
           fetch-depth: 0 # 이전 태그를 알아야 비교 링크를 만들 수 있음
 
+      # registry-url 을 주지 않는다: 그러면 setup-node 가 .npmrc 에
+      #   //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
+      # 를 써넣고 NODE_AUTH_TOKEN 을 더미값(XXXXX-...)으로 채운다.
+      # npm 은 토큰이 설정돼 있으면 OIDC 를 시도하지 않고 그 더미 토큰으로 publish 해 404 가 난다.
+      # 토큰이 없어야 Trusted Publishing(OIDC) 경로를 탄다. 레지스트리 기본값이 npmjs 라 문제없다.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: 'https://registry.npmjs.org'
 
-      # Trusted Publishing(OIDC) 은 npm 11.5.1+ 필요 (setup-node 기본은 10.x)
+      # Trusted Publishing(OIDC) 은 npm 11.5.1+ 필요 (Node 22 기본은 10.x)
       - run: npm install -g npm@latest
+      - run: npm --version
 
       - run: npm ci
       - run: npm run build
