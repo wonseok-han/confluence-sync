@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, join, dirname, basename } from 'node:path';
 import { readEnv, requireEnv } from './config.js';
 import { createClient } from './confluence.js';
-import { htmlToMarkdown } from './html2md.js';
+import { htmlToMarkdown, codeLanguagesFromStorage } from './html2md.js';
 import { cyan, dim, green, red, yellow } from './colors.js';
 
 type Client = ReturnType<typeof createClient>;
@@ -38,8 +38,11 @@ function slug(title: string): string {
 
 type Counts = { pages: number; folders: number };
 
+type Node = { id: string; type: string; title: string; html: string; storage: string };
+
 /** 페이지 1건을 .md 로 생성(자식 페이지/폴더가 있으면 <slug>/README.md 폴더로). */
-async function pullPage(client: Client, id: string, title: string, html: string, destDir: string, withChildren: boolean): Promise<Counts> {
+async function pullPage(client: Client, node: Node, destDir: string, withChildren: boolean): Promise<Counts> {
+  const { id, title, html, storage } = node;
   // 페이지도 하위 페이지 + 하위 폴더를 모두 가질 수 있다(폴더가 페이지 밑에 올 수 있음).
   const childFolders = withChildren ? await client.getChildFolders(id) : [];
   const childPages = withChildren ? await client.getChildPages(id) : [];
@@ -54,7 +57,11 @@ async function pullPage(client: Client, id: string, title: string, html: string,
   const assetPrefix = `${ASSETS_DIR}/${mdBase}`;
 
   const referenced = new Set<string>();
-  const body = htmlToMarkdown(html, { onImage: (f) => referenced.add(f), assetPrefix });
+  const body = htmlToMarkdown(html, {
+    onImage: (f) => referenced.add(f),
+    assetPrefix,
+    codeLangs: codeLanguagesFromStorage(storage), // 코드블록 언어는 storage 가 진짜
+  });
 
   if (referenced.size) {
     const attachments = await client.listAttachments(id);
@@ -103,8 +110,8 @@ async function pullNode(client: Client, id: string, destDir: string, withChildre
       return counts;
     }
 
-    // page: 본문을 위해 그대로 getNode 결과(html) 사용
-    return await pullPage(client, id, node.title, node.html, destDir, withChildren);
+    // page: getNode 결과(html + storage) 그대로 사용
+    return await pullPage(client, node, destDir, withChildren);
   } catch (e) {
     console.error(red(`  ✗ 실패  #${id}`) + `\n${(e as Error).message}`);
     return { pages: 0, folders: 0 };

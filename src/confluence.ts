@@ -166,14 +166,18 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     return res.json();
   }
 
-  /** 콘텐츠 노드 조회. type('page'|'folder' 등) + 제목 + (페이지면) export_view(HTML). */
-  async function getNode(id: string): Promise<{ id: string; type: string; title: string; html: string }> {
-    const data = await getV1(`/rest/api/content/${id}?expand=body.export_view`);
+  /**
+   * 콘텐츠 노드 조회. type + 제목 + export_view(HTML) + storage(원본 XHTML).
+   * storage 는 코드블록의 "진짜" 언어를 얻는 데 쓴다(export_view 는 언어 미지정 시 brush:java 기본값이 붙어 신뢰 불가).
+   */
+  async function getNode(id: string): Promise<{ id: string; type: string; title: string; html: string; storage: string }> {
+    const data = await getV1(`/rest/api/content/${id}?expand=body.export_view,body.storage`);
     return {
       id: data.id,
       type: data.type ?? 'page',
       title: data.title ?? id,
       html: data.body?.export_view?.value ?? '',
+      storage: data.body?.storage?.value ?? '',
     };
   }
 
