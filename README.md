@@ -18,35 +18,19 @@ confluence-sync             # 실제 동기화
 
 ### 글로벌 CLI (권장) — 어디서나 `confluence-sync` 실행
 
-이 패키지는 사내 **Git 호스팅 Package Registry**에 올라가 있어, npm 에게 "`@wonseok-han` 스코프는 Git 호스팅 에서 받아라"라고 한 번 알려줘야 합니다. (공개 npm 에 없으므로 이 설정이 없으면 설치가 404 로 실패합니다.)
+```bash
+npm i -g @wonseok-han/confluence-sync
 
-**1) 액세스 토큰 발급** — Git 호스팅 에서 패키지를 내려받을 권한.
-   - Git 호스팅 → 우상단 프로필 → **Edit profile → Access Tokens** → **`read_package_registry`** 스코프로 토큰 생성(만료일 지정 권장).
-   - 또는 confluence-sync 프로젝트의 **Settings → Repository → Deploy tokens** 에서 `read_package_registry` 토큰 발급.
+confluence-sync --version   # 버전이 찍히면 성공
+confluence-sync --help      # 사용법
+```
 
-**2) `~/.npmrc` 에 스코프 매핑 추가** — 홈 디렉토리의 `~/.npmrc` 파일(없으면 새로 만듦)에 아래 두 줄을 넣고 `<TOKEN>` 을 1)에서 받은 값으로 교체합니다.
-   ```
-   @wonseok-han:registry=https://git.internal.example/api/v4/projects/0/packages/npm/
-   //git.internal.example/api/v4/projects/0/packages/npm/:_authToken=<TOKEN>
-   ```
-   명령으로 넣어도 됩니다(`<TOKEN>` 교체):
-   ```bash
-   npm config set @wonseok-han:registry "https://git.internal.example/api/v4/projects/0/packages/npm/"
-   npm config set "//git.internal.example/api/v4/projects/0/packages/npm/:_authToken" "<TOKEN>"
-   ```
-
-**3) 설치 & 확인**
-   ```bash
-   npm i -g @wonseok-han/confluence-sync
-   confluence-sync --version   # 버전이 찍히면 성공
-   confluence-sync --help      # 사용법
-   ```
-   > 설치가 `registry.npmjs.org ... 404` 로 실패하면 2)의 스코프 매핑이 빠졌거나 `~/.npmrc` 위치가 잘못된 것입니다. 인증 실패(401/403)면 토큰 권한·만료를 확인하세요.
+공개 npm 패키지라 **토큰이나 `.npmrc` 설정이 필요 없습니다.**
 
 ### 로컬 개발 (소스에서 실행)
 
 ```bash
-git clone https://git.internal.example/wonseok-han/confluence-sync.git
+git clone https://github.com/wonseok-han/confluence-sync.git
 cd confluence-sync
 npm install
 ```
@@ -207,30 +191,21 @@ confluence-sync pull --space --out ./docs               # 스페이스(CONFLUENC
 
 ## 릴리스 (배포)
 
-릴리즈 노트(changelog) 작성이 배포의 시작점입니다. **changelog를 `main`에 올리면 → Git 호스팅 Release+태그가 생기고 → 그 태그가 npm publish를 트리거**합니다.
+**`v*` 태그를 푸시하면** GitHub Actions(`.github/workflows/release.yml`)가 빌드 → **공개 npm 배포** → **GitHub Release 생성**까지 자동으로 합니다.
 
 ```bash
-# 1) package.json 버전 bump (changelog 파일명과 반드시 일치)
-npm version 0.2.0 --no-git-tag-version
+# 1) 버전 bump + 커밋 + v태그 생성
+npm version patch        # 또는 minor / major
 
-# 2) 릴리즈 노트 작성 (changelogs/TEMPLATE.md 참고)
-cp changelogs/TEMPLATE.md changelogs/v0.2.0.md   # 편집해서 Added/Fixed/Changed 채우기
-
-# 3) main 에 커밋·푸시
-git add package.json changelogs/v0.2.0.md
-git commit -m "chore: release v0.2.0"
-git push origin main
+# 2) 푸시 (태그 포함)
+git push && git push --tags
 ```
 
-이후 CI가 자동으로:
-1. `create_release` 잡(`ci/.git-host-ci.release.yml`)이 `changelogs/` 변경을 감지 → 최신 `v*.md`로 **Git 호스팅 Release + `v0.2.0` 태그** 생성
-2. 생성된 태그가 `publish` 잡을 트리거 → **Git 호스팅 Package Registry에 npm publish**
+- 워크플로는 **`package.json` 버전과 태그가 일치하는지 검증**한 뒤 배포합니다(불일치 시 중단).
+- 변경 이력은 [`CHANGELOG.md`](CHANGELOG.md) 에 정리합니다.
+- 같은 버전은 재배포할 수 없으니 항상 버전을 올립니다.
 
-> **사전 설정 (1회)**: `create_release`는 Git 호스팅 Release API를 호출하므로, `api` 스코프의 Personal Access Token을 프로젝트 **Settings → CI/CD → Variables**에 `GITLAB_TOKEN`(Masked)으로 등록해야 합니다. publish는 `CI_JOB_TOKEN`을 자동으로 사용합니다.
-
-- 릴리즈 노트는 `changelogs/vX.Y.Z.md`에 수동 작성하며, 파일명 버전 = `package.json` 버전이어야 publish 버전이 맞습니다.
-- 같은 버전은 재배포 불가하므로 항상 버전을 올립니다(`create_release`는 태그가 이미 있으면 skip).
-- 로컬에서 수동 배포하려면 `~/.npmrc`에 `write_package_registry` 토큰을 설정하고 `npm publish` 하면 됩니다(`prepublishOnly`가 자동 빌드).
+> **사전 설정 (1회)**: npm 배포용 토큰을 GitHub 저장소 **Settings → Secrets and variables → Actions** 에 **`NPM_TOKEN`** 으로 등록해야 합니다(npmjs.org → Access Tokens → Automation 토큰).
 
 ## 현재 한계 (개선 여지)
 

@@ -1,14 +1,37 @@
 {
   "name": "@wonseok-han/confluence-sync",
-  "version": "0.7.0",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Markdown 디렉토리를 Confluence Cloud 페이지로 단방향 동기화하는 수동 실행 도구",
+  "description": "Confluence Cloud ↔ Markdown 양방향 동기화 CLI — 마크다운을 Confluence 페이지로 발행(push)하고, Confluence 페이지·폴더·스페이스를 마크다운으로 가져옵니다(pull).",
+  "keywords": [
+    "confluence",
+    "markdown",
+    "sync",
+    "cli",
+    "atlassian",
+    "docs-as-code",
+    "obsidian"
+  ],
+  "license": "MIT",
+  "author": "wonseok-han",
+  "homepage": "https://github.com/wonseok-han/confluence-sync#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wonseok-han/confluence-sync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wonseok-han/confluence-sync/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
     "confluence-sync": "dist/sync.js"
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
@@ -19,7 +42,7 @@
     "list": "tsx src/sync.ts --list"
   },
   "publishConfig": {
-    "registry": "https://git.internal.example/api/v4/projects/0/packages/npm/"
+    "access": "public"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
