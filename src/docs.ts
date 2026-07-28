@@ -6,6 +6,10 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve, relative, basename, dirname } from 'node:path';
 import { splitTitleAndBody } from './markdown.js';
 import { splitFrontmatter, type Frontmatter } from './obsidian.js';
+import {
+  buildAnchorIndex, collectHeadings, collectLinkAnchors, wikilinkAnchorToSlug,
+  decodeAnchor, type LinkAnchor,
+} from './anchors.js';
 
 /**
  * 숨김 디렉토리는 문서가 아니다. Obsidian vault 의 `.obsidian/`(설정)·`.trash/`(휴지통) 과
@@ -44,17 +48,104 @@ export function collectAssets(dir: string): string[] {
  * 제목 우선순위: frontmatter `title` > 첫 H1 > 파일명. H1 은 어느 경우든 본문에서 제거된다
  * (Confluence 는 페이지 제목을 따로 가지므로 본문에 남으면 제목이 두 번 보인다).
  */
-export function readDoc(baseDir: string, rel: string): { title: string; body: string; fm: Frontmatter } {
+export type Doc = {
+  title: string;
+  body: string;
+  fm: Frontmatter;
+  /** 슬러그 → 헤딩 텍스트 */
+  anchors: Map<string, string>;
+  /** 본문(H1 제거 후) 헤딩들의 슬러그, 문서 순서대로 — 렌더 중 헤딩과 1:1로 맞춘다 */
+  bodySlugs: string[];
+  /** 이 문서가 섹션을 가리키는 링크들 */
+  linkAnchors: LinkAnchor[];
+};
+
+export function readDoc(baseDir: string, rel: string): Doc {
   const { data, body: afterFm } = splitFrontmatter(readFileSync(resolve(baseDir, rel), 'utf8'));
+  // 앵커 사전은 H1 을 **포함해** 만든다 — GitHub 이 중복 슬러그에 -1·-2 를 붙이는 순서와 맞추기 위해서다.
+  // (H1 자체를 가리키는 링크는 Confluence 에서 페이지 최상단이 된다)
+  const all = collectHeadings(afterFm);
+  const anchors = buildAnchorIndex(afterFm);
   const { title, body } = splitTitleAndBody(afterFm, basename(rel).replace(/\.md$/i, ''));
-  return { title: (data.title || title).trim(), body, fm: data };
+  // splitTitleAndBody 가 본문에서 첫 H1 을 지우므로 슬러그 목록에서도 같은 것을 뺀다
+  const dropped = all.findIndex((h) => h.level === 1);
+  return {
+    title: (data.title || title).trim(),
+    body,
+    fm: data,
+    anchors,
+    bodySlugs: all.filter((_, i) => i !== dropped).map((h) => h.slug),
+    linkAnchors: collectLinkAnchors(afterFm),
+  };
 }
 
-/** base 상대 경로 → 문서 제목 인덱스 */
-export function buildTitleIndex(rels: string[], baseDir: string): Record<string, string> {
-  const idx: Record<string, string> = {};
-  for (const rel of rels) idx[rel] = readDoc(baseDir, rel).title;
-  return idx;
+/** base 상대 경로 → 제목·앵커 인덱스(링크와 섹션 링크를 해석하는 데 둘 다 필요하다) */
+export function buildDocIndex(
+  rels: string[],
+  baseDir: string,
+): {
+  titles: Record<string, string>;
+  anchors: Record<string, Map<string, string>>;
+  docs: Record<string, Doc>;
+} {
+  const titles: Record<string, string> = {};
+  const anchors: Record<string, Map<string, string>> = {};
+  const docs: Record<string, Doc> = {};
+  for (const rel of rels) {
+    const doc = readDoc(baseDir, rel);
+    titles[rel] = doc.title;
+    anchors[rel] = doc.anchors;
+    docs[rel] = doc;
+  }
+  return { titles, anchors, docs };
+}
+
+/** `a/b/../c.md` 같은 상대 이동을 정리해 base 상대 경로로 만든다. */
+function normalizeRel(dir: string, dest: string): string | null {
+  const parts = (dir ? `${dir}/${dest}` : dest).split('/');
+  const out: string[] = [];
+  for (const p of parts) {
+    if (p === '' || p === '.') continue;
+    if (p === '..') {
+      if (!out.length) return null; // base 밖
+      out.pop();
+    } else out.push(p);
+  }
+  return out.join('/');
+}
+
+/**
+ * 어느 문서의 어느 헤딩이 **실제로 링크 대상인지** 모은다.
+ * Confluence 가 헤딩에 붙이는 id 에 기대지 않고 Anchor 매크로로 이름을 심을 것이므로,
+ * 심을 곳을 알아야 한다. 아무도 가리키지 않는 헤딩에는 매크로를 넣지 않는다(페이지를 깨끗하게 유지).
+ */
+export function resolveAnchorTargets(
+  docs: Record<string, Doc>,
+  vault: Vault,
+): Record<string, Set<string>> {
+  const out: Record<string, Set<string>> = {};
+  for (const [rel, doc] of Object.entries(docs)) {
+    const dir = dirname(rel) === '.' ? '' : dirname(rel);
+    for (const la of doc.linkAnchors) {
+      let target: string | null;
+      let slug: string | null;
+
+      if (la.wiki) {
+        target = vault.notes[la.dest.toLowerCase().replace(/\.md$/i, '')] ?? null;
+        slug = wikilinkAnchorToSlug(la.fragment);
+      } else {
+        target = la.dest === '' ? rel : normalizeRel(dir, decodeAnchor(la.dest));
+        if (target && !/\.md$/i.test(target)) target = null;
+        slug = decodeAnchor(la.fragment).toLowerCase();
+      }
+
+      if (!target || !slug) continue;
+      // 실제로 존재하는 헤딩만 — 없는 앵커는 markdown.ts 가 경고로 잡는다
+      if (!docs[target]?.anchors.has(slug)) continue;
+      (out[target] ??= new Set()).add(slug);
+    }
+  }
+  return out;
 }
 
 /** vault 안에서 [[wikilink]] 대상을 찾기 위한 이름 인덱스. */

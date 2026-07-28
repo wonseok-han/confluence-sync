@@ -19,7 +19,8 @@ import { resolve, relative } from 'node:path';
 import { readEnv, requireEnv } from './config.js';
 import { toStorage, docHash, type Rendered } from './markdown.js';
 import {
-  collectMarkdown, collectAssets, buildTitleIndex, buildFolderIndex, buildVault, vaultResolver, readDoc,
+  collectMarkdown, collectAssets, buildDocIndex, resolveAnchorTargets, buildFolderIndex,
+  buildVault, vaultResolver, readDoc,
   parentKeyOf, containerKeyOf, sortForSync, resolveSelection, withParents,
 } from './docs.js';
 import { loadMapping, saveMapping, type Mapping } from './mapping.js';
@@ -97,10 +98,21 @@ async function main() {
   const allRel = collected.filter((r) => !ignorer.ignores(r)); // 제외된 문서는 모든 단계에서 빠짐
   const ignoredCount = collected.length - allRel.length;
   const folderIndex = buildFolderIndex(allRel);
-  const titleIndex = buildTitleIndex(allRel, BASE_DIR); // 링크 변환은 항상 전체 기준
+  // 링크·섹션 링크 변환은 항상 전체 기준(선택 동기화여도 대상 문서의 제목·헤딩을 알아야 한다)
+  const { titles: titleIndex, anchors: anchorIndex, docs } = buildDocIndex(allRel, BASE_DIR);
   // Obsidian [[wikilink]] 해석용 이름 인덱스. 제외된 문서는 링크 대상에서도 빠진다.
   const vault = buildVault(allRel, collectAssets(BASE_DIR).map((f) => relative(BASE_DIR, f)));
-  const render = (rel: string, body: string) => toStorage(body, rel, titleIndex, BASE_DIR, vaultResolver(rel, vault));
+  // 누가 어느 헤딩을 가리키는지 먼저 모은다 — 그 헤딩에만 Anchor 매크로를 심는다.
+  // 선택 동기화여도 트리 전체를 봐야 한다(다른 문서가 이 문서의 섹션을 가리킬 수 있으므로).
+  const anchorTargets = resolveAnchorTargets(docs, vault);
+  const render = (rel: string, body: string, title: string) =>
+    toStorage(body, rel, titleIndex, BASE_DIR, {
+      resolveLink: vaultResolver(rel, vault),
+      anchorIndex,
+      title,
+      anchorNames: anchorTargets[rel],
+      bodySlugs: docs[rel]?.bodySlugs,
+    });
 
   const selected = positionals.length
     ? withParents(resolveSelection(allRel, positionals, BASE_DIR), folderIndex)
@@ -148,7 +160,7 @@ async function main() {
         console.log(`  [${fex?.pageId ? gray('폴더') : green('폴더+')}] 📁 ${d}/`);
       }
       const { title, body, fm } = readDoc(BASE_DIR, rel);
-      const r = render(rel, body);
+      const r = render(rel, body, title);
       const hash = docHash(title, r);
       const ex = mapping[rel];
       // 매핑엔 없지만 frontmatter 에 pageId 가 있으면 신규 생성이 아니라 기존 페이지에 연결된다
@@ -156,7 +168,12 @@ async function main() {
         ? (fm.pageId ? cyan('연결') : green('신규'))
         : ex.hash === hash ? gray('동일') : yellow('변경');
       const pk = parentKeyOf(rel, folderIndex);
-      console.log(`  [${status}] ${rel}  ${dim('→')}  ${cyan(`"${title}"`)}  ${dim(`(부모: ${pk ?? 'ROOT'}, 내부링크: ${r.internalLinks}, 이미지: ${r.images.length})`)}`);
+      const anchorNote = r.anchorLinks || r.anchorsPlaced
+        ? `, 섹션링크: ${r.anchorLinks}, 앵커: ${r.anchorsPlaced}` : '';
+      console.log(`  [${status}] ${rel}  ${dim('→')}  ${cyan(`"${title}"`)}  ${dim(`(부모: ${pk ?? 'ROOT'}, 내부링크: ${r.internalLinks}${anchorNote}, 이미지: ${r.images.length})`)}`);
+      if (r.deadAnchors.length) {
+        console.error(yellow(`    ⚠ 대응 헤딩 없는 앵커 ${r.deadAnchors.length}개: `) + dim(r.deadAnchors.slice(0, 3).join(' ')));
+      }
     }
     console.log('\n' + dim('--dry-run: 실제 호출 없음.'));
     return;
@@ -214,9 +231,12 @@ async function main() {
     if (!folderOk) { console.error(yellow(`  ✗ 건너뜀  ${rel}  (상위 폴더 미생성)`)); continue; }
 
     const { title, body, fm } = readDoc(BASE_DIR, rel);
-    const r = render(rel, body);
+    const r = render(rel, body, title);
     const hash = docHash(title, r);
     const pk = parentKeyOf(rel, folderIndex);
+    if (r.deadAnchors.length) {
+      console.error(yellow(`  ⚠ 대응 헤딩 없는 앵커  ${rel}`) + dim(`  ${r.deadAnchors.slice(0, 3).join(' ')}${r.deadAnchors.length > 3 ? ` 외 ${r.deadAnchors.length - 3}` : ''}`));
+    }
     const parentId = pk ? work[pk]?.pageId : env.parentId;
     rendered.set(rel, { ...r, title, hash, parentId });
     if (pk && !parentId) {

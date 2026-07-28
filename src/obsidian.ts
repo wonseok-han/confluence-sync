@@ -10,6 +10,8 @@
  * 이 도구의 관심사가 아니며, 알 수 없는 키는 건드리지 않고 보존한다.
  */
 
+import { wikilinkAnchorToSlug } from './anchors.js';
+
 export type Frontmatter = Record<string, string>;
 
 const FENCE = /^\s*(?:```|~~~)/;
@@ -83,7 +85,11 @@ export function resolveWikilinks(md: string, resolve: LinkResolver): string {
       const found = resolve(target.trim(), embed);
       if (!found) return whole; // 해석 실패 → 원문 보존
       const label = (alias ?? target).trim();
-      return embed ? `![${label}](${dest(found)})` : `[${label}](${dest(found + (hash ?? ''))})`;
+      if (embed) return `![${label}](${dest(found)})`;
+      // Obsidian 은 섹션을 헤딩 텍스트로 가리키지만(`#1. 신뢰 — Trust Registry`)
+      // 표준 마크다운은 슬러그를 쓴다. 블록 참조(`#^id`)는 대응물이 없어 링크만 남긴다.
+      const slug = hash ? wikilinkAnchorToSlug(hash.slice(1)) : null;
+      return `[${label}](${dest(found + (slug ? `#${slug}` : ''))})`;
     }),
   );
 }
