@@ -100,8 +100,8 @@ confluence-sync --dry-run              # 대상·상태(신규/변경/동일) �
 confluence-sync                        # 변경된 문서만 갱신 (+ 신규 생성)
 
 confluence-sync --base /abs/path/docs  # 동기화 루트 지정 (env 미설정 시 필수)
-confluence-sync guide/                 # 지정 폴더만 (부모 README 자동 포함)
-confluence-sync guide/setup.md         # 단일 문서만
+confluence-sync guide/                 # 지정 폴더만
+confluence-sync guide/setup.md         # 단일 문서만 (상위 README 는 발행되지 않음)
 confluence-sync --force                # 변경 감지 무시, 전체 강제 갱신
 confluence-sync --verify               # 변경 없는 문서도 페이지 존재 확인
 confluence-sync --rebuild              # 매핑된 페이지 전부 삭제 후 재생성
@@ -113,6 +113,8 @@ confluence-sync --exclude '*-draft.md' # 제외 패턴 (반복 가능)
 - 폴더의 **`README.md`** 가 그 폴더의 **대표 페이지**가 되고, 같은 폴더의 다른 문서는 그 자식이 됩니다.
 - README 가 **없는** 폴더는 **Confluence 폴더**로 생성되고 그 아래로 문서가 들어갑니다 (`write:folder` 스코프 필요).
 - `README.md` 는 폴더 맨 앞, 나머지는 파일명순(숫자 prefix `01-`, `10-` … 로 순서 제어)으로 정렬되어 부모가 자식보다 먼저 생성됩니다.
+
+> **경로를 지정해 동기화할 때**는 상위 `README.md` 가 **발행 대상이 아닙니다.** 자식을 붙일 부모 pageId 를 얻는 데만 쓰이고, 내용이 바뀌어 있어도 갱신하지 않습니다(`· 상위` 로 표시). 아직 페이지가 없으면 자식을 붙일 곳이 없으므로 그때는 생성합니다. 상위 문서도 갱신하려면 함께 지정하세요.
 
 ```
 docs/                      → [CONFLUENCE_PARENT_ID 또는 공간 최상위]

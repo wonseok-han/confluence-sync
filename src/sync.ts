@@ -114,11 +114,18 @@ async function main() {
       bodySlugs: docs[rel]?.bodySlugs,
     });
 
-  const selected = positionals.length
-    ? withParents(resolveSelection(allRel, positionals, BASE_DIR), folderIndex)
-    : allRel;
+  // 사용자가 실제로 고른 문서. 경로 인자가 없으면 전체가 대상이다.
+  const picked = positionals.length ? resolveSelection(allRel, positionals, BASE_DIR) : allRel;
+  const explicit = new Set(picked);
+  // 상위 README 를 함께 넣는 것은 **자식의 부모 pageId 를 얻기 위해서**다(발행 대상이 아니다).
+  const selected = positionals.length ? withParents(picked, folderIndex) : allRel;
   const files = sortForSync(selected);
-  const scope = positionals.length ? `선택 ${files.length}/${allRel.length}건` : `${files.length}건`;
+  /** 딸려온 상위 README 인가 — 이미 페이지가 있으면 내용은 건드리지 않는다. */
+  const isCarriedParent = (rel: string) => !explicit.has(rel);
+  const scope = positionals.length
+    ? `선택 ${explicit.size}/${allRel.length}건` +
+      (files.length > explicit.size ? dim(` (+상위 ${files.length - explicit.size})`) : '')
+    : `${files.length}건`;
   const ignoredNote = ignoredCount ? dim(`  (제외 ${ignoredCount})`) : '';
   console.log(`${dim('base:')} ${cyan(BASE_DIR)}\n${dim('대상:')} ${scope}${ignoredNote}`);
 
@@ -159,6 +166,12 @@ async function main() {
         const fex = mapping[`${d}/`];
         console.log(`  [${fex?.pageId ? gray('폴더') : green('폴더+')}] 📁 ${d}/`);
       }
+      const ex0 = mapping[rel];
+      // 딸려온 상위 README 는 pageId 만 쓰고 지나간다 — 고르지 않은 문서를 발행하지 않는다
+      if (isCarriedParent(rel) && ex0?.pageId) {
+        console.log(`  [${gray('상위')}] ${rel}  ${dim(`(pageId #${ex0.pageId} 만 사용)`)}`);
+        continue;
+      }
       const { title, body, fm } = readDoc(BASE_DIR, rel);
       const r = render(rel, body, title);
       const hash = docHash(title, r);
@@ -187,7 +200,7 @@ async function main() {
   if (REBUILD) { await client.deleteAll(mapping); saveMapping(MAPPING_PATH, {}); }
   const work: Mapping = REBUILD ? {} : mapping;
 
-  let created = 0, updated = 0, skipped = 0, recreated = 0, relinked = 0, foldersMade = 0, linked = 0;
+  let created = 0, updated = 0, skipped = 0, recreated = 0, relinked = 0, foldersMade = 0, linked = 0, carried = 0;
   const rendered = new Map<string, Rendered & { title: string; hash: string; parentId: string | undefined }>();
   const recreatedTitles = new Set<string>(); // 이번에 재생성된 문서의 제목
   const touched = new Set<string>();          // 이번에 발행(생성/갱신/재생성)된 문서
@@ -229,6 +242,15 @@ async function main() {
       if (!folderOk) break;
     }
     if (!folderOk) { console.error(yellow(`  ✗ 건너뜀  ${rel}  (상위 폴더 미생성)`)); continue; }
+
+    // 딸려온 상위 README 는 자식의 부모 pageId 를 얻으려고 들어온 것이다.
+    // 이미 페이지가 있으면 내용은 건드리지 않는다 — `csync <파일>` 이 고르지 않은 문서를 발행하면 안 된다.
+    // (페이지가 아직 없으면 자식을 붙일 곳이 없으므로 아래에서 생성한다)
+    if (isCarriedParent(rel) && work[rel]?.pageId) {
+      console.log(`  ${gray('· 상위')}  ${rel}  ${dim(`(pageId #${work[rel].pageId} 만 사용)`)}`);
+      carried++;
+      continue;
+    }
 
     const { title, body, fm } = readDoc(BASE_DIR, rel);
     const r = render(rel, body, title);
@@ -312,7 +334,8 @@ async function main() {
     `  ${gray(`변경없음 ${skipped}`)}` +
     (linked ? `  ${cyan(`연결 ${linked}`)}` : '') +
     (foldersMade ? `  ${cyan(`폴더 ${foldersMade}`)}` : '') +
-    `  ${dim(`대상 ${files.length}`)}`,
+    (carried ? `  ${gray(`상위 ${carried}`)}` : '') +
+    `  ${dim(`대상 ${files.length - carried}`)}`,
   );
 }
 
