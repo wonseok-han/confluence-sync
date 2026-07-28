@@ -12,7 +12,8 @@
 import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, copyFileSync } from 'node:fs';
 import { resolve, relative, dirname, basename, join } from 'node:path';
 import { collectMarkdown, collectAssets, buildVault, vaultResolver } from './docs.js';
-import { linksToWikilinks, resolveWikilinks } from './obsidian.js';
+import { linksToWikilinks, resolveWikilinks, splitFrontmatter } from './obsidian.js';
+import { buildAnchorIndex } from './anchors.js';
 import { repairMarkdown, totalFixes, type RepairStats } from './repair.js';
 import { bold, cyan, dim, gray, green, red, yellow } from './colors.js';
 
@@ -60,9 +61,15 @@ function commonAncestor(paths: string[]): string | null {
  * wikilink 는 vault 어디서든 "이름"으로 찾으므로, 파일명이 트리 안에서 유일할 때만 바꾼다
  * (겹치면 엉뚱한 노트로 이어질 수 있어 상대 링크를 그대로 둔다).
  */
-function toObsidian(text: string, fileAbs: string, baseDir: string, nameCount: Map<string, number>): string {
+function toObsidian(
+  text: string,
+  fileAbs: string,
+  baseDir: string,
+  nameCount: Map<string, number>,
+  headingOf: (targetAbs: string, slug: string) => string | undefined,
+): string {
   return linksToWikilinks(text, (dest, label) => {
-    if (/^(https?:|mailto:|#)/i.test(dest)) return null; // 외부 링크·앵커
+    if (/^(https?:|mailto:|#)/i.test(dest)) return null; // 외부 링크·같은 문서 앵커
     const [pathPart, ...hash] = decode(dest).split('#');
     if (!/\.md$/i.test(pathPart)) return null;
 
@@ -73,9 +80,14 @@ function toObsidian(text: string, fileAbs: string, baseDir: string, nameCount: M
     const name = basename(targetAbs).replace(/\.md$/i, '');
     if (nameCount.get(name) !== 1) return null;              // 이름이 겹치면 상대 링크 유지
 
-    const anchor = hash.length ? `#${hash.join('#')}` : '';
+    // Obsidian 의 섹션 링크는 슬러그가 아니라 헤딩 텍스트다. 대상 문서에서 헤딩을 못 찾으면
+    // 슬러그를 그대로 넣어봤자 안 걸리므로, 링크는 살리되 섹션은 떼고 문서 최상단으로 보낸다.
+    const slug = hash.join('#');
+    const heading = slug ? headingOf(targetAbs, slug) : undefined;
+    const anchor = heading ? `#${heading}` : '';
+
     const l = label.trim();
-    return l && l !== name ? `[[${name}${anchor}|${l}]]` : `[[${name}${anchor}]]`;
+    return l && l !== name ? `[[${name}${anchor}|${l}]]` : anchor ? `[[${name}${anchor}|${name}]]` : `[[${name}]]`;
   });
 }
 
@@ -141,6 +153,17 @@ export async function runConvert(argv: string[]): Promise<void> {
     nameCount.set(n, (nameCount.get(n) ?? 0) + 1);
   }
 
+  // 섹션 링크(#슬러그 ↔ #헤딩 텍스트)를 옮기려면 대상 문서의 헤딩을 알아야 한다. 필요할 때만 읽는다.
+  const anchorCache = new Map<string, Map<string, string>>();
+  const headingOf = (targetAbs: string, slug: string): string | undefined => {
+    let idx = anchorCache.get(targetAbs);
+    if (!idx) {
+      idx = buildAnchorIndex(splitFrontmatter(readFileSync(targetAbs, 'utf8')).body);
+      anchorCache.set(targetAbs, idx);
+    }
+    return idx.get(slug.toLowerCase());
+  };
+
   // 실제로 고쳐 쓸 파일(선택). 경로를 안 주면 base 전체.
   const selected = targets.length
     ? allMd.filter((f) => targets.some((t) => {
@@ -201,7 +224,7 @@ export async function runConvert(argv: string[]): Promise<void> {
         notes.push(dim(`보정 ${n}`));
       }
     }
-    if (to === 'obsidian') text = toObsidian(text, abs, baseDir, nameCount);
+    if (to === 'obsidian') text = toObsidian(text, abs, baseDir, nameCount, headingOf);
     else if (to === 'markdown') text = resolveWikilinks(text, vaultResolver(rel, vault));
 
     // 제자리 변환이면 바뀐 것만 쓰지만, --out 이면 대상 전부를 내보낸다(온전한 트리가 나와야 하므로)

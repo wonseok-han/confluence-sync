@@ -10,6 +10,7 @@ import { resolve, relative, dirname, basename } from 'node:path';
 import { createHash } from 'node:crypto';
 import MarkdownIt from 'markdown-it';
 import { resolveWikilinks, type LinkResolver } from './obsidian.js';
+import { decodeAnchor, anchorMacro } from './anchors.js';
 
 export const escapeXml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -24,26 +25,84 @@ const decodePath = (s: string) => {
 type RenderCtx = {
   fileDir: string; // baseDir 기준 현재 파일 디렉토리
   titleIndex: Record<string, string>; // 내부 .md(base 상대) → 제목
+  anchorIndex: Record<string, Map<string, string>>; // 내부 .md(base 상대) → (슬러그 → 헤딩 텍스트)
+  selfRel: string; // 현재 파일(base 상대) — 같은 문서 앵커를 찾을 때 쓴다
+  selfTitle: string; // 현재 파일의 제목(= Confluence 페이지 제목)
+  anchorNames: Set<string>; // 이 문서에서 Anchor 매크로를 심을 헤딩 슬러그들
+  bodySlugs: string[]; // 본문 헤딩 슬러그(순서대로) — 렌더 중 헤딩과 맞춘다
+  headingSeq: number;
+  anchorsPlaced: number;
   images: { filename: string; abs: string }[];
   internalLinks: number;
+  anchorLinks: number; // 그중 섹션까지 가리키는 링크 수
+  deadAnchors: string[]; // 대응하는 헤딩을 못 찾은 앵커(그대로 두되 알린다)
   linkStack: boolean[];
   linkedTitles: Set<string>; // 이 문서가 내부 링크로 가리키는 대상 제목들
 };
 
 const md = new MarkdownIt({ html: true, linkify: true, breaks: false });
 
+const emptyCtx = (): RenderCtx => ({
+  fileDir: '', titleIndex: {}, anchorIndex: {}, selfRel: '', selfTitle: '',
+  anchorNames: new Set(), bodySlugs: [], headingSeq: 0, anchorsPlaced: 0,
+  images: [], internalLinks: 0, anchorLinks: 0, deadAnchors: [], linkStack: [], linkedTitles: new Set(),
+});
+
 // 렌더 규칙은 md 인스턴스에 한 번만 등록되므로, 현재 변환 컨텍스트를 모듈 변수로 공유한다.
-let ctx: RenderCtx = { fileDir: '', titleIndex: {}, images: [], internalLinks: 0, linkStack: [], linkedTitles: new Set() };
+let ctx: RenderCtx = emptyCtx();
 let baseDir = '';
 
-/** 링크 href 가 base 내부 .md 면 그 페이지 제목 반환 */
-function resolveInternalLink(href: string): string | null {
-  if (!href || /^(https?:|mailto:|#)/i.test(href)) return null;
-  const pathPart = href.split('#')[0];
+/**
+ * 내부 링크 대상.
+ *  - `title` 이 null 이면 같은 페이지(앵커만 이동)
+ *  - `anchor` 가 null 이면 페이지 최상단
+ * 둘 다 null 이면 Confluence 링크로 만들 게 없다는 뜻이다.
+ */
+type LinkTarget = { title: string | null; anchor: string | null };
+
+/**
+ * 링크가 가리킬 앵커 이름을 정한다 — **슬러그를 그대로 쓴다.**
+ * 대상 헤딩 앞에 같은 이름의 Anchor 매크로가 심기므로 Confluence 의 자동 id 규칙과 무관하게 맞는다.
+ * 그 문서의 H1 은 Confluence 페이지 제목이 되므로 앵커가 아니라 '최상단'이다.
+ */
+function anchorOf(rel: string, fragment: string, pageTitle: string): string | null {
+  const slug = decodePath(decodeAnchor(fragment)).toLowerCase();
+  const heading = ctx.anchorIndex[rel]?.get(slug);
+  if (!heading) {
+    ctx.deadAnchors.push(`#${slug}`); // 경고에 쓰이므로 사람이 읽을 수 있는 형태로 남긴다
+    return null;
+  }
+  return heading === pageTitle ? null : slug;
+}
+
+/** 링크 href 를 Confluence 내부 링크(페이지·앵커)로 해석. 아니면 null. */
+function resolveInternalLink(href: string): LinkTarget | null {
+  if (!href || /^(https?:|mailto:)/i.test(href)) return null;
+
+  // 같은 문서 안의 섹션: #슬러그
+  if (href.startsWith('#')) {
+    const anchor = anchorOf(ctx.selfRel, href.slice(1), ctx.selfTitle);
+    return anchor ? { title: null, anchor } : null;
+  }
+
+  const [pathPart, ...rest] = href.split('#');
   if (!pathPart || !/\.md$/i.test(pathPart)) return null;
   const rel = relative(baseDir, resolve(baseDir, ctx.fileDir, decodePath(pathPart)));
-  return ctx.titleIndex[rel] ?? null;
+  const title = ctx.titleIndex[rel];
+  if (!title) return null;
+  const fragment = rest.join('#');
+  return { title, anchor: fragment ? anchorOf(rel, fragment, title) : null };
 }
+
+// 링크 대상이 되는 헤딩 바로 앞에 Anchor 매크로를 심어 이름(슬러그)을 고정한다.
+// Confluence 가 헤딩에 붙이는 자동 id 는 Cloud/DC 가 다르고 바뀌므로 거기에 기대지 않는다.
+md.renderer.rules.heading_open = (tokens, idx, opts, _env, self) => {
+  const slug = ctx.bodySlugs[ctx.headingSeq++];
+  const open = self.renderToken(tokens, idx, opts);
+  if (!slug || !ctx.anchorNames.has(slug)) return open;
+  ctx.anchorsPlaced++;
+  return anchorMacro(slug) + open;
+};
 
 md.renderer.rules.fence = (tokens, idx) => {
   const t = tokens[idx];
@@ -55,12 +114,17 @@ md.renderer.rules.fence = (tokens, idx) => {
 
 md.renderer.rules.link_open = (tokens, idx, opts, _env, self) => {
   const href = tokens[idx].attrGet('href') || '';
-  const targetTitle = resolveInternalLink(href);
-  if (targetTitle) {
+  const t = resolveInternalLink(href);
+  // 페이지도 앵커도 못 정하면 Confluence 링크로 만들 게 없다 → 원문 <a> 유지
+  if (t && (t.title || t.anchor)) {
     ctx.linkStack.push(true);
     ctx.internalLinks++;
-    ctx.linkedTitles.add(targetTitle);
-    return `<ac:link><ri:page ri:content-title="${escapeXml(targetTitle)}" /><ac:link-body>`;
+    if (t.title) ctx.linkedTitles.add(t.title);
+    if (t.anchor) ctx.anchorLinks++;
+    // 앵커 이름은 헤딩 텍스트 그대로다. ri:page 가 없으면 같은 페이지 안의 이동이 된다.
+    const anchor = t.anchor ? ` ac:anchor="${escapeXml(t.anchor)}"` : '';
+    const page = t.title ? `<ri:page ri:content-title="${escapeXml(t.title)}" />` : '';
+    return `<ac:link${anchor}>${page}<ac:link-body>`;
   }
   ctx.linkStack.push(false);
   return self.renderToken(tokens, idx, opts);
@@ -103,25 +167,58 @@ export type Rendered = {
   storage: string;
   images: { filename: string; abs: string }[];
   internalLinks: number;
+  anchorLinks: number;
+  /** 이 문서에 심은 Anchor 매크로 수 */
+  anchorsPlaced: number;
+  deadAnchors: string[];
   linkedTitles: string[];
+};
+
+export type StorageOpts = {
+  /** Obsidian [[wikilink]] 해석기(주면 표준 링크로 먼저 정규화한다) */
+  resolveLink?: LinkResolver;
+  /** base 상대 경로 → (헤딩 슬러그 → 헤딩 텍스트). 섹션 링크를 ac:anchor 로 옮기는 데 쓴다 */
+  anchorIndex?: Record<string, Map<string, string>>;
+  /** 이 문서의 제목(= 만들어질 Confluence 페이지 제목) */
+  title?: string;
+  /** 이 문서에서 Anchor 매크로를 심을 헤딩 슬러그들(= 누군가 실제로 가리키는 헤딩) */
+  anchorNames?: Set<string>;
+  /** 본문 헤딩 슬러그, 문서 순서대로 */
+  bodySlugs?: string[];
 };
 
 /**
  * 본문 markdown 을 storage format 으로 변환(base 기준 상대경로로 링크·이미지 해석).
- * resolveLink 를 주면 Obsidian 의 [[wikilink]]·![[embed]] 를 먼저 표준 링크로 정규화한다.
  */
 export function toStorage(
   markdown: string,
   rel: string,
   titleIndex: Record<string, string>,
   base: string,
-  resolveLink?: LinkResolver,
+  opts: StorageOpts = {},
 ): Rendered {
   baseDir = base;
-  ctx = { fileDir: dirname(rel) === '.' ? '' : dirname(rel), titleIndex, images: [], internalLinks: 0, linkStack: [], linkedTitles: new Set() };
-  const src = resolveLink ? resolveWikilinks(markdown, resolveLink) : markdown;
+  ctx = {
+    ...emptyCtx(),
+    fileDir: dirname(rel) === '.' ? '' : dirname(rel),
+    titleIndex,
+    anchorIndex: opts.anchorIndex ?? {},
+    selfRel: rel,
+    selfTitle: opts.title ?? '',
+    anchorNames: opts.anchorNames ?? new Set(),
+    bodySlugs: opts.bodySlugs ?? [],
+  };
+  const src = opts.resolveLink ? resolveWikilinks(markdown, opts.resolveLink) : markdown;
   const storage = md.render(src);
-  return { storage, images: ctx.images, internalLinks: ctx.internalLinks, linkedTitles: [...ctx.linkedTitles] };
+  return {
+    storage,
+    images: ctx.images,
+    internalLinks: ctx.internalLinks,
+    anchorLinks: ctx.anchorLinks,
+    anchorsPlaced: ctx.anchorsPlaced,
+    deadAnchors: ctx.deadAnchors,
+    linkedTitles: [...ctx.linkedTitles],
+  };
 }
 
 /**

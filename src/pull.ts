@@ -12,7 +12,8 @@ import { resolve, join, dirname, basename, relative } from 'node:path';
 import { readEnv, requireEnv } from './config.js';
 import { createClient, type ContentNode } from './confluence.js';
 import { htmlToMarkdown, codeLanguagesFromStorage } from './html2md.js';
-import { buildFrontmatter } from './obsidian.js';
+import { buildFrontmatter, splitFrontmatter } from './obsidian.js';
+import { collectHeadings, matchConfluenceAnchor, type Heading } from './anchors.js';
 import { cyan, dim, green, red, yellow } from './colors.js';
 
 type Client = ReturnType<typeof createClient>;
@@ -22,6 +23,12 @@ const ASSETS_DIR = 'attachments';
 
 /** 마크다운 링크 중 Confluence 페이지를 가리키는 것: [text](https://.../pages/<id>/...) */
 const PAGE_LINK = /\[([^\]]*)\]\(<?(https?:\/\/[^\s)<>]*?\/pages\/(\d+)[^\s)<>]*?)>?\)/g;
+
+/** 같은 문서 안의 앵커: [text](#앵커) */
+const SELF_ANCHOR = /\[([^\]]*)\]\(#([^)\s]+)\)/g;
+
+/** 다른 페이지의 섹션: [text](https://.../pages/<id>/제목#앵커) — 앵커만 따로 잡는다 */
+const PAGE_ANCHOR = /(\[[^\]]*\]\(<?https?:\/\/[^\s)<>]*?\/pages\/(\d+)[^\s)<>#]*)#([^\s)<>]+?)(>?\))/g;
 
 type Opts = {
   withChildren: boolean;
@@ -158,12 +165,78 @@ async function pullNode(ctx: Ctx, id: string, destDir: string): Promise<Counts> 
   }
 }
 
+/** 앵커 해석에 필요한 문서 정보(제목 + 헤딩 목록). 내려받은 .md 에서 읽는다. */
+type DocInfo = { title: string; headings: Heading[]; textBySlug: Map<string, string> };
+
+function readDocInfo(file: string): DocInfo {
+  const { data, body } = splitFrontmatter(readFileSync(file, 'utf8'));
+  const headings = collectHeadings(body);
+  return {
+    title: data.title ?? '',
+    headings,
+    textBySlug: new Map(headings.map((h) => [h.slug, h.text])),
+  };
+}
+
+/**
+ * Confluence 가 만든 헤딩 앵커를 마크다운 슬러그로 바꾼다.
+ *
+ * Confluence 의 앵커 id 는 `<페이지제목><헤딩텍스트>`(공백 제거) 라서 Obsidian·GitHub 에서는
+ * 아무 데도 가리키지 못한다. 실제 헤딩을 찾아 그 문서의 슬러그로 바꿔 줘야 링크가 산다.
+ * relinkPass 보다 **먼저** 돈다 — 아직 링크가 절대 URL 이라 어느 페이지인지 id 로 알 수 있기 때문이다.
+ */
+export function anchorPass(
+  written: string[],
+  pathById: Map<string, string>,
+): { count: number; info: Map<string, DocInfo> } {
+  const info = new Map<string, DocInfo>();
+  for (const f of written) info.set(f, readDocInfo(f));
+
+  let count = 0;
+  for (const file of written) {
+    const self = info.get(file)!;
+    const before = readFileSync(file, 'utf8');
+
+    // 우리가 올린 페이지는 Anchor 매크로 이름이 이미 마크다운 슬러그라 그대로 두면 된다.
+    // Confluence 에서 직접 쓴 페이지만 헤딩을 찾아 맞춘다.
+    const toSlug = (frag: string, d: DocInfo): string | null => {
+      if (d.textBySlug.has(frag)) return null; // 이미 올바른 슬러그
+      return matchConfluenceAnchor(frag, d.headings, d.title)?.slug ?? null;
+    };
+
+    let after = before.replace(SELF_ANCHOR, (whole, label: string, frag: string) => {
+      const slug = toSlug(frag, self);
+      if (!slug) return whole; // 이미 맞거나 못 찾음 → 손대지 않는다(엉뚱한 곳으로 보내지 않기 위해)
+      count++;
+      return `[${label}](#${slug})`;
+    });
+
+    after = after.replace(PAGE_ANCHOR, (whole, head: string, id: string, frag: string, tail: string) => {
+      const target = pathById.get(id);
+      const ti = target && info.get(target);
+      if (!ti) return whole; // 이번에 안 받은 페이지 → 원본 URL 이 살아 있어야 한다
+      const slug = toSlug(frag, ti);
+      if (!slug) return whole;
+      count++;
+      return `${head}#${slug}${tail}`;
+    });
+
+    if (after !== before) writeFileSync(file, after);
+  }
+  return { count, info };
+}
+
 /**
  * 함께 받은 페이지를 가리키는 절대 Confluence URL 을 상대 .md 링크(또는 [[wikilink]])로 바꾼다.
  * 이번에 받지 않은 페이지의 링크는 절대 URL 그대로 둔다(깨진 링크를 만들지 않는다).
  * 반환값은 재작성한 링크 수.
  */
-export function relinkPass(written: string[], pathById: Map<string, string>, wikilinks: boolean): number {
+export function relinkPass(
+  written: string[],
+  pathById: Map<string, string>,
+  wikilinks: boolean,
+  info?: Map<string, DocInfo>,
+): number {
   const noExt = (p: string) => basename(p).replace(/\.md$/i, '');
   // wikilink 는 vault 어디서든 "이름"으로 찾으므로, 파일명이 유일할 때만 안전하게 쓸 수 있다.
   const nameCount = new Map<string, number>();
@@ -178,13 +251,16 @@ export function relinkPass(written: string[], pathById: Map<string, string>, wik
       count++;
       const name = noExt(target);
       const label = (text || name).trim();
+      const slug = url.includes('#') ? url.split('#').slice(1).join('#') : '';
 
       if (wikilinks && nameCount.get(name) === 1) {
-        return label === name ? `[[${name}]]` : `[[${name}|${label}]]`;
+        // Obsidian 은 슬러그가 아니라 헤딩 텍스트로 섹션을 가리킨다: [[문서#헤딩 텍스트]]
+        const heading = slug ? info?.get(target)?.textBySlug.get(slug) : undefined;
+        if (!heading) return label === name ? `[[${name}]]` : `[[${name}|${label}]]`;
+        return `[[${name}#${heading}|${label}]]`;
       }
-      const anchor = url.includes('#') ? '#' + url.split('#').slice(1).join('#') : '';
       const rel = relative(dirname(file), target).split('\\').join('/');
-      return `[${label}](${dest(rel + anchor)})`;
+      return `[${label}](${dest(rel + (slug ? `#${slug}` : ''))})`;
     });
     if (after !== before) writeFileSync(file, after);
   }
@@ -213,10 +289,13 @@ export async function runPull(argv: string[]): Promise<void> {
   };
 
   const done = (c: Counts) => {
-    const relinked = relinkPass(ctx.written, ctx.pathById, ctx.obsidian);
+    // 앵커를 먼저 슬러그로 바꾼 뒤 링크를 상대경로로 옮긴다(순서가 바뀌면 어느 페이지의 헤딩인지 알 수 없다).
+    const { count: anchors, info } = anchorPass(ctx.written, ctx.pathById);
+    const relinked = relinkPass(ctx.written, ctx.pathById, ctx.obsidian, info);
     console.log(
       `\n${green('완료')}  페이지 ${c.pages}개${c.folders ? `, 폴더 ${c.folders}개` : ''} 생성` +
-      (relinked ? `  ${cyan(`내부링크 ${relinked}개 연결`)}` : ''),
+      (relinked ? `  ${cyan(`내부링크 ${relinked}개 연결`)}` : '') +
+      (anchors ? `  ${cyan(`섹션링크 ${anchors}개 복원`)}` : ''),
     );
   };
 

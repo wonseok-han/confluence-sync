@@ -68,12 +68,20 @@ ${h('convert(이미 받아둔 .md 손보기) 옵션:')} ${dim('Confluence 호출
        ${o('confluence-sync convert --to obsidian --fix ./docs --out ~/MyVault')}
        ${o('confluence-sync convert --fix ./docs/가이드/설치.md --base ./docs')}  ${dim('(파일 하나만)')}
 
+${h('섹션 링크(앵커):')}
+  ${o('[§1 개요](#1-개요)')} 처럼 헤딩을 가리키는 링크가 Confluence 에서도 동작합니다.
+  같은 문서(${o('#슬러그')})·다른 문서(${o('문서.md#슬러그')})·Obsidian(${o('[[문서#헤딩]]')}) 모두 지원합니다.
+  Confluence 의 자동 헤딩 id 는 배포판마다 달라서, 가리켜지는 헤딩 앞에 ${dim('Anchor 매크로')}로
+  이름을 직접 심고 그 이름을 가리킵니다. pull 은 반대로 슬러그를 되돌립니다.
+  대응하는 헤딩을 못 찾으면 링크를 바꾸지 않고 ${dim('⚠ 대응 헤딩 없는 앵커')} 로 알려 줍니다
+  ${dim('(대개 문서 쪽 오타나 깨진 상대경로입니다)')}.
+
 ${h('Obsidian:')}
   pull 결과는 vault 에서 바로 열립니다. 함께 받은 페이지끼리의 내부 링크가 이어져 그래프·백링크가
   동작하고, 각 문서의 frontmatter 에 pageId 가 남아 원본 페이지를 가리킵니다.
   [[wikilink]] 표기를 원하면 ${o('pull --obsidian')}, 이미 받아둔 문서라면 ${o('convert --to obsidian')}.
 
-  push 는 vault 문법을 그대로 이해합니다: ${o('[[wikilink]]')} · ${o('![[embed]]')} · YAML frontmatter
+  push 는 vault 문법을 그대로 이해합니다: ${o('[[wikilink]]')} · ${o('![[embed]]')} · ${o('[[문서#헤딩]]')} · YAML frontmatter
   (frontmatter 의 ${o('title')} 이 페이지 제목이 되고, ${o('pageId')} 가 있으면 매핑이 없어도 그 페이지를 갱신합니다).
 
 ${h('설정(.env):')}
