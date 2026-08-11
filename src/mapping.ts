@@ -4,6 +4,9 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 
+/** base 루트에 놓이는 매핑 파일 이름. 이 파일이 있는 곳이 곧 동기화 루트다. */
+export const MAPPING_FILE = '.confluence-sync.json';
+
 export type Mapping = Record<string, { pageId: string; title?: string; hash?: string; type?: 'page' | 'folder' }>;
 
 export function loadMapping(path: string): Mapping {

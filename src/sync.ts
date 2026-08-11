@@ -17,10 +17,10 @@ import 'dotenv/config';
 import { existsSync, statSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { readEnv, requireEnv } from './config.js';
-import { toStorage, docHash, type Rendered } from './markdown.js';
+import { docHash, type Rendered } from './markdown.js';
+import { buildTreeRenderer } from './render.js';
 import {
-  collectMarkdown, collectAssets, buildDocIndex, resolveAnchorTargets, buildFolderIndex,
-  buildVault, vaultResolver, readDoc,
+  collectMarkdown, buildFolderIndex, readDoc,
   parentKeyOf, containerKeyOf, sortForSync, resolveSelection, withParents,
 } from './docs.js';
 import { loadMapping, saveMapping, type Mapping } from './mapping.js';
@@ -98,21 +98,9 @@ async function main() {
   const allRel = collected.filter((r) => !ignorer.ignores(r)); // 제외된 문서는 모든 단계에서 빠짐
   const ignoredCount = collected.length - allRel.length;
   const folderIndex = buildFolderIndex(allRel);
-  // 링크·섹션 링크 변환은 항상 전체 기준(선택 동기화여도 대상 문서의 제목·헤딩을 알아야 한다)
-  const { titles: titleIndex, anchors: anchorIndex, docs } = buildDocIndex(allRel, BASE_DIR);
-  // Obsidian [[wikilink]] 해석용 이름 인덱스. 제외된 문서는 링크 대상에서도 빠진다.
-  const vault = buildVault(allRel, collectAssets(BASE_DIR).map((f) => relative(BASE_DIR, f)));
-  // 누가 어느 헤딩을 가리키는지 먼저 모은다 — 그 헤딩에만 Anchor 매크로를 심는다.
-  // 선택 동기화여도 트리 전체를 봐야 한다(다른 문서가 이 문서의 섹션을 가리킬 수 있으므로).
-  const anchorTargets = resolveAnchorTargets(docs, vault);
-  const render = (rel: string, body: string, title: string) =>
-    toStorage(body, rel, titleIndex, BASE_DIR, {
-      resolveLink: vaultResolver(rel, vault),
-      anchorIndex,
-      title,
-      anchorNames: anchorTargets[rel],
-      bodySlugs: docs[rel]?.bodySlugs,
-    });
+  // 링크·섹션 링크 변환은 항상 트리 전체 기준이다. 선택 동기화여도 대상 문서의 제목·헤딩을 알아야 하고,
+  // 다른 문서가 이 문서의 섹션을 가리킬 수 있다. 제외된 문서는 링크 대상에서도 빠진다.
+  const { titles: titleIndex, render } = buildTreeRenderer(BASE_DIR, allRel);
 
   // 사용자가 실제로 고른 문서. 경로 인자가 없으면 전체가 대상이다.
   const picked = positionals.length ? resolveSelection(allRel, positionals, BASE_DIR) : allRel;

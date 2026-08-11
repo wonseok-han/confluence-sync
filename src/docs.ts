@@ -131,7 +131,8 @@ export function resolveAnchorTargets(
       let slug: string | null;
 
       if (la.wiki) {
-        target = vault.notes[la.dest.toLowerCase().replace(/\.md$/i, '')] ?? null;
+        // dest 가 비면 `[[#헤딩]]` — 같은 문서의 섹션이다
+        target = la.dest === '' ? rel : (vault.notes[la.dest.toLowerCase().replace(/\.md$/i, '')] ?? null);
         slug = wikilinkAnchorToSlug(la.fragment);
       } else {
         target = la.dest === '' ? rel : normalizeRel(dir, decodeAnchor(la.dest));

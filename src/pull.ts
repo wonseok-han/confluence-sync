@@ -7,13 +7,18 @@
  * 함께 받은 페이지끼리의 내부 링크는 마지막에 상대 .md 경로로 이어 붙인다(Obsidian 그래프·백링크가 살아난다).
  * 각 문서 머리에 pageId 를 담은 frontmatter 를 남겨, 매핑 파일 없이도 push 가 원본 페이지를 다시 찾아간다.
  */
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { resolve, join, dirname, basename, relative } from 'node:path';
 import { readEnv, requireEnv } from './config.js';
 import { createClient, type ContentNode } from './confluence.js';
 import { htmlToMarkdown, codeLanguagesFromStorage } from './html2md.js';
 import { buildFrontmatter, splitFrontmatter } from './obsidian.js';
 import { collectHeadings, matchConfluenceAnchor, type Heading } from './anchors.js';
+import { collectMarkdown } from './docs.js';
+import { buildTreeRenderer } from './render.js';
+import { docHash } from './markdown.js';
+import { buildIgnorer } from './ignore.js';
+import { loadMapping, saveMapping, MAPPING_FILE } from './mapping.js';
 import { cyan, dim, green, red, yellow } from './colors.js';
 
 type Client = ReturnType<typeof createClient>;
@@ -43,6 +48,8 @@ type Ctx = Opts & {
   written: string[];
   /** pageId → .md 절대경로 (내부 링크를 상대경로로 바꾸는 데 쓴다) */
   pathById: Map<string, string>;
+  /** 이번 실행에서 만든 폴더: 절대 디렉토리 경로 → 폴더 노드 id */
+  folderIds: Map<string, string>;
 };
 
 type Counts = { pages: number; folders: number };
@@ -146,6 +153,7 @@ async function pullNode(ctx: Ctx, id: string, destDir: string): Promise<Counts> 
     if (node.type === 'folder') {
       const dir = join(destDir, slug(node.title));
       mkdirSync(dir, { recursive: true });
+      ctx.folderIds.set(dir, id);
       console.log(`  ${cyan('📁 폴더')}  ${dir}  ${dim(`(#${id})`)}`);
       const counts: Counts = { pages: 0, folders: 1 };
       if (withChildren) {
@@ -245,7 +253,7 @@ export function relinkPass(
   let count = 0;
   for (const file of written) {
     const before = readFileSync(file, 'utf8');
-    const after = before.replace(PAGE_LINK, (whole, text: string, url: string, id: string) => {
+    let after = before.replace(PAGE_LINK, (whole, text: string, url: string, id: string) => {
       const target = pathById.get(id);
       if (!target || target === file) return whole; // 못 받은 페이지·자기 자신 → 원본 URL 유지
       count++;
@@ -262,15 +270,95 @@ export function relinkPass(
       const rel = relative(dirname(file), target).split('\\').join('/');
       return `[${label}](${dest(rel + (slug ? `#${slug}` : ''))})`;
     });
+
+    // 같은 문서 섹션도 vault 표기로: [§4](#슬러그) → [[#헤딩 텍스트|§4]]
+    if (wikilinks) {
+      after = after.replace(SELF_ANCHOR, (whole, text: string, frag: string) => {
+        const heading = info?.get(file)?.textBySlug.get(frag);
+        if (!heading) return whole;
+        count++;
+        const label = text.trim();
+        return label && label !== heading ? `[[#${heading}|${label}]]` : `[[#${heading}]]`;
+      });
+    }
+
     if (after !== before) writeFileSync(file, after);
   }
   return count;
+}
+
+/**
+ * 매핑 파일(.confluence-sync.json)이 있는 가장 가까운 상위 디렉토리 = 동기화 루트.
+ * pull 을 base 하위 폴더로 받아도(`--out <base>/어딘가`) 매핑 키가 base 기준으로 남아야
+ * 이어지는 push 가 같은 문서를 알아본다.
+ */
+function findSyncBase(from: string): string | null {
+  for (let d = from; ; d = dirname(d)) {
+    if (existsSync(join(d, MAPPING_FILE))) return d;
+    if (dirname(d) === d) return null;
+  }
+}
+
+/**
+ * 받아온 문서를 매핑 파일에 기록한다.
+ *
+ * 이게 없으면 pull 직후의 push 가 모든 문서를 "변경"으로 본다 — 매핑에 해시가 없으니
+ * 방금 받아온 내용을 그대로 되올려 보내려 한다. 해시는 push 가 쓰는 것과 **같은 렌더러**로
+ * 계산해야 하므로(buildTreeRenderer) 트리 전체를 한 번 훑는다.
+ *
+ * 반환값은 기록한 항목 수.
+ */
+export function mappingPass(
+  baseDir: string,
+  mappingPath: string,
+  pathById: Map<string, string>,
+  folderIds: Map<string, string>,
+): number {
+  const posix = (p: string) => p.split('\\').join('/');
+  const ignorer = buildIgnorer(baseDir, []);
+  const rels = collectMarkdown(baseDir)
+    .map((f) => posix(relative(baseDir, f)))
+    .filter((r) => !ignorer.ignores(r));
+  const { docs, render } = buildTreeRenderer(baseDir, rels);
+
+  const m = loadMapping(mappingPath);
+  // 같은 페이지가 다른 키에 남아 있으면(문서가 옮겨졌으면) 중복 항목이 된다 → 옛 키를 걷어낸다
+  const ids = new Set([...pathById.keys(), ...folderIds.values()]);
+  for (const [k, v] of Object.entries(m)) if (ids.has(v.pageId)) delete m[k];
+
+  let n = 0;
+  for (const [id, abs] of pathById) {
+    const rel = posix(relative(baseDir, abs));
+    const doc = rel.startsWith('..') ? undefined : docs[rel];
+    if (!doc) continue; // base 밖으로 받았거나 제외 규칙에 걸린 문서는 기록하지 않는다
+    m[rel] = { pageId: id, title: doc.title, hash: docHash(doc.title, render(rel, doc.body, doc.title)) };
+    n++;
+  }
+  for (const [dir, id] of folderIds) {
+    const rel = posix(relative(baseDir, dir));
+    if (!rel || rel.startsWith('..')) continue;
+    m[`${rel}/`] = { pageId: id, title: basename(dir), type: 'folder' };
+    n++;
+  }
+
+  saveMapping(mappingPath, m);
+  return n;
 }
 
 export async function runPull(argv: string[]): Promise<void> {
   const withChildren = argv.includes('--children');
   const wholeSpace = argv.includes('--space');
   const outDir = resolve(optVal(argv, '--out') ?? process.cwd());
+
+  // 매핑을 어디에 남길지. base 는 매핑 키의 기준이므로 push 때의 --base 와 같아야 한다.
+  const noMapping = argv.includes('--no-mapping');
+  const baseOpt = optVal(argv, '--base');
+  const baseDir = resolve(baseOpt ?? findSyncBase(outDir) ?? outDir);
+  const mappingPath = resolve(optVal(argv, '--mapping') ?? join(baseDir, MAPPING_FILE));
+  if (!noMapping && relative(baseDir, outDir).startsWith('..')) {
+    console.error(red(`✗ --out 이 base 밖입니다: ${outDir}`) + dim(`\n  base: ${baseDir}  (--base 로 맞추거나 --no-mapping 을 쓰세요)`));
+    process.exit(1);
+  }
 
   const env = readEnv();
   requireEnv(env);
@@ -286,17 +374,22 @@ export async function runPull(argv: string[]): Promise<void> {
     spaceKey: env.spaceKey!,
     written: [],
     pathById: new Map(),
+    folderIds: new Map(),
   };
 
   const done = (c: Counts) => {
     // 앵커를 먼저 슬러그로 바꾼 뒤 링크를 상대경로로 옮긴다(순서가 바뀌면 어느 페이지의 헤딩인지 알 수 없다).
     const { count: anchors, info } = anchorPass(ctx.written, ctx.pathById);
     const relinked = relinkPass(ctx.written, ctx.pathById, ctx.obsidian, info);
+    // 본문이 다 정해진 뒤에 기록해야 해시가 맞는다
+    const mapped = noMapping ? 0 : mappingPass(baseDir, mappingPath, ctx.pathById, ctx.folderIds);
     console.log(
       `\n${green('완료')}  페이지 ${c.pages}개${c.folders ? `, 폴더 ${c.folders}개` : ''} 생성` +
       (relinked ? `  ${cyan(`내부링크 ${relinked}개 연결`)}` : '') +
-      (anchors ? `  ${cyan(`섹션링크 ${anchors}개 복원`)}` : ''),
+      (anchors ? `  ${cyan(`섹션링크 ${anchors}개 복원`)}` : '') +
+      (mapped ? `  ${cyan(`매핑 ${mapped}건`)}` : ''),
     );
+    if (mapped) console.log(dim(`  매핑: ${mappingPath}  (base: ${baseDir})`));
   };
 
   // --space: 스페이스 홈페이지(콘텐츠 트리 루트)부터 전체를 재귀적으로 가져옴
@@ -315,7 +408,7 @@ export async function runPull(argv: string[]): Promise<void> {
   // 위치 인자: ['pull', <pageId|url>, ...]
   const positionals: string[] = [];
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--out') { i++; continue; }
+    if (argv[i] === '--out' || argv[i] === '--base' || argv[i] === '--mapping') { i++; continue; }
     if (argv[i].startsWith('-')) continue;
     positionals.push(argv[i]);
   }
