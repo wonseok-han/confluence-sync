@@ -10,13 +10,11 @@
  * 이 도구의 관심사가 아니며, 알 수 없는 키는 건드리지 않고 보존한다.
  */
 
-import { wikilinkAnchorToSlug } from './anchors.js';
+import { wikilinkAnchorToSlug, WIKILINK_RE, parseWikilink } from './anchors.js';
 
 export type Frontmatter = Record<string, string>;
 
 const FENCE = /^\s*(?:```|~~~)/;
-// [[대상]] · [[대상|별칭]] · [[대상#헤딩]] · ![[임베드]]
-const WIKILINK = /(!?)\[\[([^\]|#]+)(#[^\]|]+)?(?:\|([^\]]+))?\]\]/g;
 
 /**
  * 문서 맨 앞의 YAML frontmatter 를 분리한다. 없으면 data 는 빈 객체.
@@ -80,15 +78,23 @@ function mapProse(md: string, fn: (segment: string) => string): string {
  */
 export function resolveWikilinks(md: string, resolve: LinkResolver): string {
   return mapProse(md, (s) =>
-    s.replace(WIKILINK, (whole, bang: string, target: string, hash: string | undefined, alias: string | undefined) => {
-      const embed = bang === '!';
-      const found = resolve(target.trim(), embed);
-      if (!found) return whole; // 해석 실패 → 원문 보존
-      const label = (alias ?? target).trim();
-      if (embed) return `![${label}](${dest(found)})`;
+    s.replace(WIKILINK_RE, (whole, bang: string, target: string, hash?: string, alias?: string) => {
+      const w = parseWikilink(bang, target, hash, alias);
+      if (!w) return whole;
       // Obsidian 은 섹션을 헤딩 텍스트로 가리키지만(`#1. 신뢰 — Trust Registry`)
-      // 표준 마크다운은 슬러그를 쓴다. 블록 참조(`#^id`)는 대응물이 없어 링크만 남긴다.
-      const slug = hash ? wikilinkAnchorToSlug(hash.slice(1)) : null;
+      // 표준 마크다운은 슬러그를 쓴다. 블록 참조(`#^id`)는 대응물이 없어 섹션을 떼어 낸다.
+      const slug = w.fragment ? wikilinkAnchorToSlug(w.fragment) : null;
+
+      // [[#헤딩]] — 대상이 없으면 "이 문서의 이 섹션"이다. vault 조회 없이 앵커 링크가 된다.
+      if (!w.target) {
+        if (!slug) return whole; // 블록 참조뿐 → 갈 곳이 없으므로 원문 보존
+        return `[${w.alias ?? w.fragment}](#${slug})`;
+      }
+
+      const found = resolve(w.target, w.embed);
+      if (!found) return whole; // 해석 실패 → 원문 보존
+      const label = w.alias ?? w.target;
+      if (w.embed) return `![${label}](${dest(found)})`;
       return `[${label}](${dest(found + (slug ? `#${slug}` : ''))})`;
     }),
   );

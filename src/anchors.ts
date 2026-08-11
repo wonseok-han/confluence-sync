@@ -12,11 +12,44 @@
 
 const FENCE = /^\s*(?:```|~~~)/;
 
+/**
+ * `[[대상]]` · `[[대상|별칭]]` · `[[대상#헤딩]]` · `[[#헤딩]]` · `![[임베드]]`
+ *
+ * 대상이 **비어 있을 수 있다** — `[[#헤딩]]` 은 "이 문서의 이 섹션"이라는 Obsidian 표기다.
+ * 표 안에서는 별칭 앞 파이프가 `\|` 로 이스케이프되므로 그 백슬래시도 함께 받아 준다.
+ */
+export const WIKILINK_RE = /(!?)\[\[([^[\]|#]*)(#[^[\]|]+)?(?:\\?\|([^[\]]*))?\]\]/g;
+
+export type Wikilink = {
+  embed: boolean;
+  /** 빈 문자열이면 같은 문서(`[[#헤딩]]`) */
+  target: string;
+  fragment: string | null;
+  alias: string | null;
+};
+
+/**
+ * WIKILINK_RE 의 캡처 그룹을 해석한다. 대상도 섹션도 없으면(`[[]]`) 링크가 아니므로 null.
+ * 표의 `\|` 때문에 앞 그룹 끝에 딸려온 백슬래시는 여기서 떼어낸다.
+ */
+export function parseWikilink(
+  bang: string, target: string, hash?: string, alias?: string,
+): Wikilink | null {
+  const unesc = (s: string) => s.replace(/\\$/, '').trim();
+  const t = unesc(target ?? '');
+  const f = hash ? unesc(hash.slice(1)) : null;
+  if (!t && !f) return null;
+  return { embed: bang === '!', target: t, fragment: f || null, alias: alias?.trim() || null };
+}
+
 /** 인라인 마크다운 표기를 벗긴다 — 슬러그는 렌더된 텍스트 기준이다. */
 function plainText(s: string): string {
   return s
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1') // [label](url) → label
-    .replace(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_m, t: string, a?: string) => a ?? t)
+    .replace(WIKILINK_RE, (whole, ...g: unknown[]) => {
+      const w = parseWikilink(g[0] as string, g[1] as string, g[2] as string, g[3] as string);
+      return w ? (w.alias ?? (w.target || w.fragment) ?? whole) : whole;
+    })
     .replace(/`+/g, '')
     .replace(/\*\*|~~|\*/g, '') // _ 는 남긴다: 슬러그가 밑줄을 보존하므로(foo_bar → foo_bar)
     .trim();
@@ -124,7 +157,6 @@ export function wikilinkAnchorToSlug(anchor: string): string | null {
 export type LinkAnchor = { dest: string; fragment: string; wiki: boolean };
 
 const MD_LINK = /\[([^\]]*)\]\((<[^>]+>|[^()\s]+)\)/g;
-const WIKILINK = /(!?)\[\[([^\]|#]+)(#[^\]|]+)?(?:\|([^\]]+))?\]\]/g;
 
 /**
  * 본문에서 **앵커가 붙은 링크만** 훑는다 — 어느 문서의 어느 헤딩에 앵커를 심어야 하는지 알아내기 위해서다.
@@ -150,9 +182,10 @@ export function collectLinkAnchors(md: string): LinkAnchor[] {
       if (/^(https?:|mailto:)/i.test(d)) continue;
       out.push({ dest: d.slice(0, i), fragment: d.slice(i + 1), wiki: false });
     }
-    for (const m of prose.matchAll(WIKILINK)) {
-      if (m[1] === '!' || !m[3]) continue; // 임베드·앵커 없는 wikilink
-      out.push({ dest: m[2].trim(), fragment: m[3].slice(1), wiki: true });
+    for (const m of prose.matchAll(WIKILINK_RE)) {
+      const w = parseWikilink(m[1], m[2], m[3], m[4]);
+      if (!w || w.embed || !w.fragment) continue; // 임베드·앵커 없는 wikilink
+      out.push({ dest: w.target, fragment: w.fragment, wiki: true }); // dest 가 비면 같은 문서
     }
   }
   return out;

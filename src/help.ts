@@ -51,8 +51,13 @@ ${h('pull(역방향) 옵션:')}
   ${o('--out <dir>')}         .md 를 생성할 디렉토리(기본: 현재 폴더)
   ${o('--children')}          하위 페이지까지 재귀적으로 가져와 폴더 트리로 복원
   ${o('--space')}             대상 없이 스페이스(CONFLUENCE_SPACE_KEY) 홈페이지부터 전체를 가져옴
-  ${o('--obsidian')}       내부 링크를 [[wikilink]] 로 출력(기본: 어디서나 열리는 상대 .md 링크)
+  ${o('--obsidian')}          내부 링크를 [[wikilink]] 로 출력(기본: 어디서나 열리는 상대 .md 링크)
+  ${o('--base <dir>')}        매핑 키의 기준(기본: --out 에서 위로 올라가며 .confluence-sync.json 을 찾음)
+  ${o('--mapping <path>')}    매핑 파일 위치 (기본: <base>/.confluence-sync.json)
+  ${o('--no-mapping')}        매핑을 기록하지 않음
   (이미지는 항상 attachments/<문서명>/ 하위에 저장됨)
+  받아온 문서는 pageId 와 ${dim('변경 해시')}가 매핑에 기록되어, ${bold('pull 직후 push 하면 "변경없음"')} 입니다
+  ${dim('(기록하지 않으면 방금 받아온 내용을 그대로 되올려 보내게 됩니다).')}
   예)  ${o('confluence-sync pull https://.../pages/12345/Title --out ./docs --children')}
        ${o('confluence-sync pull --space --out ./docs')}
 
@@ -73,7 +78,7 @@ ${h('convert(이미 받아둔 .md 손보기) 옵션:')} ${dim('Confluence 호출
 
 ${h('섹션 링크(앵커):')}
   ${o('[§1 개요](#1-개요)')} 처럼 헤딩을 가리키는 링크가 Confluence 에서도 동작합니다.
-  같은 문서(${o('#슬러그')})·다른 문서(${o('문서.md#슬러그')})·Obsidian(${o('[[문서#헤딩]]')}) 모두 지원합니다.
+  같은 문서(${o('#슬러그')} · ${o('[[#헤딩]]')})·다른 문서(${o('문서.md#슬러그')} · ${o('[[문서#헤딩]]')}) 모두 지원합니다.
   Confluence 의 자동 헤딩 id 는 배포판마다 달라서, 가리켜지는 헤딩 앞에 ${dim('Anchor 매크로')}로
   이름을 직접 심고 그 이름을 가리킵니다. pull 은 반대로 슬러그를 되돌립니다.
   대응하는 헤딩을 못 찾으면 링크를 바꾸지 않고 ${dim('⚠ 대응 헤딩 없는 앵커')} 로 알려 줍니다

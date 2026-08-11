@@ -67,9 +67,20 @@ function toObsidian(
   baseDir: string,
   nameCount: Map<string, number>,
   headingOf: (targetAbs: string, slug: string) => string | undefined,
+  selfHeadingOf: (slug: string) => string | undefined,
 ): string {
   return linksToWikilinks(text, (dest, label) => {
-    if (/^(https?:|mailto:|#)/i.test(dest)) return null; // 외부 링크·같은 문서 앵커
+    if (/^(https?:|mailto:)/i.test(dest)) return null; // 외부 링크
+
+    // 같은 문서 섹션: [§4](#슬러그) → [[#헤딩 텍스트|§4]]
+    // Obsidian 은 슬러그가 아니라 헤딩 텍스트로 섹션을 가리키므로, 헤딩을 못 찾으면 손대지 않는다.
+    if (dest.startsWith('#')) {
+      const heading = selfHeadingOf(decode(dest.slice(1)));
+      if (!heading) return null;
+      const l = label.trim();
+      return l && l !== heading ? `[[#${heading}|${l}]]` : `[[#${heading}]]`;
+    }
+
     const [pathPart, ...hash] = decode(dest).split('#');
     if (!/\.md$/i.test(pathPart)) return null;
 
@@ -224,8 +235,11 @@ export async function runConvert(argv: string[]): Promise<void> {
         notes.push(dim(`보정 ${n}`));
       }
     }
-    if (to === 'obsidian') text = toObsidian(text, abs, baseDir, nameCount, headingOf);
-    else if (to === 'markdown') text = resolveWikilinks(text, vaultResolver(rel, vault));
+    if (to === 'obsidian') {
+      // 같은 문서 앵커는 보정(--fix)까지 끝난 **지금 본문**의 헤딩으로 풀어야 맞는다
+      const selfIdx = buildAnchorIndex(splitFrontmatter(text).body);
+      text = toObsidian(text, abs, baseDir, nameCount, headingOf, (s) => selfIdx.get(s.toLowerCase()));
+    } else if (to === 'markdown') text = resolveWikilinks(text, vaultResolver(rel, vault));
 
     // 제자리 변환이면 바뀐 것만 쓰지만, --out 이면 대상 전부를 내보낸다(온전한 트리가 나와야 하므로)
     if (!outDir && text === before) continue;
