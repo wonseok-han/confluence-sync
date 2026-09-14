@@ -259,7 +259,7 @@ export function resolveSelection(rels: string[], positionals: string[], baseDir:
   const set = new Set<string>();
   for (const p of positionals) {
     const abs = resolve(baseDir, p);
-    const relToBase = relative(baseDir, abs);
+    const relToBase = relative(baseDir, abs).split('\\').join('/');
     if (relToBase.startsWith('..')) {
       console.error(`  ⚠ base 밖 경로 무시: ${p}`);
       continue;

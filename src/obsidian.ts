@@ -83,7 +83,9 @@ export function resolveWikilinks(md: string, resolve: LinkResolver): string {
       if (!w) return whole;
       // Obsidian 은 섹션을 헤딩 텍스트로 가리키지만(`#1. 신뢰 — Trust Registry`)
       // 표준 마크다운은 슬러그를 쓴다. 블록 참조(`#^id`)는 대응물이 없어 섹션을 떼어 낸다.
-      const slug = w.fragment ? wikilinkAnchorToSlug(w.fragment) : null;
+      const slug = w.fragment
+        ? (/\.pdf$/i.test(w.target) ? w.fragment : wikilinkAnchorToSlug(w.fragment))
+        : null;
 
       // [[#헤딩]] — 대상이 없으면 "이 문서의 이 섹션"이다. vault 조회 없이 앵커 링크가 된다.
       if (!w.target) {
@@ -94,7 +96,7 @@ export function resolveWikilinks(md: string, resolve: LinkResolver): string {
       const found = resolve(w.target, w.embed);
       if (!found) return whole; // 해석 실패 → 원문 보존
       const label = w.alias ?? w.target;
-      if (w.embed) return `![${label}](${dest(found)})`;
+      if (w.embed) return `![${label}](${dest(found + (/\.pdf$/i.test(w.target) && slug ? `#${slug}` : ''))})`;
       return `[${label}](${dest(found + (slug ? `#${slug}` : ''))})`;
     }),
   );

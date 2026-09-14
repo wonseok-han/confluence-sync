@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.0
+
+- PDF.js와 Canvas를 포함하여 별도 Poppler 설치 없이 PDF 이미지를 생성합니다. Node.js 22.13 이상이 필요합니다.
+
+- 양방향 convert에서 절대경로·`file://`·상위 폴더 상대경로로 연결한 로컬 첨부를 출력 트리에 복사하고 링크를 변경합니다. PDF 페이지 추출도 base 밖의 명시된 파일을 지원합니다.
+- 이미지·PDF 등 첨부를 `attachments/` 아래로 통합합니다. 원본 파일은 `attachments/files/<내용 해시>/`, 추출한 PDF 페이지는 `attachments/pdf-pages/`에 저장합니다.
+- 첨부는 내용 해시별 폴더로 구분하며, 역변환은 복사된 PDF를 참조하여 원래 컴퓨터의 절대경로에 의존하지 않습니다.
+
+- `convert --to markdown`에서 Obsidian 각주를 위첨자 링크와 각주 제목으로 변환합니다.
+- 로컬 PDF의 `#page=N` 참조를 해당 페이지 이미지와 앵커 링크로 변환합니다. 이미지 추출은 내장 PDF.js로 처리하며, 원본 PDF도 출력 폴더에 복사합니다.
+- `convert --to obsidian`에서 변환 정보와 원본 PDF가 보존된 로컬 Markdown의 각주 및 PDF 페이지 참조를 복원합니다. Confluence에서 다시 내려받으며 변환 정보가 사라진 문서의 복원은 지원하지 않습니다.
+- PDF 임베드의 페이지 번호를 보존하고, 선택적으로 사용하는 `confluence-iframe` 코드 블록 렌더링을 추가합니다.
+
 ## 1.3.0
 
 ### pull 이 매핑을 기록합니다

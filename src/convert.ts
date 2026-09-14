@@ -9,11 +9,14 @@
  * 스페이스를 통째로 다시 받지 않고도 최신 변환 품질을 얻기 위한 것이다.
  * 링크는 대상이 트리 안에 실제로 있을 때만 바꾼다(외부 URL·이미지·깨진 링크는 손대지 않는다).
  */
-import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, copyFileSync } from 'node:fs';
-import { resolve, relative, dirname, basename, join } from 'node:path';
+import { attachmentMapper } from './attachments.js';
+import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, copyFileSync, realpathSync } from 'node:fs';
+import { resolve, relative, dirname, basename, join, isAbsolute } from 'node:path';
 import { collectMarkdown, collectAssets, buildVault, vaultResolver } from './docs.js';
 import { linksToWikilinks, resolveWikilinks, splitFrontmatter } from './obsidian.js';
 import { buildAnchorIndex } from './anchors.js';
+import { footnotesToLinks, linksToFootnotes } from './footnotes.js';
+import { extractPdfPages, restorePdfReferences, mapMarkdownText } from './pdf-pages.js';
 import { repairMarkdown, totalFixes, type RepairStats } from './repair.js';
 import { bold, cyan, dim, gray, green, red, yellow } from './colors.js';
 
@@ -26,18 +29,28 @@ function optVal(argv: string[], name: string): string | undefined {
 
 const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return s; } };
 const posix = (s: string) => s.split('\\').join('/');
+const isWithin = (base: string, path: string) => {
+  const rel = relative(base, path);
+  return rel === '' || (rel !== '..' && !rel.startsWith('../') && !rel.startsWith('..\\') && !isAbsolute(rel));
+};
+function canonical(path: string): string {
+  if (existsSync(path)) return realpathSync(path);
+  const parent = dirname(path);
+  return parent === path ? path : join(canonical(parent), basename(path));
+}
 
-// ![alt](경로) — 본문이 참조하는 로컬 이미지(--out 으로 복사할 때 같이 옮긴다)
-const IMAGE = /!\[[^\]]*\]\((<[^>]+>|[^()\s]+)\)/g;
+
+// 이미지·일반 링크의 로컬 첨부(--out 으로 복사할 때 PDF도 같이 옮긴다).
+const ASSET_LINK = /!?\[[^\]]*\]\((<[^>]+>|[^()\s]+)\)/g;
 
 /** md 본문이 참조하는 로컬 첨부의 절대경로들(외부 URL 제외, 실제 존재하는 것만). */
 function referencedAssets(text: string, fileAbs: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(IMAGE)) {
+  for (const m of text.matchAll(ASSET_LINK)) {
     const dest = decode(m[1].replace(/^<(.*)>$/, '$1')).split('#')[0];
     if (/^(https?:|data:)/i.test(dest)) continue;
     const abs = resolve(dirname(fileAbs), dest);
-    if (existsSync(abs)) out.push(abs);
+    if (existsSync(abs) && statSync(abs).isFile() && !/\.md$/i.test(abs)) out.push(abs);
   }
   return out;
 }
@@ -68,6 +81,7 @@ function toObsidian(
   nameCount: Map<string, number>,
   headingOf: (targetAbs: string, slug: string) => string | undefined,
   selfHeadingOf: (slug: string) => string | undefined,
+  source: (path: string) => string = p => p,
 ): string {
   return linksToWikilinks(text, (dest, label) => {
     if (/^(https?:|mailto:)/i.test(dest)) return null; // 외부 링크
@@ -82,6 +96,12 @@ function toObsidian(
     }
 
     const [pathPart, ...hash] = decode(dest).split('#');
+    if (/\.pdf$/i.test(pathPart)) {
+      const target = resolve(dirname(fileAbs), pathPart);
+      const rel = relative(baseDir, target).split('\\').join('/');
+      if (!existsSync(source(target)) || rel.startsWith('../')) return null;
+      return `[[${rel}${hash.length ? '#' + hash.join('#') : ''}|${label}]]`;
+    }
     if (!/\.md$/i.test(pathPart)) return null;
 
     const targetAbs = resolve(dirname(fileAbs), pathPart);
@@ -179,7 +199,7 @@ export async function runConvert(argv: string[]): Promise<void> {
   const selected = targets.length
     ? allMd.filter((f) => targets.some((t) => {
         const abs = resolve(t);
-        return f === abs || f.startsWith(abs + '/');
+        return isWithin(abs, f);
       }))
     : allMd;
 
@@ -203,7 +223,7 @@ export async function runConvert(argv: string[]): Promise<void> {
   const scope = mdAbs.length === allMd.length
     ? `${mdAbs.length}건`
     : `선택 ${mdAbs.length}/${allMd.length}건`;
-  if (outDir && (outDir === baseDir || outDir.startsWith(baseDir + '/'))) {
+  if (outDir && isWithin(canonical(baseDir), canonical(outDir))) {
     console.error(red(`✗ --out 이 base 안에 있습니다: ${outDir}`) + dim('\n  원본 트리를 덮어쓰지 않도록 base 밖의 경로를 쓰세요.'));
     process.exit(1);
   }
@@ -223,7 +243,9 @@ export async function runConvert(argv: string[]): Promise<void> {
     const rel = posix(relative(baseDir, abs));
     const before = readFileSync(abs, 'utf8');
     let text = before;
+    const sourceAssets = new Set<string>(to === 'obsidian' ? [] : referencedAssets(before, abs));
     const notes: string[] = [];
+    const attachments = attachmentMapper(abs, baseDir);
 
     // 보정을 먼저 한다 — 이스케이프가 풀려야(\[…\] → […]) 링크 인식이 정확해진다
     if (fix) {
@@ -236,21 +258,59 @@ export async function runConvert(argv: string[]): Promise<void> {
       }
     }
     if (to === 'obsidian') {
+      const restored = restorePdfReferences(text, abs, baseDir);
+      restored.assets.forEach(a => sourceAssets.add(a));
+      referencedAssets(restored.text, abs).forEach(a => sourceAssets.add(a));
+      text = attachments.rewrite(linksToFootnotes(restored.text));
       // 같은 문서 앵커는 보정(--fix)까지 끝난 **지금 본문**의 헤딩으로 풀어야 맞는다
       const selfIdx = buildAnchorIndex(splitFrontmatter(text).body);
-      text = toObsidian(text, abs, baseDir, nameCount, headingOf, (s) => selfIdx.get(s.toLowerCase()));
-    } else if (to === 'markdown') text = resolveWikilinks(text, vaultResolver(rel, vault));
+      text = toObsidian(text, abs, baseDir, nameCount, headingOf, (s) => selfIdx.get(s.toLowerCase()), attachments.source);
+    } else if (to === 'markdown') {
+      const lookup = vaultResolver(rel, vault);
+      // 명시된 첨부 경로를 먼저 출력 트리로 옮긴 뒤 wiki 이름을 해석한다.
+      text = attachments.rewrite(text);
+      text = resolveWikilinks(text, (target, embed) => {
+        const imported = resolve(baseDir, target);
+        if (attachments.copies.has(posix(relative(baseDir, imported)))) {
+          return posix(relative(dirname(abs), imported));
+        }
+        return lookup(target, embed);
+      });
+      text = footnotesToLinks(attachments.rewrite(text));
+      mapMarkdownText(text, part => {
+        if (/\[\[[^\]\n]*\.pdf#page=[^\]\n]*\]\]/i.test(part)) {
+          throw new Error(`PDF 위키링크를 해석하지 못했습니다 (${rel}). --base에 PDF가 포함되는지 확인하세요.`);
+        }
+        return part;
+      });
+      const pdf = await extractPdfPages(text, abs, baseDir, outDir ?? baseDir, dryRun, attachments.source);
+      pdf.assets.forEach(a => sourceAssets.add(a));
+      text = pdf.text;
+      if (pdf.pages) notes.push(dim(`PDF ${pdf.pages}쪽 이미지`));
+    }
 
     // 제자리 변환이면 바뀐 것만 쓰지만, --out 이면 대상 전부를 내보낸다(온전한 트리가 나와야 하므로)
     if (!outDir && text === before) continue;
+
+    if (!dryRun) {
+      for (const [assetRel, source] of attachments.copies) {
+        const destination = join(outDir ?? baseDir, assetRel);
+        if (destination !== source) {
+          mkdirSync(dirname(destination), { recursive: true });
+          copyFileSync(source, destination);
+        }
+        copiedAssets.add(assetRel);
+      }
+    }
 
     if (outDir) {
       const target = join(outDir, rel);
       if (!dryRun) {
         mkdirSync(dirname(target), { recursive: true });
         writeFileSync(target, text);
-        // 이미지가 따라가지 않으면 링크가 깨진다 — 참조된 첨부를 같은 상대 위치로 복사
-        for (const asset of referencedAssets(text, abs)) {
+        // 참조된 첨부를 같은 상대 위치로 복사한다.
+        for (const asset of new Set([...sourceAssets, ...referencedAssets(text, abs)])) {
+          if ([...attachments.copies.values()].includes(asset)) continue;
           const arel = posix(relative(baseDir, asset));
           if (arel.startsWith('..') || copiedAssets.has(arel)) continue; // base 밖 첨부는 두고 온다
           const dstAsset = join(outDir, arel);

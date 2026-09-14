@@ -32,7 +32,7 @@ jobs:
       - run: npm --version
 
       - run: npm ci
-      - run: npm run build
+      - run: npm test
 
       # package.json 버전과 태그가 어긋난 채 배포되는 사고 방지
       - name: Verify version matches tag
