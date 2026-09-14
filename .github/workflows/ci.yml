@@ -25,4 +25,4 @@ jobs:
       - name: Smoke test (인증 없이 되는 것만)
         run: |
           node dist/sync.js --version
-          node dist/sync.js --help > /dev/null
+          node dist/sync.js --help
