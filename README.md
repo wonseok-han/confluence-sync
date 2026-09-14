@@ -130,6 +130,7 @@ docs/                      → [CONFLUENCE_PARENT_ID 또는 공간 최상위]
 
 - 페이지 제목은 **frontmatter `title` → 첫 `# 제목` → 파일명** 순으로 정해지고, 본문은 storage format 으로 변환됩니다.
 - 코드블록 → **code 매크로**, 표·리스트·헤딩은 그대로.
+- `mermaid` 코드블록 뒤에는 **Mermaid diagram** 매크로를 자동 삽입합니다. Confluence에 [Atlassian Labs Mermaid Diagrams Viewer](https://marketplace.atlassian.com/apps/1232887/mermaid-diagrams-viewer)가 설치되어 있어야 하며, 원본 코드도 함께 표시됩니다. 자동 연결은 등장 순서를 사용하므로 페이지의 모든 Mermaid 코드는 `mermaid` 코드블록으로 작성하세요.
 - **내부 `.md` 링크**와 **`[[wikilink]]`** → Confluence 페이지 링크로 자동 변환.
 - **섹션 링크** `[§1 개요](#1-개요)` · `[§6](./04-구현체.md#6-zkp)` · `[[문서#헤딩 텍스트]]` → Confluence 앵커 링크. [아래 참조](#섹션-링크-앵커)
 - **로컬 이미지**와 **`![[embed]]`** → 페이지 첨부로 업로드 후 참조 (같은 파일명은 새 버전으로 갱신). 외부 URL 이미지는 그대로.
