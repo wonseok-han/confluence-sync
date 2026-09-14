@@ -94,7 +94,7 @@ async function main() {
   if (!DRY_RUN && !LIST) requireEnv(env); // list/dry 는 Confluence 호출이 없어 인증 불필요
 
   const ignorer = buildIgnorer(BASE_DIR, EXCLUDES);
-  const collected = collectMarkdown(BASE_DIR).map((f) => relative(BASE_DIR, f));
+  const collected = collectMarkdown(BASE_DIR).map((f) => relative(BASE_DIR, f).split('\\').join('/'));
   const allRel = collected.filter((r) => !ignorer.ignores(r)); // 제외된 문서는 모든 단계에서 빠짐
   const ignoredCount = collected.length - allRel.length;
   const folderIndex = buildFolderIndex(allRel);

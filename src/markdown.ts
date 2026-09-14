@@ -87,7 +87,7 @@ function resolveInternalLink(href: string): LinkTarget | null {
 
   const [pathPart, ...rest] = href.split('#');
   if (!pathPart || !/\.md$/i.test(pathPart)) return null;
-  const rel = relative(baseDir, resolve(baseDir, ctx.fileDir, decodePath(pathPart)));
+  const rel = relative(baseDir, resolve(baseDir, ctx.fileDir, decodePath(pathPart))).split('\\').join('/');
   const title = ctx.titleIndex[rel];
   if (!title) return null;
   const fragment = rest.join('#');
@@ -107,6 +107,12 @@ md.renderer.rules.heading_open = (tokens, idx, opts, _env, self) => {
 md.renderer.rules.fence = (tokens, idx) => {
   const t = tokens[idx];
   const lang = (t.info || '').trim().split(/\s+/)[0];
+  // 별도 호스팅한 PDF.js 등 웹 뷰어를 Confluence iFrame 매크로로 표시.
+  if (lang === 'confluence-iframe') {
+    const url = t.content.trim();
+    if (!/^https?:\/\/[^\s<>]+$/i.test(url)) throw new Error('confluence-iframe에는 HTTP(S) URL 한 줄이 필요합니다.');
+    return `<ac:structured-macro ac:name="iframe"><ac:parameter ac:name="url">${escapeXml(url)}</ac:parameter><ac:parameter ac:name="width">100%</ac:parameter><ac:parameter ac:name="height">900</ac:parameter></ac:structured-macro>\n`;
+  }
   const safe = t.content.split(']]>').join(']]]]><![CDATA[>');
   const langParam = lang ? `<ac:parameter ac:name="language">${lang}</ac:parameter>` : '';
   return `<ac:structured-macro ac:name="code">${langParam}<ac:plain-text-body><![CDATA[${safe}]]></ac:plain-text-body></ac:structured-macro>\n`;

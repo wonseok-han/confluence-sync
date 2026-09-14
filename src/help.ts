@@ -64,6 +64,9 @@ ${h('pull(역방향) 옵션:')}
 ${h('convert(이미 받아둔 .md 손보기) 옵션:')} ${dim('Confluence 호출·인증 없음')}
   ${o('--to obsidian')}    상대 .md 링크 → [[wikilink]]
   ${o('--to markdown')}    [[wikilink]] · ![[embed]] → 상대 .md 링크 (되돌리기)
+                   각주 → 위첨자 링크·제목 앵커, PDF #page=N → 해당 쪽 이미지
+                   --to obsidian은 변환 표식으로 각주·PDF 참조를 복원
+                   절대경로·file://·../ 로컬 첨부는 출력 트리에 복사하고 링크 변경
   ${o('--fix')}            옛 pull 결과 보정 — 코드블록 언어(java→plaintext)·CSS 잔해·
                    불필요한 \\ 이스케이프·리스트 사이 빈 줄
   ${o('--base <dir>')}     링크를 해석할 문서 트리 루트(기본: 준 경로들의 공통 상위 폴더)

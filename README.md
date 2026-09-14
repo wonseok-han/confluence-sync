@@ -20,7 +20,7 @@ confluence-sync --version
 confluence-sync --help
 ```
 
-공개 npm 패키지라 **토큰이나 `.npmrc` 설정이 필요 없습니다.** (Node 20+)
+공개 npm 패키지라 **토큰이나 `.npmrc` 설정이 필요 없습니다.** (Node 22.13+)
 
 > 짧은 이름 **`csync`** 도 같이 설치됩니다 — 아래 예시의 `confluence-sync` 는 전부 `csync` 로 바꿔 쓸 수 있습니다.
 
@@ -298,6 +298,15 @@ confluence-sync convert --to obsidian --fix ./docs --out ~/MyVault
 - **섹션 링크는 표기가 다릅니다** — 표준 마크다운은 슬러그(`문서.md#6-zkp`), Obsidian 은 헤딩 텍스트(`[[문서#6. ZKP]]`)를 씁니다. 대상 문서의 헤딩을 찾아 옮기고, 못 찾으면 섹션 없이 문서 링크로 둡니다. Obsidian 블록 참조(`#^id`)는 마크다운에 대응물이 없어 같은 방식으로 처리합니다.
 - **같은 문서 섹션**도 마찬가지입니다 — `[§4](#4-버전)` ↔ `[[#4. 버전|§4]]`. 표 안에서 `\|` 로 이스케이프된 별칭도 인식합니다.
 
+### 각주와 첨부
+
+`--to markdown`은 각주를 위첨자 링크와 작은 제목으로 변환하고, 각주에 연결된 PDF의
+`#page=N` 페이지를 이미지로 표시합니다. 첨부파일은 `attachments/`에 모아 연결합니다.
+PDF 이미지 추출은 패키지에 포함된 PDF.js로 처리하므로 별도 도구 설치가 필요 없습니다.
+
+`--to obsidian`은 변환 정보와 원본 PDF가 남아 있는 로컬 변환본에서 각주와 PDF 참조를 복원합니다.
+Confluence에서 다시 내려받은 문서의 복원은 보장하지 않습니다.
+
 ### 보정 (`--fix`)
 
 변환기가 개선되기 전에 pull 한 문서에는 옛 결함의 흔적이 남아 있습니다. 스페이스를 통째로 다시 받지 않고 그 흔적만 되돌립니다.
@@ -333,6 +342,8 @@ confluence-sync convert --to obsidian --fix ./docs --out ~/MyVault
 ---
 
 ## 개발
+
+`npm test`로 전체 테스트, `npm run test:coverage`로 커버리지를 확인합니다. 테스트는 실제 Confluence에 접속하지 않습니다.
 
 ```bash
 git clone https://github.com/wonseok-han/confluence-sync.git
