@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0
+
+- `mermaid` 코드 블록을 Confluence에 올릴 때 바로 뒤에 **Mermaid diagram** 매크로를 자동 삽입합니다. Atlassian Labs의 Mermaid Diagrams Viewer 앱이 설치되어 있어야 하며, 코드 원문과 다이어그램이 함께 표시됩니다.
+- 여러 Mermaid 블록에 각각 고유하고 일정한 매크로 ID를 부여하여, 반복 동기화 시 ID 때문에 불필요한 변경이 발생하지 않도록 합니다.
+- Mermaid 변환, 여러 블록의 ID 구분, 변경 해시 안정성, 특수문자 보존 및 pull 코드 언어 보존 테스트를 추가했습니다.
+
 ## 1.4.0
 
 - PDF.js와 Canvas를 포함하여 별도 Poppler 설치 없이 PDF 이미지를 생성합니다. Node.js 22.13 이상이 필요합니다.

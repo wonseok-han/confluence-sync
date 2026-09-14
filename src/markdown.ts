@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import MarkdownIt from 'markdown-it';
 import { resolveWikilinks, type LinkResolver } from './obsidian.js';
 import { decodeAnchor, anchorMacro } from './anchors.js';
+import { mermaidMacro } from './mermaid.js';
 
 export const escapeXml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -31,6 +32,7 @@ type RenderCtx = {
   anchorNames: Set<string>; // 이 문서에서 Anchor 매크로를 심을 헤딩 슬러그들
   bodySlugs: string[]; // 본문 헤딩 슬러그(순서대로) — 렌더 중 헤딩과 맞춘다
   headingSeq: number;
+  mermaidSeq: number;
   anchorsPlaced: number;
   images: { filename: string; abs: string }[];
   internalLinks: number;
@@ -44,7 +46,7 @@ const md = new MarkdownIt({ html: true, linkify: true, breaks: false });
 
 const emptyCtx = (): RenderCtx => ({
   fileDir: '', titleIndex: {}, anchorIndex: {}, selfRel: '', selfTitle: '',
-  anchorNames: new Set(), bodySlugs: [], headingSeq: 0, anchorsPlaced: 0,
+  anchorNames: new Set(), bodySlugs: [], headingSeq: 0, mermaidSeq: 0, anchorsPlaced: 0,
   images: [], internalLinks: 0, anchorLinks: 0, deadAnchors: [], linkStack: [], linkedTitles: new Set(),
 });
 
@@ -106,7 +108,8 @@ md.renderer.rules.heading_open = (tokens, idx, opts, _env, self) => {
 
 md.renderer.rules.fence = (tokens, idx) => {
   const t = tokens[idx];
-  const lang = (t.info || '').trim().split(/\s+/)[0];
+  const infoLang = (t.info || '').trim().split(/\s+/)[0];
+  const lang = infoLang.toLowerCase() === 'mermaid' ? 'mermaid' : infoLang;
   // 별도 호스팅한 PDF.js 등 웹 뷰어를 Confluence iFrame 매크로로 표시.
   if (lang === 'confluence-iframe') {
     const url = t.content.trim();
@@ -114,8 +117,9 @@ md.renderer.rules.fence = (tokens, idx) => {
     return `<ac:structured-macro ac:name="iframe"><ac:parameter ac:name="url">${escapeXml(url)}</ac:parameter><ac:parameter ac:name="width">100%</ac:parameter><ac:parameter ac:name="height">900</ac:parameter></ac:structured-macro>\n`;
   }
   const safe = t.content.split(']]>').join(']]]]><![CDATA[>');
-  const langParam = lang ? `<ac:parameter ac:name="language">${lang}</ac:parameter>` : '';
-  return `<ac:structured-macro ac:name="code">${langParam}<ac:plain-text-body><![CDATA[${safe}]]></ac:plain-text-body></ac:structured-macro>\n`;
+  const langParam = lang ? `<ac:parameter ac:name="language">${escapeXml(lang)}</ac:parameter>` : '';
+  const code = `<ac:structured-macro ac:name="code">${langParam}<ac:plain-text-body><![CDATA[${safe}]]></ac:plain-text-body></ac:structured-macro>\n`;
+  return code + (lang === 'mermaid' ? mermaidMacro(ctx.selfRel, ctx.mermaidSeq++) : '');
 };
 
 md.renderer.rules.link_open = (tokens, idx, opts, _env, self) => {
