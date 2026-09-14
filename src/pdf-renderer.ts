@@ -1,6 +1,6 @@
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join, sep } from 'node:path';
+import { dirname, join } from 'node:path';
 
 export type PdfPageJob = { file: string; page: number; target: string };
 
@@ -11,6 +11,8 @@ export async function renderPdfPages(jobs: PdfPageJob[], dryRun: boolean): Promi
   const { createCanvas } = await import('@napi-rs/canvas');
   const require = createRequire(import.meta.url);
   const root = dirname(require.resolve('pdfjs-dist/package.json'));
+  // PDF.js는 Windows에서도 '/'로 끝나는 리소스 경로를 요구한다.
+  const resourceDir = (name: string) => join(root, name).split('\\').join('/') + '/';
   const files = new Map<string, PdfPageJob[]>();
   for (const job of jobs) {
     const group = files.get(job.file) ?? [];
@@ -20,10 +22,10 @@ export async function renderPdfPages(jobs: PdfPageJob[], dryRun: boolean): Promi
   for (const [file, pages] of files) {
     const task = getDocument({
       data: new Uint8Array(readFileSync(file)),
-      cMapUrl: join(root, 'cmaps') + sep,
+      cMapUrl: resourceDir('cmaps'),
       cMapPacked: true,
-      standardFontDataUrl: join(root, 'standard_fonts') + sep,
-      wasmUrl: join(root, 'wasm') + sep,
+      standardFontDataUrl: resourceDir('standard_fonts'),
+      wasmUrl: resourceDir('wasm'),
       useSystemFonts: false,
       verbosity: VerbosityLevel.ERRORS,
     });
