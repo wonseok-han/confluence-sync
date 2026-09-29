@@ -56,7 +56,7 @@ const EXCLUDES = optVals('--exclude');
 const positionals: string[] = [];
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--base' || argv[i] === '--mapping' || argv[i] === '--exclude'
-    || argv[i] === '--to' || argv[i] === '--out') { i++; continue; }
+    || argv[i] === '--to' || argv[i] === '--out' || argv[i] === '--port') { i++; continue; }
   if (argv[i].startsWith('-')) continue;
   positionals.push(argv[i]);
 }
@@ -66,6 +66,11 @@ if (HELP) { printHelp(); process.exit(0); }
 if (VERSION) { console.log(readPkgVersion()); process.exit(0); }
 if (positionals[0] === 'init') { await runInit(argv); process.exit(0); }
 if (positionals[0] === 'pull') { await runPull(argv); process.exit(0); }
+if (positionals[0] === 'web') {
+  try { const { runWeb } = await import('./web.js'); await runWeb(argv); }
+  catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); }
+  process.exit(0);
+}
 if (positionals[0] === 'convert') { await runConvert(argv); process.exit(0); }
 
 const baseInput = optVal('--base') ?? process.env.CONFLUENCE_SYNC_BASE;

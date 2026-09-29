@@ -35,7 +35,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/build-web.mjs",
+    "web": "npm run build && node dist/sync.js web",
     "test": "npm run build && node --test tests/*.test.mjs",
     "prepublishOnly": "npm run build",
     "sync": "tsx src/sync.ts",
@@ -61,6 +62,8 @@
     "@types/markdown-it-footnote": "^3.0.4",
     "@types/node": "^22.0.0",
     "@types/turndown": "^5.0.6",
+    "esbuild": "^0.28.2",
+    "monaco-editor": "^0.57.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }
