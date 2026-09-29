@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Confluence API 게이트웨이(`api.atlassian.com`)를 사용하는 경우 참조 문서 링크가 API 서버로 연결되던 오류를 수정했습니다. 현재 Confluence 사이트의 페이지 경로를 사용하며, 일반 사이트 주소를 사용하는 설정은 기존 링크를 유지합니다.
+
 ## 1.6.0
 
 ### 로컬 웹 작업 화면

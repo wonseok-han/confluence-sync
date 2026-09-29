@@ -69,7 +69,10 @@ export function buildReferenceLookup(base: string, rels: string[], roots: string
       if (!hit.pageId || !/^\d+$/.test(hit.pageId)) { warn(`게시 매핑 없는 문서 링크: ${target} → ${join(hit.root, hit.rel)}`); return null; }
       if (!server || !/^https?:\/\//i.test(server)) { warn(`참조 링크에 CONFLUENCE_BASE_URL이 필요합니다: ${target}`); return null; }
       linked(`${target} → pageId ${hit.pageId} (${join(hit.root, hit.rel)})`);
-      return `${server}/pages/viewpage.action?pageId=${encodeURIComponent(hit.pageId)}`;
+      // The API gateway has no browser UI. References are already restricted to
+      // the same server, so Cloud links can use the viewing site's /wiki root.
+      const pageBase = new URL(server).hostname === 'api.atlassian.com' ? '/wiki' : server;
+      return `${pageBase}/pages/viewpage.action?pageId=${encodeURIComponent(hit.pageId)}`;
     },
   };
 }

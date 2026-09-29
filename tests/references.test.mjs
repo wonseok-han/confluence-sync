@@ -19,6 +19,25 @@ test('wiki path, alias, and encoded Markdown path resolve to mapped page ID', t 
     assert.match(r.storage, /표시 이름/); assert.deepEqual(r.linkWarnings, []);
   }
 });
+test('API gateway reference links stay on the Confluence browser site', t => {
+  const { base, refs } = setup(t);
+  const gateway = 'https://api.atlassian.com/ex/confluence/test-cloud-id/wiki';
+  const tree = buildTreeRenderer(base, ['a.md'], { referenceRoots: refs, baseUrl: gateway });
+  for (const body of [
+    '[[Vault/문서|표시 이름]]', '[표시 이름](../old/문서.md)',
+    '[[Vault/문서#Section|표시 이름]]', '[표시 이름](../old/문서.md#section)',
+  ]) {
+    const result = tree.render('a.md', body, 'Start');
+    const fragment = body.includes('#') ? '#section' : '';
+    const href = result.storage.match(/href="([^"]+)"/)[1];
+    assert.equal(href, '/wiki/pages/viewpage.action?pageId=123' + fragment);
+    assert.equal(new URL(href, 'https://team.atlassian.net/wiki/spaces/SPACE/pages/456').href,
+      'https://team.atlassian.net/wiki/pages/viewpage.action?pageId=123' + fragment);
+    assert.doesNotMatch(result.storage, /api\.atlassian\.com|test-cloud-id/);
+    assert.match(result.storage, /표시 이름/);
+    assert.deepEqual(result.linkWarnings, []);
+  }
+});
 test('unique local fallback uses H1 and places section anchors; exact local path wins', t => {
   const { base, refs } = setup(t, { 'main/문서.md': '# Local H1\n\n## Section' });
   const tree = buildTreeRenderer(base, ['a.md','문서.md'], { referenceRoots: refs, baseUrl });
