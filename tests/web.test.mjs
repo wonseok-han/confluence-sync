@@ -1,9 +1,9 @@
 import test from 'node:test';
 import { get } from 'node:http';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync, symlinkSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, symlinkSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { startWeb } from '../dist/web.js';
+import { startWeb } from '../dist/web/server.js';
 import { workspace } from './helpers/fixtures.mjs';
 
 async function app(t, start, options = {}) {
@@ -118,8 +118,8 @@ test('explicit output supports a new path or existing directory and never writes
   assert.equal(readFileSync(join(root, 'output/keep.txt'), 'utf8'), 'keep');
   const saved = readFileSync(join(root, 'output/a.md'), 'utf8');
   response = await post({ ...body, out: join(root, 'output'), preview: false }); assert.equal(response.status, 200);
-  response = await post({ ...body, to: 'obsidian', out: join(root, 'output'), preview: false }); assert.equal(response.status, 400);
-  assert.match((await response.json()).error, /이미 사용/);
+  response = await post({ ...body, to: 'obsidian', out: join(root, 'output'), preview: false }); assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, 'OVERWRITE_REQUIRED');
   assert.equal(readFileSync(join(root, 'output/a.md'), 'utf8'), saved);
 });
 
@@ -187,7 +187,7 @@ test('consecutive exports reuse shared attachments and remain usable after a con
   assert.ok(existsSync(join(root, 'output/b.md')));
   assert.equal(readdirSync(join(root, 'output/attachments/files')).length, 1);
   put('vault/a.md', '# Changed');
-  assert.equal((await post(body)).status, 400);
+  assert.equal((await post(body)).status, 409);
   assert.match(readFileSync(join(root, 'output/a.md'), 'utf8'), /# A/);
   assert.equal((await post({ ...body, preview: true })).status, 200);
   assert.equal((await post({ ...body, out: '' })).status, 200);
@@ -212,4 +212,31 @@ test('explicit file conversion writes directly to output and folder conversion p
   assert.equal((await post({ ...folder, out: join(root, 'vault/project/output') })).status, 400);
   assert.equal((await post({ ...body, scope: 'folder' })).status, 400);
   assert.equal((await post({ ...folder, scope: 'file' })).status, 400);
+});
+
+test('overwrite requires confirmation, rejects stale approval, and preserves unrelated files', async t => {
+  const { root, put } = workspace(t, { 'vault/a.md': '# New', 'vault/b.md': '# Added', 'out/a.md': '# Old', 'out/keep.txt': 'keep' });
+  const { post } = await app(t, root);
+  const body = { base: join(root, 'vault'), file: join(root, 'vault'), scope: 'folder', out: join(root, 'out'), to: 'markdown', fix: false, preview: false };
+  let response = await post(body); assert.equal(response.status, 409);
+  let result = await response.json(); assert.equal(result.code, 'OVERWRITE_REQUIRED');
+  assert.deepEqual(result.conflicts.map(c => c.path), ['a.md']);
+  assert.equal(readFileSync(join(root,'out/a.md'),'utf8'),'# Old');
+  assert.equal(existsSync(join(root,'out/b.md')),false);
+  const approvedOverwrites = Object.fromEntries(result.conflicts.map(c=>[c.path,c.hash]));
+  put('out/a.md','# Edited while confirming');
+  response = await post({...body,approvedOverwrites});assert.equal(response.status,409);
+  result = await response.json();assert.notEqual(result.conflicts[0].hash,approvedOverwrites['a.md']);
+  response = await post({...body,approvedOverwrites:Object.fromEntries(result.conflicts.map(c=>[c.path,c.hash]))});
+  assert.equal(response.status,200);await response.json();
+  assert.equal(readFileSync(join(root,'out/a.md'),'utf8'),'# New');
+  assert.equal(readFileSync(join(root,'out/b.md'),'utf8'),'# Added');
+  assert.equal(readFileSync(join(root,'out/keep.txt'),'utf8'),'keep');
+  const beforeRepeat = statSync(join(root,'out/a.md')).mtimeMs;
+  const repeated = await (await post(body)).json();
+  assert.deepEqual(repeated.saved, { created: 0, overwritten: 0, reused: 2 });
+  assert.equal(statSync(join(root,'out/a.md')).mtimeMs, beforeRepeat);
+  assert.deepEqual(readdirSync(join(root,'out')).sort(),['a.md','b.md','keep.txt']);
+  assert.equal(readFileSync(join(root,'vault/a.md'),'utf8'),'# New');
+  assert.equal((await post({...body,approvedOverwrites:true})).status,400);
 });

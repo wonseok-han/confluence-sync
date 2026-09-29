@@ -122,6 +122,7 @@ function normalizeRel(dir: string, dest: string): string | null {
 export function resolveAnchorTargets(
   docs: Record<string, Doc>,
   vault: Vault,
+  localTarget?: (from: string, target: string, wiki: boolean) => string | null,
 ): Record<string, Set<string>> {
   const out: Record<string, Set<string>> = {};
   for (const [rel, doc] of Object.entries(docs)) {
@@ -140,6 +141,7 @@ export function resolveAnchorTargets(
         slug = decodeAnchor(la.fragment).toLowerCase();
       }
 
+      if (localTarget && la.dest) target = localTarget(rel, la.dest, la.wiki);
       if (!target || !slug) continue;
       // 실제로 존재하는 헤딩만 — 없는 앵커는 markdown.ts 가 경고로 잡는다
       if (!docs[target]?.anchors.has(slug)) continue;

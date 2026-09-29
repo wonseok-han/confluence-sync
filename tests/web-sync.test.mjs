@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, symlinkSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { createWebSync } from '../dist/web-sync.js';
-import { startWeb } from '../dist/web.js';
+import { createWebSync } from '../dist/web/sync.js';
+import { startWeb } from '../dist/web/server.js';
 import { workspace } from './helpers/fixtures.mjs';
 
 const env = 'CONFLUENCE_BASE_URL=https://example.invalid/wiki\nCONFLUENCE_EMAIL=demo@example.invalid\nCONFLUENCE_API_TOKEN=synthetic-secret\nCONFLUENCE_SPACE_KEY=TEST\nCONFLUENCE_PARENT_ID=123\n';
@@ -130,7 +130,7 @@ test('sync HTTP endpoints require local token and serialize with conversion', as
 
 test('web adapter runs real incremental push with all Confluence calls intercepted', async t => {
   const { root, put } = workspace(t, { 'vault/.env': env, 'vault/a.md': '# A\n\nBody' });
-  const { runSyncCLI } = await import('../dist/web-sync.js');
+  const { runSyncCLI } = await import('../dist/web/sync.js');
   const { pathToFileURL } = await import('node:url');
   const { resolve } = await import('node:path');
   const calls = put('calls.jsonl', '');
@@ -151,4 +151,16 @@ test('web adapter runs real incremental push with all Confluence calls intercept
   assert.deepEqual(sent.map(call => call.method), ['GET', 'POST']);
   assert.equal(sent[1].body.parentId, '123');
   await sync.preview(body); assert.match((await finished(sync)).log, /동일/);
+});
+
+test('reference folders pass to CLI and reference mapping changes invalidate preview', async t => {
+  const { root, put } = workspace(t, { 'main/.env': env, 'main/a.md': '# A', 'ref/b.md': '# B', 'ref/.confluence-sync.json': '{"b.md":{"pageId":"123"}}' });
+  const calls = [];
+  const sync = createWebSync(async args => { calls.push(args); return 0; });
+  const input = { ...request(join(root, 'main')), referenceRoots: [join(root, 'ref')] };
+  await sync.preview(input); const { planId } = await finished(sync);
+  assert.deepEqual(calls[0].slice(2,4), ['--reference-root', realpathSync(join(root,'ref'))]);
+  put('ref/.confluence-sync.json', '{"b.md":{"pageId":"456"}}');
+  await assert.rejects(sync.push(planId), /변경/); assert.equal(calls.length,1);
+  await assert.rejects(sync.preview({...input,referenceRoots:'invalid'}), /참조/);
 });

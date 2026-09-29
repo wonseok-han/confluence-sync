@@ -86,3 +86,13 @@ test('convert rejects output inside the input tree even through a directory syml
  const {root,put}=workspace(t,{'source/doc.md':'# Doc'});const input=join(root,'source');const alias=join(root,'alias');symlinkSync(input,alias,'junction');
  const r=run(root,['convert','--to','markdown','--base',input,join(input,'doc.md'),'--out',join(alias,'out')]);assert.notEqual(r.status,0);assert.match(r.stderr,/--out/);assert.equal(existsSync(join(input,'out')),false);
 });
+
+test('reference pages link by ID without any reference upload or mapping mutation',t=>{
+ const original=JSON.stringify({'target.md':{pageId:'123',title:'Previous title'}});
+ const {root,put}=workspace(t,{'main/a.md':'# A\n\n[[Vault/old/target|Alias]]','refs/target.md':'# Different H1','refs/.confluence-sync.json':original});
+ const r=offline(root,put,['--base',join(root,'main'),'--reference-root',join(root,'refs')],[{path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}},{path:'/wiki/api/v2/pages',method:'POST',body:{id:'new'}}]);
+ assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,2);
+ assert.match(r.calls[1].body.body.value,/viewpage.action\?pageId=123/);assert.match(r.calls[1].body.body.value,/>Alias<\/a>/);
+ assert.equal(readFileSync(join(root,'refs/.confluence-sync.json'),'utf8'),original);
+ assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(root,'main/.confluence-sync.json'),'utf8'))),['a.md']);
+});

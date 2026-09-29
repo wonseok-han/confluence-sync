@@ -2,7 +2,7 @@
  * 환경변수(.env / 셸) 로딩과 필수값 검증.
  * dotenv 로딩은 진입점(sync.ts)에서 `import 'dotenv/config'` 로 먼저 수행된다.
  */
-import { red, cyan } from './colors.js';
+import { red, cyan } from '../shared/colors.js';
 
 export type Env = {
   baseUrl?: string;

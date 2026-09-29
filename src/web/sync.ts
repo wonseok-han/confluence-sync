@@ -1,3 +1,4 @@
+import { referenceRoots } from '../sync/references.js';
 /** Web adapter for the existing push CLI. Only preview and incremental push are exposed. */
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -5,13 +6,13 @@ import { readFile, readdir, realpath, stat, lstat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'dotenv';
-import { within } from './web-output.js';
-import { collectMarkdown, resolveSelection } from './docs.js';
-import { buildIgnorer } from './ignore.js';
+import { within } from './output.js';
+import { collectMarkdown, resolveSelection } from '../documents/catalog.js';
+import { buildIgnorer } from '../sync/ignore.js';
 
 const keys = ['CONFLUENCE_BASE_URL', 'CONFLUENCE_EMAIL', 'CONFLUENCE_API_TOKEN', 'CONFLUENCE_SPACE_KEY', 'CONFLUENCE_PARENT_ID', 'CONFLUENCE_PARENT_PAGE_ID'] as const;
 type Settings = Record<string, string>;
-type Selection = { base: string; target: string; envFile: string; verify: boolean };
+type Selection = { base: string; target: string; envFile: string; verify: boolean; referenceRoots: string[] };
 type Prepared = { selection: Selection; env: Settings; config: ReturnType<typeof publicConfig>; fingerprint: string };
 export type SyncRunner = (args: string[], env: Settings, log: (text: string) => void) => Promise<number>;
 type Job = { id: string; kind: 'preview' | 'push'; state: 'running' | 'succeeded' | 'failed'; log: string; selection: Selection; config: ReturnType<typeof publicConfig>; planId: string | null; startedAt: string; finishedAt?: string };
@@ -60,6 +61,8 @@ async function prepare(input: unknown): Promise<Prepared> {
     || typeof body.envFile !== 'string' || typeof body.verify !== 'boolean') throw new Error('동기화 옵션을 확인해 주세요.');
   const base = await realpath(resolve(body.base));
   if (dirname(base) === base || !(await stat(base)).isDirectory()) throw new Error('문서의 기준 폴더를 선택해 주세요.');
+  if (body.referenceRoots !== undefined && (!Array.isArray(body.referenceRoots) || body.referenceRoots.some(value => typeof value !== 'string' || !value.trim()))) throw new Error('참조 폴더 목록을 확인해 주세요.');
+  const refs = referenceRoots(base, body.referenceRoots ?? []);
   const target = body.target ? await realpath(resolve(body.target)) : base;
   if (!within(base, target)) throw new Error('동기화 대상은 기준 폴더 안에 있어야 합니다.');
   const ignorer = buildIgnorer(base, []);
@@ -77,13 +80,19 @@ async function prepare(input: unknown): Promise<Prepared> {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('.confluence-sync.json 매핑 파일이 올바르지 않습니다. 기존 매핑을 확인해 주세요.');
   }
   const { env, source } = await settings(base, body.envFile);
-  const selection = { base, target: target === base ? '' : target, envFile: body.envFile, verify: body.verify };
-  return { selection, env, config: publicConfig(env, source), fingerprint: await fingerprint(base, env) };
+  const selection = { base, target: target === base ? '' : target, envFile: body.envFile, verify: body.verify, referenceRoots: refs };
+  const snapshots = await Promise.all([base, ...refs].map(async root => {
+    const config = await readFile(join(root, '.env'), 'utf8').catch(error => {
+      if (error.code === 'ENOENT') return ''; throw error;
+    });
+    return [root, await fingerprint(root, env), createHash('sha256').update(config).digest('hex')];
+  }));
+  return { selection, env, config: publicConfig(env, source), fingerprint: JSON.stringify(snapshots) };
 }
 
 export const runSyncCLI: SyncRunner = (args, settings, log) => new Promise((resolveJob, reject) => {
   const source = import.meta.url.endsWith('.ts');
-  const worker = fileURLToPath(new URL(source ? './sync.ts' : './sync.js', import.meta.url));
+  const worker = fileURLToPath(new URL(source ? '../sync.ts' : '../sync.js', import.meta.url));
   const child = spawn(process.execPath, [...(source ? process.execArgv : []), worker, ...args], {
     env: { ...process.env, ...settings, NO_COLOR: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -112,6 +121,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
     job = current; plan = null;
     const { base, target, verify } = prepared.selection;
     const args = ['--base', base];
+    for (const root of prepared.selection.referenceRoots) args.push('--reference-root', root);
     if (target) args.push(target);
     if (kind === 'preview') args.push('--dry-run');
     else if (verify) args.push('--verify');

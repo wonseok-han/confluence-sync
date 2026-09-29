@@ -3,15 +3,15 @@ import assert from 'node:assert/strict';
 import {join,relative} from 'node:path';
 import {readFileSync} from 'node:fs';
 import {workspace} from './helpers/fixtures.mjs';
-import {collectHeadings,slugifyHeading,matchConfluenceAnchor,wikilinkAnchorToSlug,collectLinkAnchors} from '../dist/anchors.js';
-import {splitFrontmatter,buildFrontmatter,resolveWikilinks,linksToWikilinks} from '../dist/obsidian.js';
-import {collectMarkdown,collectAssets,readDoc,buildVault,vaultResolver,buildFolderIndex,parentKeyOf,neededFolderDirs,sortForSync,resolveSelection,withParents} from '../dist/docs.js';
-import {buildTreeRenderer} from '../dist/render.js';
-import {docHash,toStorage} from '../dist/markdown.js';
-import {buildIgnorer} from '../dist/ignore.js';
-import {loadMapping,saveMapping} from '../dist/mapping.js';
-import {repairMarkdown,totalFixes} from '../dist/repair.js';
-import {htmlToMarkdown,codeLanguagesFromStorage} from '../dist/html2md.js';
+import {collectHeadings,slugifyHeading,matchConfluenceAnchor,wikilinkAnchorToSlug,collectLinkAnchors} from '../dist/documents/anchors.js';
+import {splitFrontmatter,buildFrontmatter,resolveWikilinks,linksToWikilinks} from '../dist/documents/obsidian.js';
+import {collectMarkdown,collectAssets,readDoc,buildVault,vaultResolver,buildFolderIndex,parentKeyOf,neededFolderDirs,sortForSync,resolveSelection,withParents} from '../dist/documents/catalog.js';
+import {buildTreeRenderer} from '../dist/sync/render.js';
+import {docHash,toStorage} from '../dist/documents/markdown.js';
+import {buildIgnorer} from '../dist/sync/ignore.js';
+import {loadMapping,saveMapping} from '../dist/sync/mapping.js';
+import {repairMarkdown,totalFixes} from '../dist/conversion/repair.js';
+import {htmlToMarkdown,codeLanguagesFromStorage} from '../dist/documents/html-to-markdown.js';
 
 test('headings ignore fenced examples and retain duplicate, Korean, and C# anchors',()=>{
  const h=collectHeadings('# Title\n## **한글** Guide\n```md\n# Hidden\n```\n## **한글** Guide\n### C# ###');

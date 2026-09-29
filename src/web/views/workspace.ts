@@ -1,4 +1,4 @@
-import { syncPanel } from './web-sync-ui.js';
+import { syncPanel } from './sync-panel.js';
 /** HTML shell; Monaco and application code are bundled as local assets. */
 export const webPage = (token: string) => `<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="csync-token" content="${token}"><title>문서 워크스페이스 · confluence-sync</title><link rel="stylesheet" href="/assets/app.css"></head><body>

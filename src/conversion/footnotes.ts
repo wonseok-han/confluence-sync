@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import footnote from 'markdown-it-footnote';
-import { collectHeadings } from './anchors.js';
+import { collectHeadings } from '../documents/anchors.js';
 import { mapMarkdownText, replaceGeneratedBlocks } from './pdf-pages.js';
 
 /** 각주 확장을 일반 제목 앵커 + 위첨자 Markdown 링크로 내보낸다. */

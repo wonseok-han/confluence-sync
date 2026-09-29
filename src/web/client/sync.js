@@ -1,10 +1,12 @@
+import { renderSyncLog } from './sync-log.js';
+
 export function initSync({ api, context, setBusy, showSync }) {
   const $ = id => document.getElementById(id);
   let busy = false, planId = null, preparedKey = '', loadedKey = '', timer;
   const status = (text, error = false) => { $('sync-status').textContent = text; $('sync-status').classList.toggle('error', error); };
   function selection() {
     const ctx = context(), scope = $('sync-scope').value;
-    return { base: ctx.base || '', target: scope === 'all' ? '' : scope === 'folder' ? ctx.folder || '' : ctx.file || '', envFile: $('sync-env').value.trim(), verify: $('sync-verify').checked };
+    return { base: ctx.base || '', target: scope === 'all' ? '' : scope === 'folder' ? ctx.folder || '' : ctx.file || '', envFile: $('sync-env').value.trim(), verify: $('sync-verify').checked, referenceRoots: $('sync-references').value.split(/\r?\n/).map(path => path.trim()).filter(Boolean) };
   }
   const key = () => JSON.stringify(selection());
   const configKey = () => JSON.stringify([context().base, $('sync-env').value.trim()]);
@@ -15,7 +17,7 @@ export function initSync({ api, context, setBusy, showSync }) {
     if (!transient && loadedKey && loadedKey !== configKey()) {
       loadedKey = ''; $('sync-config').replaceChildren(); $('sync-config-status').textContent = '설정 확인 또는 미리보기를 실행하면 업로드 위치를 불러옵니다.';
     }
-    for (const id of ['sync-scope', 'sync-env', 'sync-load', 'sync-verify']) $(id).disabled = busy;
+    for (const id of ['sync-scope', 'sync-env', 'sync-load', 'sync-verify', 'sync-references', 'sync-add-reference']) $(id).disabled = busy;
     $('sync-load').disabled = busy || !context().base;
     $('sync-preview').disabled = busy || !hasTarget();
     $('sync-push').disabled = busy || !planId;
@@ -34,7 +36,7 @@ export function initSync({ api, context, setBusy, showSync }) {
     $('sync-job-summary').textContent = `${job.kind === 'preview' ? '미리보기' : '동기화'} · ${job.selection.target || job.selection.base} → ${job.config.spaceKey || '스페이스 미설정'} (${job.config.baseUrl || '서버 미설정'})`;
     $('sync-log-empty').hidden = true; $('sync-log').hidden = false;
     const log = $('sync-log'), following = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-    log.textContent = job.log || '작업을 준비하는 중입니다…';
+    renderSyncLog(log, job.log || '작업을 준비하는 중입니다…');
     if (following) log.scrollTop = log.scrollHeight;
     $('sync-job-state').textContent = { running: '진행 중', succeeded: '완료', failed: '실패' }[job.state];
     if (job.state === 'running') status(job.kind === 'preview' ? '로컬 문서와 매핑을 비교하고 있습니다…' : 'Confluence에 동기화하고 있습니다. 진행 내역을 확인하세요.');
@@ -78,6 +80,19 @@ export function initSync({ api, context, setBusy, showSync }) {
       } catch { $('sync-reconnect').hidden = false; }
     }
   }
+  $('sync-add-reference').onclick = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await api('/api/pick-folder', { kind: 'reference', start: context().base });
+      if (result.path) {
+        const paths = selection().referenceRoots;
+        $('sync-references').value = [...new Set([...paths, result.path])].join('\n');
+        $('sync-references').dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    } catch (error) { status(error.message, true); }
+    finally { setBusy(false); }
+  };
   $('sync-preview').onclick = () => start('preview');
   $('sync-push').onclick = () => start('push');
   $('sync-reconnect').onclick = poll;
@@ -88,7 +103,7 @@ export function initSync({ api, context, setBusy, showSync }) {
     catch (error) { status(error.message, true); }
     finally { setBusy(false); }
   };
-  for (const id of ['sync-env', 'sync-scope', 'sync-verify']) $(id).addEventListener('input', () => update(busy));
+  for (const id of ['sync-env', 'sync-scope', 'sync-verify', 'sync-references']) $(id).addEventListener('input', () => update(busy));
   return {
     update,
     resume: async () => {

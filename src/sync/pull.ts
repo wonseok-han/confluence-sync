@@ -9,17 +9,17 @@
  */
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { resolve, join, dirname, basename, relative } from 'node:path';
-import { readEnv, requireEnv } from './config.js';
-import { createClient, type ContentNode } from './confluence.js';
-import { htmlToMarkdown, codeLanguagesFromStorage } from './html2md.js';
-import { buildFrontmatter, splitFrontmatter } from './obsidian.js';
-import { collectHeadings, matchConfluenceAnchor, type Heading } from './anchors.js';
-import { collectMarkdown } from './docs.js';
+import { readEnv, requireEnv } from '../confluence/config.js';
+import { createClient, type ContentNode } from '../confluence/client.js';
+import { htmlToMarkdown, codeLanguagesFromStorage } from '../documents/html-to-markdown.js';
+import { buildFrontmatter, splitFrontmatter } from '../documents/obsidian.js';
+import { collectHeadings, matchConfluenceAnchor, type Heading } from '../documents/anchors.js';
+import { collectMarkdown } from '../documents/catalog.js';
 import { buildTreeRenderer } from './render.js';
-import { docHash } from './markdown.js';
+import { docHash } from '../documents/markdown.js';
 import { buildIgnorer } from './ignore.js';
 import { loadMapping, saveMapping, MAPPING_FILE } from './mapping.js';
-import { cyan, dim, green, red, yellow } from './colors.js';
+import { cyan, dim, green, red, yellow } from '../shared/colors.js';
 
 type Client = ReturnType<typeof createClient>;
 

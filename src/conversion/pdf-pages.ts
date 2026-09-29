@@ -3,7 +3,7 @@ import { readFileSync, existsSync, realpathSync } from 'node:fs';
 import { resolve, relative, dirname, join } from 'node:path';
 import { renderPdfPages, type PdfPageJob } from './pdf-renderer.js';
 import MarkdownIt from 'markdown-it';
-import { collectHeadings } from './anchors.js';
+import { collectHeadings } from '../documents/anchors.js';
 
 const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64');
 const decode = <T>(value: string): T => JSON.parse(Buffer.from(value, 'base64').toString());

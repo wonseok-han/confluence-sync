@@ -1,7 +1,7 @@
 import * as monaco from 'monaco-editor/editor/editor.api.js';
 import 'monaco-editor/languages/definitions/markdown/register.js';
-import './web.css';
-import { initSync } from './web-sync-client.js';
+import './styles.css';
+import { initSync } from './sync.js';
 
 self.MonacoEnvironment = { getWorker: () => new Worker('/assets/editor.worker.js', { type: 'module' }) };
 const $ = id => document.getElementById(id);
@@ -24,7 +24,7 @@ function savePreferences() {
   try {
     localStorage.setItem(preferencesKey, JSON.stringify({
       workspaces, mode,
-      out: $('out-input').value, envFile: $('sync-env').value,
+      referenceRoots: $('sync-references').value, out: $('out-input').value, envFile: $('sync-env').value,
       convertScope: convertKind, direction: $('direction').value, fix: $('fix').checked,
       scope: $('sync-scope').value, verify: $('sync-verify').checked,
       sideBySide: $('side-by-side').checked,
@@ -103,7 +103,7 @@ async function api(path, body, signal) {
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || '요청을 처리하지 못했습니다.');
+  if (!response.ok) throw Object.assign(new Error(data.error || '요청을 처리하지 못했습니다.'), { code: data.code, conflicts: data.conflicts });
   return data;
 }
 function status(text, error = false) {
@@ -297,7 +297,22 @@ async function convert(preview) {
   busy = true;
   try {
     reset(); controls(); render(); status(preview ? '미리보기를 만드는 중입니다…' : '문서와 첨부파일을 변환하는 중입니다…');
-    const data = await api('/api/convert', { base, file, scope: convertKind, out: $('out-input').value, to: $('direction').value, fix: $('fix').checked, preview });
+    const request = { base, file, scope: convertKind, out: $('out-input').value, to: $('direction').value, fix: $('fix').checked, preview };
+    let data;
+    const approvedOverwrites = {};
+    while (!data) {
+      try { data = await api('/api/convert', { ...request, approvedOverwrites }); }
+      catch (error) {
+        if (preview || error.code !== 'OVERWRITE_REQUIRED') throw error;
+        const files = error.conflicts.map(item => item.path);
+        const list = files.slice(0, 20).join('\n') + (files.length > 20 ? `\n외 ${files.length - 20}개` : '');
+        if (!window.confirm(`출력 폴더의 기존 파일 ${files.length}개를 덮어쓸까요?\n${request.out}\n\n${list}\n\n기존 내용이 변환 결과로 교체됩니다. 취소하면 저장하지 않습니다.`)) {
+          status('덮어쓰기를 취소했습니다. 저장하지 않았습니다.'); return;
+        }
+        for (const item of error.conflicts) approvedOverwrites[item.path] = item.hash;
+        status('기존 파일을 덮어쓰는 중입니다…');
+      }
+    }
     previews = data.previews;
     $('preview-document').replaceChildren(...previews.map((doc, index) => {
       const option = document.createElement('option'); option.value = index; option.textContent = doc.path; return option;
@@ -307,7 +322,13 @@ async function convert(preview) {
     showPreview(0);
     $('log').textContent = data.log; $('details').hidden = false; output = data.output;
     if (output) { $('output').textContent = output; $('result').hidden = false; }
-    status(preview ? '미리보기 완료. 출력 위치를 확인하고 저장하세요.' : `문서 ${data.documentCount}개 저장 완료. 다른 대상을 선택해 계속 변환할 수 있습니다.`);
+    if (preview) status('미리보기 완료. 출력 위치를 확인하고 저장하세요.');
+    else if (data.saved && data.saved.created === 0 && data.saved.overwritten === 0) {
+      status(`기존 출력과 내용이 같아 저장하지 않았습니다. 파일 ${data.saved.reused}개를 그대로 재사용했습니다.`);
+    } else {
+      const saved = data.saved;
+      status(saved ? `저장 완료 · 새 파일 ${saved.created}개 · 덮어쓴 파일 ${saved.overwritten}개 · 동일 내용 재사용 ${saved.reused}개 (문서·첨부 포함)` : `문서 ${data.documentCount}개 저장 완료.`);
+    }
   } catch (error) { status(error.message, true); }
   finally { busy = false; controls(); render(); }
 }
@@ -384,7 +405,7 @@ async function restoreWorkspace() {
   const saved = loadPreferences();
   const text = name => typeof saved[name] === 'string' ? saved[name] : '';
   busy = true; controls();
-  $('out-input').value = text('out'); $('sync-env').value = text('envFile');
+  $('sync-references').value = text('referenceRoots'); $('out-input').value = text('out'); $('sync-env').value = text('envFile');
   if (['file', 'folder'].includes(saved.convertScope)) convertKind = saved.convertScope;
   if (['markdown', 'obsidian', 'repair'].includes(saved.direction)) $('direction').value = saved.direction;
   if (['file', 'folder', 'all'].includes(saved.scope)) $('sync-scope').value = saved.scope;

@@ -216,3 +216,16 @@ footer i { width: 5px; height: 5px; }
 .app-main button:not(.monaco-editor button).tree-toggle, .tree-row>span.tree-toggle { flex: 0 0 24px; width: 24px; height: 32px; padding: 0; border: 0; background: transparent; color: #788190; font-size: 15px; }
 .tree-row .file { min-width: 0; flex: 1; }
 .tree-note { color: var(--muted); font-size: 10px; padding-top: 7px; padding-bottom: 7px; }
+textarea.path-input { height: auto; min-height: 86px; padding: 10px 11px; resize: vertical; line-height: 1.5; }
+#sync-add-reference { align-self: flex-start; margin-top: 8px; }
+
+/* Status text and symbols remain visible alongside color for copying and accessibility. */
+#sync-log { --log-success: #187147; --log-change: #946000; --log-reference: #6552ad; --log-info: #28679a; --log-muted: #657083; --log-error: #b42332; --log-warning: #925000; }
+.sync-log-success { color: var(--log-success); }
+.sync-log-change { color: var(--log-change); }
+.sync-log-reference { color: var(--log-reference); }
+.sync-log-info { color: var(--log-info); }
+.sync-log-muted { color: var(--log-muted); }
+.sync-log-warning { color: var(--log-warning); background: #fff4df; }
+.sync-log-error { color: var(--log-error); background: #ffeded; }
+.sync-log-warning, .sync-log-error { font-weight: 600; box-decoration-break: clone; -webkit-box-decoration-break: clone; }

@@ -1,12 +1,12 @@
 /** --help / --version 출력. */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { bold, cyan, dim } from './colors.js';
+import { bold, cyan, dim } from '../shared/colors.js';
 
-/** 설치된 패키지(package.json)의 버전을 읽는다(dist·src 어느 쪽에서 실행해도 ../package.json). */
+/** 설치된 패키지(package.json)의 버전을 읽는다(dist·src 어느 쪽에서 실행해도 ../../package.json). */
 export function readPkgVersion(): string {
   try {
-    const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
+    const pkgPath = fileURLToPath(new URL('../../package.json', import.meta.url));
     return JSON.parse(readFileSync(pkgPath, 'utf8')).version ?? 'unknown';
   } catch {
     return 'unknown';
@@ -35,6 +35,7 @@ ${h('web 옵션:')}
   127.0.0.1 에서만 실행. 화면에서 출력 폴더 지정 가능. 원본 유지.
 
 ${h('동기화 옵션:')}
+  ${o('--reference-root <dir>')}  동기화 링크 참조 폴더(반복 가능, 참조 문서는 업로드하지 않음)
   ${o('--base <dir>')}      동기화 루트 (또는 env CONFLUENCE_SYNC_BASE). 미지정 시 중단
   ${o('--mapping <path>')}  매핑 파일 위치 (기본: <base>/.confluence-sync.json)
   ${o('--exclude <glob>')}  동기화 제외 패턴(반복 가능). <base>/.confluence-syncignore(.gitignore 방식)도 사용

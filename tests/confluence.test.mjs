@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createClient} from '../dist/confluence.js';
+import {createClient} from '../dist/confluence/client.js';
 import {workspace,mockFetch} from './helpers/fixtures.mjs';
 const client=(opts={})=>createClient({baseUrl:'https://example.invalid/wiki',email:'test@example.invalid',token:'fake'},{force:false,verify:false,...opts});
 const page='/wiki/api/v2/pages';

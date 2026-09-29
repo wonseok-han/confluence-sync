@@ -6,12 +6,12 @@ import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { collectMarkdown } from './docs.js';
-import { webPage } from './web-ui.js';
-import { createWebSync, type SyncRunner } from './web-sync.js';
+import { collectMarkdown } from '../documents/catalog.js';
+import { webPage } from './views/workspace.js';
+import { createWebSync, type SyncRunner } from './sync.js';
 
 import { chooseFolder } from './folder-dialog.js';
-import { within, canonical, publishOutput } from './web-output.js';
+import { within, canonical, publishOutput, OverwriteRequired } from './output.js';
 const execute = promisify(execFile);
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -22,7 +22,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
   let origin = '';
   let busy = false;
   let picking = false;
-  const assetsRoot = fileURLToPath(new URL('../dist/web/', import.meta.url));
+  const assetsRoot = fileURLToPath(new URL('../../dist/web/assets/', import.meta.url));
   const results = new Set<string>();
   const sync = createWebSync(options.syncRunner);
   const server = createServer(async (req, res) => {
@@ -111,7 +111,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
       }
       if (url.pathname === '/api/pick-folder') {
         if (picking) { json(409, { error: '이미 열린 폴더 다이얼로그를 먼저 닫아 주세요.' }); return; }
-        if (body.kind !== 'base' && body.kind !== 'out') throw new Error('폴더 선택 용도를 확인해 주세요.');
+        if (body.kind !== 'base' && body.kind !== 'out' && body.kind !== 'reference') throw new Error('폴더 선택 용도를 확인해 주세요.');
         let initial = start;
         if (typeof body.start === 'string' && body.start) {
           try { const path = await realpath(body.start); if ((await stat(path)).isDirectory()) initial = path; } catch { /* Use initial folder for new paths. */ }
@@ -119,7 +119,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         if (picking) { json(409, { error: '이미 열린 폴더 다이얼로그를 먼저 닫아 주세요.' }); return; }
         picking = true;
         try {
-          const selected = await (options.pickFolder ?? chooseFolder)(initial, body.kind === 'base' ? '문서의 기준 폴더 선택' : '변환 결과를 저장할 출력 폴더 선택');
+          const selected = await (options.pickFolder ?? chooseFolder)(initial, body.kind === 'reference' ? '참조 문서의 동기화 폴더 선택' : body.kind === 'base' ? '문서의 기준 폴더 선택' : '변환 결과를 저장할 출력 폴더 선택');
           const path = selected ? await realpath(selected) : null;
           if (path && !(await stat(path)).isDirectory()) throw new Error('폴더를 선택해 주세요.');
           json(200, { path });
@@ -154,6 +154,9 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
       const documents = scope === 'folder' ? collectMarkdown(file) : [file];
       if (!documents.length) throw new Error('선택한 폴더에 변환할 Markdown 문서가 없습니다.');
       if (body.out !== undefined && typeof body.out !== 'string') throw new Error('출력 경로를 확인해 주세요.');
+      const approved = body.approvedOverwrites ?? {};
+      if (!approved || typeof approved !== 'object' || Array.isArray(approved)
+        || Object.values(approved).some(value => typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value))) throw new Error('덮어쓰기 확인 정보를 확인해 주세요.');
       const requestedOut = body.out?.trim() ? await canonical(resolve(body.out.trim())) : null;
       if (requestedOut && (within(base, requestedOut) || within(requestedOut, base))) {
         throw new Error('출력 폴더는 기준 폴더와 겹치지 않는 별도 경로로 지정해 주세요.');
@@ -165,13 +168,15 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
       let destination: string | null = null;
       let generatedDestination = false;
       let response: unknown;
+      let responseStatus = 200;
+      let saved: Awaited<ReturnType<typeof publishOutput>> | undefined;
       try {
         out = await mkdtemp(join(tmpdir(), 'csync-preview-'));
         const args = ['--base', base, file, '--out', out];
         if (body.to !== 'repair') args.push('--to', body.to);
         if (body.fix || body.to === 'repair') args.push('--fix');
         const fromSource = import.meta.url.endsWith('.ts');
-        const worker = fileURLToPath(new URL(fromSource ? './convert-worker.ts' : './convert-worker.js', import.meta.url));
+        const worker = fileURLToPath(new URL(fromSource ? '../conversion/worker.ts' : '../conversion/worker.js', import.meta.url));
         const { stdout } = await execute(process.execPath, [...(fromSource ? process.execArgv : []), worker, ...args], {
           env: { ...process.env, NO_COLOR: '1' }, timeout: 120_000, maxBuffer: 2 * 1024 * 1024,
         });
@@ -186,19 +191,24 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         if (!body.preview) {
           destination = requestedOut ?? await mkdtemp(join(dirname(base), `${basename(base)}-converted-`));
           generatedDestination = !requestedOut;
-          await publishOutput(out, destination);
+          saved = await publishOutput(out, destination, approved);
           results.add(destination);
         }
-        response = { before, after, previews, documentCount: documents.length, log: stdout.split(out).join(destination ?? '(미리보기)'), output: destination };
+        response = { before, after, previews, saved, documentCount: documents.length, log: stdout.split(out).join(destination ?? '(미리보기)'), output: destination };
       } catch (error) {
         if (destination && generatedDestination) await rm(destination, { recursive: true, force: true });
-        const failure = error as Error & { stderr?: string; killed?: boolean };
-        throw new Error(failure.killed ? '변환 시간이 2분을 초과했습니다.' : failure.stderr?.trim() || message(error));
+        if (error instanceof OverwriteRequired) {
+          responseStatus = 409;
+          response = { error: error.message, code: 'OVERWRITE_REQUIRED', conflicts: error.conflicts };
+        } else {
+          const failure = error as Error & { stderr?: string; killed?: boolean };
+          throw new Error(failure.killed ? '변환 시간이 2분을 초과했습니다.' : failure.stderr?.trim() || message(error));
+        }
       } finally {
         try { if (out) await rm(out, { recursive: true, force: true }); }
         finally { busy = false; }
       }
-      json(200, response);
+      json(responseStatus, response);
     } catch (error) {
       if (!res.writableEnded) json(400, { error: message(error) });
     }

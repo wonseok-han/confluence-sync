@@ -39,6 +39,7 @@ type RenderCtx = {
   anchorLinks: number; // 그중 섹션까지 가리키는 링크 수
   deadAnchors: string[]; // 대응하는 헤딩을 못 찾은 앵커(그대로 두되 알린다)
   linkStack: boolean[];
+  rewriteHref?: (href: string) => string;
   linkedTitles: Set<string>; // 이 문서가 내부 링크로 가리키는 대상 제목들
 };
 
@@ -123,7 +124,9 @@ md.renderer.rules.fence = (tokens, idx) => {
 };
 
 md.renderer.rules.link_open = (tokens, idx, opts, _env, self) => {
-  const href = tokens[idx].attrGet('href') || '';
+  const originalHref = tokens[idx].attrGet('href') || '';
+  const href = ctx.rewriteHref?.(originalHref) ?? originalHref;
+  tokens[idx].attrSet('href', href);
   const t = resolveInternalLink(href);
   // 페이지도 앵커도 못 정하면 Confluence 링크로 만들 게 없다 → 원문 <a> 유지
   if (t && (t.title || t.anchor)) {
@@ -185,6 +188,7 @@ export type Rendered = {
 };
 
 export type StorageOpts = {
+  rewriteHref?: (href: string) => string;
   /** Obsidian [[wikilink]] 해석기(주면 표준 링크로 먼저 정규화한다) */
   resolveLink?: LinkResolver;
   /** base 상대 경로 → (헤딩 슬러그 → 헤딩 텍스트). 섹션 링크를 ac:anchor 로 옮기는 데 쓴다 */
@@ -210,6 +214,7 @@ export function toStorage(
   baseDir = base;
   ctx = {
     ...emptyCtx(),
+    rewriteHref: opts.rewriteHref,
     fileDir: dirname(rel) === '.' ? '' : dirname(rel),
     titleIndex,
     anchorIndex: opts.anchorIndex ?? {},

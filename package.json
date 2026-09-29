@@ -35,7 +35,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && node scripts/build-web.mjs",
+    "build": "node scripts/build.mjs",
     "web": "npm run build && node dist/sync.js web",
     "test": "npm run build && node --test tests/*.test.mjs",
     "prepublishOnly": "npm run build",
