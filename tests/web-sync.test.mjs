@@ -50,7 +50,7 @@ test('push needs a successful single-use preview and passes only incremental CLI
   const { planId } = await finished(sync);
   await sync.push(planId); assert.equal((await finished(sync)).state, 'succeeded');
   assert.ok(calls[0].args.includes('--dry-run'));
-  assert.deepEqual(calls[1].args, ['--base', realpathSync(root), join(realpathSync(root), 'a.md'), '--verify']);
+  assert.deepEqual(calls[1].args, ['--base', realpathSync.native(root), realpathSync.native(join(root, 'a.md')), '--verify']);
   assert.equal(calls[1].settings.CONFLUENCE_API_TOKEN, 'synthetic-secret');
   await assert.rejects(sync.push(planId), /미리보기/);
 });

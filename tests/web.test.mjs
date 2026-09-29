@@ -2,6 +2,7 @@ import test from 'node:test';
 import { get } from 'node:http';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync, symlinkSync, statSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startWeb } from '../dist/web/server.js';
 import { workspace } from './helpers/fixtures.mjs';
@@ -96,7 +97,7 @@ test('folder dialog returns canonical paths, cancellation and errors without cha
   const { url, headers } = await app(t, root, { pickFolder: async (start, title) => { calls.push({ start, title }); return selected; } });
   const pick = body => fetch(url + '/api/pick-folder', { method: 'POST', headers, body: JSON.stringify(body) });
   let response = await pick({ kind: 'base', start: root });
-  assert.equal(response.status, 200); assert.ok((await response.json()).path.endsWith('/문서'));
+  assert.equal(response.status, 200); assert.equal((await response.json()).path, await realpath(selected));
   assert.match(calls[0].title, /기준/);
   selected = null;
   assert.deepEqual(await (await pick({ kind: 'out' })).json(), { path: null });
@@ -112,7 +113,7 @@ test('explicit output supports a new path or existing directory and never writes
   assert.equal((await post(body)).status, 200);
   assert.equal(existsSync(join(root, 'new')), false);
   let response = await post({ ...body, preview: false }); assert.equal(response.status, 200);
-  const data = await response.json(); assert.ok(data.output.endsWith('/new/nested'));
+  const data = await response.json(); assert.equal(data.output, await realpath(body.out));
   assert.match(readFileSync(join(root, 'new/nested/a.md'), 'utf8'), /b\.md/);
   response = await post({ ...body, out: join(root, 'output'), preview: false }); assert.equal(response.status, 200);
   assert.equal(readFileSync(join(root, 'output/keep.txt'), 'utf8'), 'keep');
