@@ -12,13 +12,13 @@
 import { attachmentMapper } from './attachments.js';
 import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, copyFileSync, realpathSync } from 'node:fs';
 import { resolve, relative, dirname, basename, join, isAbsolute } from 'node:path';
-import { collectMarkdown, collectAssets, buildVault, vaultResolver } from './docs.js';
-import { linksToWikilinks, resolveWikilinks, splitFrontmatter } from './obsidian.js';
-import { buildAnchorIndex } from './anchors.js';
+import { collectMarkdown, collectAssets, buildVault, vaultResolver } from '../documents/catalog.js';
+import { linksToWikilinks, resolveWikilinks, splitFrontmatter } from '../documents/obsidian.js';
+import { buildAnchorIndex } from '../documents/anchors.js';
 import { footnotesToLinks, linksToFootnotes } from './footnotes.js';
 import { extractPdfPages, restorePdfReferences, mapMarkdownText } from './pdf-pages.js';
 import { repairMarkdown, totalFixes, type RepairStats } from './repair.js';
-import { bold, cyan, dim, gray, green, red, yellow } from './colors.js';
+import { bold, cyan, dim, gray, green, red, yellow } from '../shared/colors.js';
 
 type Direction = 'obsidian' | 'markdown';
 

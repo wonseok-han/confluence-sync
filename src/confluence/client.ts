@@ -4,8 +4,8 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { relative } from 'node:path';
-import type { Mapping } from './mapping.js';
-import { red, yellow, dim } from './colors.js';
+import type { Mapping } from '../sync/mapping.js';
+import { red, yellow, dim } from '../shared/colors.js';
 
 export type ConfluenceConfig = { baseUrl: string; email: string; token: string };
 export type ClientOpts = { force: boolean; verify: boolean };

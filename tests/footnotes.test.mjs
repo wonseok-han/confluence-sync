@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { footnotesToLinks } from '../dist/footnotes.js';
-import { resolveWikilinks } from '../dist/obsidian.js';
-import { buildTreeRenderer } from '../dist/render.js';
-import { toStorage } from '../dist/markdown.js';
+import { footnotesToLinks } from '../dist/conversion/footnotes.js';
+import { resolveWikilinks } from '../dist/documents/obsidian.js';
+import { buildTreeRenderer } from '../dist/sync/render.js';
+import { toStorage } from '../dist/documents/markdown.js';
 
 test('repeated references, multiline notes, code, escapes and undefined references', () => {
   const src = '# Title\n\nA[^x] B[^x] `[^x]` \\[^x] [^missing]\n\n```md\n[^x]\n[^fake]: example\n```\n\n[^x]: **Bold**\n    continued\n\n    second paragraph\n';

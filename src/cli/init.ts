@@ -6,7 +6,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { bold, cyan, dim, green, red, yellow } from './colors.js';
+import { bold, cyan, dim, green, red, yellow } from '../shared/colors.js';
 
 type Field = {
   key: string;

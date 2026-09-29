@@ -1,12 +1,12 @@
 /** --help / --version 출력. */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { bold, cyan, dim } from './colors.js';
+import { bold, cyan, dim } from '../shared/colors.js';
 
-/** 설치된 패키지(package.json)의 버전을 읽는다(dist·src 어느 쪽에서 실행해도 ../package.json). */
+/** 설치된 패키지(package.json)의 버전을 읽는다(dist·src 어느 쪽에서 실행해도 ../../package.json). */
 export function readPkgVersion(): string {
   try {
-    const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
+    const pkgPath = fileURLToPath(new URL('../../package.json', import.meta.url));
     return JSON.parse(readFileSync(pkgPath, 'utf8')).version ?? 'unknown';
   } catch {
     return 'unknown';
@@ -22,12 +22,20 @@ ${dim('짧은 이름')} ${o('csync')} ${dim('로도 실행할 수 있습니다(�
 
 ${h('사용법:')}
   ${o('confluence-sync')} [옵션] [경로...]      문서를 동기화(md → Confluence)
+  ${o('confluence-sync web')}                   문서 변환·Confluence 동기화 웹 화면(로컬 전용)
   ${o('confluence-sync init')}                  대화형으로 .env 설정 파일 생성
   ${o('confluence-sync pull <pageId|url>')}     Confluence 페이지/폴더를 .md 로 가져오기(역방향)
   ${o('confluence-sync convert --to <형식>')}   이미 받은 .md 의 링크 표기를 바꾸기(로컬 전용)
   ${o('confluence-sync --help | --version')}
 
+${h('web 옵션:')}
+  ${o('--base <dir>')}      처음 열 폴더(기본: 홈 폴더). 화면에서 기준 폴더를 바꿀 수 있음
+  ${o('--port <number>')}   웹 포트(기본: 4318)
+  ${o('--no-open')}         브라우저를 자동으로 열지 않음
+  localhost / 127.0.0.1 로컬 주소에서 실행. 화면에서 출력 폴더 지정 가능. 원본 유지.
+
 ${h('동기화 옵션:')}
+  ${o('--reference-root <dir>')}  동기화 링크 참조 폴더(반복 가능, 참조 문서는 업로드하지 않음)
   ${o('--base <dir>')}      동기화 루트 (또는 env CONFLUENCE_SYNC_BASE). 미지정 시 중단
   ${o('--mapping <path>')}  매핑 파일 위치 (기본: <base>/.confluence-sync.json)
   ${o('--exclude <glob>')}  동기화 제외 패턴(반복 가능). <base>/.confluence-syncignore(.gitignore 방식)도 사용

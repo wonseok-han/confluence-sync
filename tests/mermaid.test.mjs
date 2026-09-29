@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { toStorage, docHash } from '../dist/markdown.js';
-import { codeLanguagesFromStorage, htmlToMarkdown } from '../dist/html2md.js';
-import { MERMAID_EXTENSION_KEY } from '../dist/mermaid.js';
+import { toStorage, docHash } from '../dist/documents/markdown.js';
+import { codeLanguagesFromStorage, htmlToMarkdown } from '../dist/documents/html-to-markdown.js';
+import { MERMAID_EXTENSION_KEY } from '../dist/documents/mermaid.js';
 
 const render = (body, rel = 'doc.md') => toStorage(body, rel, {}, process.cwd());
 const diagram = '```mermaid\nflowchart TD\n  A[시작] --> B[완료]\n```';

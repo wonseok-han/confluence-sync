@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {join} from 'node:path';
 import {readFileSync,existsSync} from 'node:fs';
-import {anchorPass,relinkPass,mappingPass,runPull} from '../dist/pull.js';
-import {buildTreeRenderer} from '../dist/render.js';
-import {docHash} from '../dist/markdown.js';
-import {loadMapping} from '../dist/mapping.js';
+import {anchorPass,relinkPass,mappingPass,runPull} from '../dist/sync/pull.js';
+import {buildTreeRenderer} from '../dist/sync/render.js';
+import {docHash} from '../dist/documents/markdown.js';
+import {loadMapping} from '../dist/sync/mapping.js';
 import {workspace,mockFetch,configure} from './helpers/fixtures.mjs';
 
 test('pull rewrites received page anchors and relative links but retains unreceived URLs',t=>{

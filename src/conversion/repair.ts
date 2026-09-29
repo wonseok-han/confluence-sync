@@ -5,8 +5,8 @@
  * 스페이스를 통째로 다시 받지 않고도 같은 결과를 얻도록, 그 흔적들만 골라 되돌린다.
  * 파일을 덮어쓰므로 **확실한 것만** 고치고, 애매하면 손대지 않는다.
  */
-import { relaxEscapes } from './html2md.js';
-import { splitFrontmatter } from './obsidian.js';
+import { relaxEscapes } from '../documents/html-to-markdown.js';
+import { splitFrontmatter } from '../documents/obsidian.js';
 
 export type RepairStats = {
   cssJunk: number;      // 본문에 새어 나온 CSS 규칙

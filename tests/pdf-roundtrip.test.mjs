@@ -5,8 +5,8 @@ import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {execFileSync} from 'node:child_process';
-import {footnotesToLinks,linksToFootnotes} from '../dist/footnotes.js';
-import {buildTreeRenderer} from '../dist/render.js';
+import {footnotesToLinks,linksToFootnotes} from '../dist/conversion/footnotes.js';
+import {buildTreeRenderer} from '../dist/sync/render.js';
 const cli=resolve('dist/sync.js');
 function makePdf(path) {
  const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>'];
