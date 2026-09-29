@@ -20,6 +20,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
   if (!(await stat(start)).isDirectory()) throw new Error('시작 경로가 폴더가 아닙니다.');
   const token = randomBytes(32).toString('hex');
   let origin = '';
+  const allowedHosts = new Set<string>();
   let busy = false;
   let picking = false;
   const assetsRoot = fileURLToPath(new URL('../../dist/web/assets/', import.meta.url));
@@ -33,7 +34,8 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
-    if (req.headers.host !== new URL(origin).host || (req.headers.origin && req.headers.origin !== origin)) {
+    if (!req.headers.host || !allowedHosts.has(req.headers.host)
+      || (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`)) {
       json(403, { error: '이 웹 화면에서만 요청할 수 있습니다.' }); return;
     }
     try {
@@ -219,9 +221,23 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
       const address = server.address();
       if (!address || typeof address === 'string') { reject(new Error('서버 주소를 찾지 못했습니다.')); return; }
       origin = `http://127.0.0.1:${address.port}`;
+      for (const host of ['127.0.0.1', 'localhost', '[::1]']) allowedHosts.add(new URL(`http://${host}:${address.port}`).host);
       done();
     });
   });
+  // localhost may resolve to ::1 first. Bind both loopback addresses, never all interfaces.
+  const ipv6 = createServer((req, res) => { server.emit('request', req, res); });
+  server.once('close', () => { ipv6.close(); ipv6.closeAllConnections(); });
+  try {
+    await new Promise<void>((done, reject) => {
+      ipv6.once('error', reject);
+      ipv6.listen({ port: Number(new URL(origin).port || 80), host: '::1', ipv6Only: true }, done);
+    });
+  } catch (error) {
+    if (!['EAFNOSUPPORT', 'EADDRNOTAVAIL'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+      server.close(); throw error;
+    }
+  }
   return { server, url: origin };
 }
 
@@ -230,7 +246,7 @@ export async function runWeb(argv: string[]) {
   const port = Number(value('--port') ?? 4318);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('--port는 1~65535 사이의 숫자여야 합니다.');
   const { url, server } = await startWeb({ start: value('--base'), port });
-  console.log(`문서 웹: ${url}\n종료: Ctrl+C`);
+  console.log(`문서 웹: ${url}\n로컬 주소: ${url.replace('127.0.0.1', 'localhost')}\n종료: Ctrl+C`);
   if (!argv.includes('--no-open')) {
     const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer.exe' : 'xdg-open';
     const child = spawn(command, [url], { stdio: 'ignore' });

@@ -240,3 +240,19 @@ test('overwrite requires confirmation, rejects stale approval, and preserves unr
   assert.equal(readFileSync(join(root,'vault/a.md'),'utf8'),'# New');
   assert.equal((await post({...body,approvedOverwrites:true})).status,400);
 });
+
+test('localhost supports page, assets and same-origin API while rejecting foreign hosts and origins', async t => {
+  const { root } = workspace(t, { 'a.md': '# A' });
+  const { url, headers } = await app(t, root);
+  const local = url.replace('127.0.0.1', 'localhost');
+  assert.equal((await fetch(local)).status, 200);
+  assert.equal((await fetch(local + '/assets/app.js')).status, 200);
+  assert.equal((await fetch(local + '/api/browse', { headers: { ...headers, Origin: local } })).status, 200);
+  assert.equal((await fetch(local + '/api/browse', { headers: { ...headers, Origin: url } })).status, 403);
+  assert.equal((await fetch(local + '/api/browse', { headers: { ...headers, Origin: 'http://localhost:1' } })).status, 403);
+  assert.equal((await fetch(local + '/api/browse')).status, 403);
+  const badHost = await new Promise((resolve, reject) => {
+    get(url, { headers: { Host: 'localhost.evil.example:' + new URL(url).port } }, response => { response.resume(); resolve(response.statusCode); }).on('error', reject);
+  });
+  assert.equal(badHost,403);
+});
