@@ -1,3 +1,4 @@
+import { initHelp } from './help.js';
 import * as monaco from 'monaco-editor/editor/editor.api.js';
 import 'monaco-editor/languages/definitions/markdown/register.js';
 import './styles.css';
@@ -14,6 +15,7 @@ let previews = [];
 let convertKind = 'file';
 let expanded = new Set(), treeCache = new Map(), treeLoading = new Set();
 let mode = 'convert';
+initHelp(() => mode);
 let restoring = true;
 let workspaces = { convert: {}, sync: {} };
 const explorerState = () => ({ base, folder, file, baseInput: $('base-input').value, expanded: [...expanded] });

@@ -44,6 +44,8 @@ confluence-sync pull --space --out ./docs   # 스페이스 전체를 .md 로
 
 ## 웹에서 변환·동기화하기
 
+화면 상단의 **사용 도움말**에서 변환·동기화 순서, 참조 링크, 덮어쓰기와 로그 설명을 확인할 수 있습니다.
+
 ```bash
 csync web                         # 홈 폴더에서 시작, 브라우저 자동 열기
 csync web --base ~/Documents       # 원하는 폴더에서 시작

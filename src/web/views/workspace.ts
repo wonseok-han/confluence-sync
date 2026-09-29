@@ -1,10 +1,11 @@
+import { helpDialog } from './help.js';
 import { syncPanel } from './sync-panel.js';
 /** HTML shell; Monaco and application code are bundled as local assets. */
 export const webPage = (token: string) => `<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="csync-token" content="${token}"><title>문서 워크스페이스 · confluence-sync</title><link rel="stylesheet" href="/assets/app.css"></head><body>
 <header class="app-header"><a class="brand" href="/" aria-label="confluence-sync 홈"><span class="brand-symbol" aria-hidden="true">⇄</span>confluence<span class="brand-light">sync</span></a><span class="local-status"><i></i>로컬 워크스페이스</span></header>
 <main class="app-main">
-  <div class="page-heading"><div><div class="eyebrow">DOCUMENT WORKSPACE</div><h1>문서 워크스페이스<span class="title-dot">.</span></h1></div><p>문서를 변환하고, Confluence와 동기화하세요.</p></div>
+  <div class="page-heading"><div><div class="eyebrow">DOCUMENT WORKSPACE</div><h1>문서 워크스페이스<span class="title-dot">.</span></h1></div><div class="page-heading-actions"><p>문서를 변환하고, Confluence와 동기화하세요.</p><button id="open-help" aria-haspopup="dialog" aria-controls="help-dialog">사용 도움말</button></div></div>
   <div class="mode-tabs" role="tablist" aria-label="문서 작업"><button id="tab-convert" role="tab" aria-selected="true" aria-controls="convert-view">문서 변환</button><button id="tab-sync" role="tab" aria-selected="false" aria-controls="sync-view" tabindex="-1">Confluence 동기화</button></div>
   <div class="workspace">
     <aside class="panel explorer" aria-label="파일 탐색">
@@ -34,4 +35,5 @@ export const webPage = (token: string) => `<!doctype html>
     ${syncPanel}
   </div>
   <footer><span id="workspace-note"><i></i>변환은 이 컴퓨터에서 처리됩니다.</span><span>Markdown · Confluence</span></footer>
+${helpDialog}
 </main><script src="/assets/app.js" type="module"></script></body></html>`;
