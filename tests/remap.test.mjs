@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync, existsSync} from 'node:fs';
 import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {runRemap} from '../dist/sync/remap.js';
 import {runPush} from '../dist/sync/push.js';
@@ -39,7 +40,7 @@ test('remap honors ignore and README parent identity',async t=>{
 
 test('CLI remap needs no credentials and dry-run creates no mapping',t=>{
  const {root}=workspace(t,{'a.md':fm('1')});const env={...process.env};for(const key of Object.keys(env))if(key.startsWith('CONFLUENCE_'))delete env[key];
- const result=spawnSync(process.execPath,[new URL('../dist/sync.js',import.meta.url).pathname,'remap','--base',root,'--dry-run'],{cwd:root,env,encoding:'utf8'});
+ const result=spawnSync(process.execPath,[fileURLToPath(new URL('../dist/sync.js',import.meta.url)),'remap','--base',root,'--dry-run'],{cwd:root,env,encoding:'utf8'});
  assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/Confluence 호출 없음/);assert.equal(existsSync(join(root,'.confluence-sync.json')),false);
 });
 
