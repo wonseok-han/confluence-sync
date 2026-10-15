@@ -109,6 +109,18 @@ export async function runPush(argv: string[]): Promise<void> {
   }
 
   const mapping = loadMapping(MAPPING_PATH);
+  // A remap plan is valid only for the tree it was prepared against.
+  for (const rel of files) {
+    const entry = mapping[rel];
+    if (entry?.pendingMove && entry.pendingMove.parentKey !== parentKeyOf(rel, folderIndex)) {
+      throw new Error(`구조가 remap 이후 변경되었습니다: ${rel}. remap을 다시 실행하세요.`);
+    }
+    const id = readDoc(BASE_DIR, rel).fm.pageId;
+    if (entry && id && entry.pageId !== id) throw new Error(`pageId 충돌: ${rel}`);
+    if (!entry && id && Object.values(mapping).some(e => e.pageId === id && e.pendingMove)) {
+      throw new Error(`remap 이후 경로가 변경되었습니다: ${rel}. remap을 다시 실행하세요.`);
+    }
+  }
 
   if (DRY_RUN) {
     const seen = new Set<string>();
@@ -133,6 +145,7 @@ export async function runPush(argv: string[]): Promise<void> {
       // 매핑엔 없지만 frontmatter 에 pageId 가 있으면 신규 생성이 아니라 기존 페이지에 연결된다
       const status = !ex?.pageId
         ? (fm.pageId ? cyan('연결') : green('신규'))
+        : ex.pendingMove ? cyan(ex.hash === hash ? '위치 확인/이동' : '위치 확인/이동 + 변경')
         : ex.hash === hash ? gray('동일') : yellow('변경');
       const pk = parentKeyOf(rel, folderIndex);
       const anchorNote = r.anchorLinks || r.anchorsPlaced
@@ -154,11 +167,12 @@ export async function runPush(argv: string[]): Promise<void> {
   if (REBUILD) { await client.deleteAll(mapping); saveMapping(MAPPING_PATH, {}); }
   const work: Mapping = REBUILD ? {} : mapping;
 
+  let moved = 0;
   let created = 0, updated = 0, skipped = 0, recreated = 0, relinked = 0, foldersMade = 0, linked = 0, carried = 0;
   const rendered = new Map<string, Rendered & { title: string; hash: string; parentId: string | undefined }>();
   const recreatedTitles = new Set<string>(); // 이번에 재생성된 문서의 제목
   const touched = new Set<string>();          // 이번에 발행(생성/갱신/재생성)된 문서
-  const handledFolders = new Set<string>();   // 이번 실행에서 처리한 폴더 dir
+  const handledFolders = new Map<string, boolean>();   // 이번 실행에서 처리한 폴더 dir
 
   // README 없는 폴더를 Confluence 폴더로 생성(없으면)하고 work 에 등록. 성공 여부 반환.
   const ensureFolder = async (dir: string): Promise<boolean> => {
@@ -170,19 +184,17 @@ export async function runPush(argv: string[]): Promise<void> {
       return false;
     }
     const ex = work[key];
-    if (ex?.pageId && ex.type === 'folder' && (await client.getContentOrNull(ex.pageId))) {
-      return true; // 이미 존재
-    }
     try {
       const title = dir.split('/').pop()!;
-      const fid = await client.createFolder(spaceId, title, parentId);
+      const result = await client.upsertFolder(spaceId, env.spaceKey!, title, parentId, ex?.type === 'folder' ? ex.pageId : undefined);
+      const fid = result.id;
       work[key] = { pageId: fid, title, type: 'folder' };
       saveMapping(MAPPING_PATH, work);
-      console.log(`  ${cyan('📁 폴더')}  ${dir}/  ${dim(`(부모: ${pcKey ?? 'ROOT'})`)}`);
-      foldersMade++;
+      console.log(`  ${cyan(!result.created ? '📁 폴더 연결' : '📁 폴더')}  ${dir}/  ${dim(`(부모: ${pcKey ?? 'ROOT'})`)}`);
+      if (result.created) foldersMade++;
       return true;
     } catch (e) {
-      console.error(red(`  ✗ 폴더 생성 실패  ${dir}/`) + `\n${(e as Error).message}`);
+      console.error(red(`  ✗ 폴더 준비 실패  ${dir}/`) + `\n${(e as Error).message}`);
       return false;
     }
   };
@@ -191,8 +203,8 @@ export async function runPush(argv: string[]): Promise<void> {
     // 상위 README-less 폴더들 보장(shallow→deep)
     let folderOk = true;
     for (const d of ancestorFolderDirs(rel)) {
-      if (!handledFolders.has(d)) { handledFolders.add(d); if (!(await ensureFolder(d))) folderOk = false; }
-      else if (!work[`${d}/`]?.pageId) folderOk = false;
+      if (!handledFolders.has(d)) handledFolders.set(d, await ensureFolder(d));
+      if (!handledFolders.get(d)) folderOk = false;
       if (!folderOk) break;
     }
     if (!folderOk) { console.error(yellow(`  ✗ 건너뜀  ${rel}  (상위 폴더 미생성)`)); continue; }
@@ -247,6 +259,11 @@ export async function runPush(argv: string[]): Promise<void> {
         skipped++;
         continue;
       }
+      if (result === 'moved') {
+        console.log(`  ${cyan('→ 이동')}  ${rel}  (부모: ${pk ?? 'ROOT'})`);
+        moved++;
+        continue;
+      }
       const imgOk = await client.uploadImages(work[rel].pageId, r.images, BASE_DIR);
       const imgNote = r.images.length ? `, 이미지 ${imgOk}/${r.images.length}` : '';
       const label = result === 'created' ? green('＋ 생성')
@@ -285,6 +302,7 @@ export async function runPush(argv: string[]): Promise<void> {
     '\n' + bold('완료') +
     `  ${green(`생성 ${created}`)}` +
     `  ${yellow(`갱신 ${updated}`)}` +
+    `  ${cyan(`이동 ${moved}`)}` +
     `  ${magenta(`재생성 ${recreated}`)}` +
     `  ${cyan(`링크재연결 ${relinked}`)}` +
     `  ${gray(`변경없음 ${skipped}`)}` +

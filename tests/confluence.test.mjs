@@ -92,3 +92,87 @@ test('missing images and failed upload are reported without claiming successful 
 test('failed binary download is reported as an error',async t=>{
  mockFetch(t,[{path:'/wiki/download/missing',status:404}]);await assert.rejects(client().downloadAttachment('/download/missing'),/download 404/);
 });
+
+const pending = () => ({'a.md':{pageId:'1',hash:'same',pendingMove:{parentKey:'dest/'}}});
+test('move-only sync verifies destination without a content update',async t=>{
+ mockFetch(t,[{path:page+'/1',body:{id:'1',spaceId:'space',parentId:'old'}},{path:'/wiki/rest/api/content/1/move/append/dest',method:'PUT'},{path:page+'/1',body:{id:'1',spaceId:'space',parentId:'dest'}}]);
+ const m=pending();assert.equal(await client().upsertPage(m,'space','a.md','A','body','same','dest'),'moved');assert.equal(m['a.md'].pendingMove,undefined);
+});
+test('already moved page clears pending plan without mutation',async t=>{
+ mockFetch(t,[{path:page+'/1',body:{spaceId:'space',parentId:'dest'}}]);const m=pending();assert.equal(await client().upsertPage(m,'space','a.md','A','body','same','dest'),'skipped');assert.equal(m['a.md'].pendingMove,undefined);
+});
+test('move and content change uses fresh version after move',async t=>{
+ mockFetch(t,[{path:page+'/1',body:{spaceId:'space',parentId:'old',version:{number:1}}},{path:'/wiki/rest/api/content/1/move/append/dest',method:'PUT'},{path:page+'/1',body:{spaceId:'space',parentId:'dest',version:{number:2}}},{path:page+'/1',method:'PUT',check:r=>assert.equal(JSON.parse(r.body).version.number,3)}]);
+ const m=pending();assert.equal(await client().upsertPage(m,'space','a.md','A','body','new','dest'),'updated');assert.equal(m['a.md'].hash,'new');assert.equal(m['a.md'].pendingMove,undefined);
+});
+for(const status of [403,404])test(`missing or inaccessible remapped page ${status} never creates a replacement`,async t=>{
+ mockFetch(t,[{path:page+'/1',status}]);const m=pending();await assert.rejects(client().upsertPage(m,'space','a.md','A','body','same','dest'));assert.ok(m['a.md'].pendingMove);
+});
+test('failed move retains plan and original hash',async t=>{
+ mockFetch(t,[{path:page+'/1',body:{spaceId:'space',parentId:'old'}},{path:'/wiki/rest/api/content/1/move/append/dest',method:'PUT',status:400}]);const m=pending();await assert.rejects(client().upsertPage(m,'space','a.md','A','body','new','dest'));assert.ok(m['a.md'].pendingMove);assert.equal(m['a.md'].hash,'same');
+});
+test('top-level move uses a verified top-level homepage sibling',async t=>{
+ mockFetch(t,[{path:page+'/1',body:{spaceId:'space',parentId:'old'}},{path:'/wiki/api/v2/spaces/space',body:{homepageId:'home'}},{path:page+'/home',body:{spaceId:'space'}},{path:'/wiki/rest/api/content/1/move/after/home',method:'PUT'},{path:page+'/1',body:{spaceId:'space'}}]);const m=pending();assert.equal(await client().upsertPage(m,'space','a.md','A','body','same'),'moved');
+});
+
+const folderSearch = title => '/wiki/rest/api/content/search?cql='+encodeURIComponent(`type = folder AND space = "TEST" AND title = ${JSON.stringify(title)}`)+'&limit=100';
+for(const parentId of [undefined,'parent'])test(`folder reuse requires matching parent (${parentId??'root'})`,async t=>{
+ mockFetch(t,[{path:folderSearch('센터_운영'),body:{results:[{id:'f',type:'folder',title:'센터_운영'}]}},{path:'/wiki/rest/api/content/f?expand=ancestors,space',body:{id:'f',type:'folder',space:{id:'space'},title:'센터_운영',ancestors:parentId?[{id:parentId}]:[]}}]);
+ assert.equal(await client().findFolder('space','TEST','센터_운영',parentId),'f');
+});
+for(const mismatch of [{spaceId:'other',parentId:'parent'},{spaceId:'space',parentId:'other'}])test(`folder reuse rejects mismatching location ${JSON.stringify(mismatch)}`,async t=>{
+ mockFetch(t,[{path:folderSearch('F'),body:{results:[{id:'f',type:'folder',title:'F'}]}},{path:'/wiki/rest/api/content/f?expand=ancestors,space',body:{id:'f',title:'F',type:'folder',space:{id:mismatch.spaceId},ancestors:[{id:mismatch.parentId}]}}]);
+ if(mismatch.spaceId==='space') await assert.rejects(client().findFolder('space','TEST','F','parent'),/다른 위치/);
+ else assert.equal(await client().findFolder('space','TEST','F','parent'),null);
+});
+test('folder lookup follows pagination and escapes quoted titles',async t=>{
+ const title='운영 "규칙"';mockFetch(t,[{path:folderSearch(title),body:{results:[],_links:{next:'/wiki/rest/api/content/search?cursor=next'}}},{path:'/wiki/rest/api/content/search?cursor=next',body:{results:[{id:'f',type:'folder',title}]}},{path:'/wiki/rest/api/content/f?expand=ancestors,space',body:{id:'f',type:'folder',space:{id:'space'},ancestors:[],title}}]);
+ assert.equal(await client().findFolder('space','TEST',title),'f');
+});
+test('folder lookup does not treat permission errors as absent',async t=>{
+ mockFetch(t,[{path:folderSearch('F'),status:403}]);await assert.rejects(client().findFolder('space','TEST','F'),/403/);
+});
+test('folder lookup refuses missing ancestor metadata instead of assuming root',async t=>{
+ mockFetch(t,[{path:folderSearch('F'),body:{results:[{id:'f',type:'folder',title:'F'}]}},{path:'/wiki/rest/api/content/f?expand=ancestors,space',body:{id:'f',type:'folder',title:'F',space:{id:'space'}}}]);
+ await assert.rejects(client().findFolder('space','TEST','F'),/메타데이터/);
+});
+
+test('visible root folder under space homepage is reused without an explicit parent',async t=>{
+ mockFetch(t,[{path:folderSearch('센터_운영'),body:{results:[{id:'2356150410',type:'folder',title:'센터_운영'}]}},{path:'/wiki/rest/api/content/2356150410?expand=ancestors,space',body:{id:'2356150410',type:'folder',title:'센터_운영',space:{id:1837760528},ancestors:[{id:'1837761398'}]}},{path:'/wiki/api/v2/spaces/1837760528',body:{homepageId:'1837761398'}}]);
+ assert.equal(await client().findFolder('1837760528','TEST','센터_운영'),'2356150410');
+});
+
+const folderCandidate={id:'f',type:'folder',title:'F'};
+const folderMetadata={...folderCandidate,space:{id:'space'},ancestors:[{id:'parent'}]};
+const foundFolderSteps=()=>[{path:folderSearch('F'),body:{results:[folderCandidate]}},{path:'/wiki/rest/api/content/f?expand=ancestors,space',body:folderMetadata}];
+test('folder upsert reuses existing folder without POST',async t=>{
+ mockFetch(t,foundFolderSteps());assert.deepEqual(await client().upsertFolder('space','TEST','F','parent'),{id:'f',created:false});
+});
+test('folder upsert creates only when lookup is empty',async t=>{
+ mockFetch(t,[{path:folderSearch('F'),body:{results:[]}},{path:'/wiki/api/v2/folders',method:'POST',body:{id:'new'}}]);
+ assert.deepEqual(await client().upsertFolder('space','TEST','F','parent'),{id:'new',created:true});
+});
+for(const status of [400,409])test(`folder upsert recovers from create conflict ${status} by read-only lookup`,async t=>{
+ mockFetch(t,[{path:folderSearch('F'),body:{results:[]}},{path:'/wiki/api/v2/folders',method:'POST',status,body:{errors:[{title:'A folder exists with the same title in this space'}]}},...foundFolderSteps()]);
+ assert.deepEqual(await client().upsertFolder('space','TEST','F','parent'),{id:'f',created:false});
+});
+for(const status of [400,401,403,500])test(`folder upsert preserves non-duplicate create error ${status}`,async t=>{
+ mockFetch(t,[{path:folderSearch('F'),body:{results:[]}},{path:'/wiki/api/v2/folders',method:'POST',status,body:{message:'other error'}}]);
+ await assert.rejects(client().upsertFolder('space','TEST','F','parent'),new RegExp(String(status)));
+});
+test('unresolved conflict is not retried indefinitely',async t=>{
+ mockFetch(t,[{path:folderSearch('F'),body:{results:[]}},{path:'/wiki/api/v2/folders',method:'POST',status:409},{path:folderSearch('F'),body:{results:[]}}]);
+ await assert.rejects(client().upsertFolder('space','TEST','F','parent'),/409/);
+});
+test('mapped folder is verified and reused without search or creation',async t=>{
+ mockFetch(t,[{path:'/wiki/rest/api/content/f?expand=ancestors,space',body:folderMetadata}]);
+ assert.deepEqual(await client().upsertFolder('space','TEST','F','parent','f'),{id:'f',created:false});
+});
+test('missing mapped folder falls back to lookup',async t=>{
+ mockFetch(t,[{path:'/wiki/rest/api/content/old?expand=ancestors,space',status:404},...foundFolderSteps()]);
+ assert.deepEqual(await client().upsertFolder('space','TEST','F','parent','old'),{id:'f',created:false});
+});
+test('mapped folder in wrong location is never silently reused or moved',async t=>{
+ mockFetch(t,[{path:'/wiki/rest/api/content/f?expand=ancestors,space',body:{...folderMetadata,ancestors:[{id:'other'}]}}]);
+ await assert.rejects(client().upsertFolder('space','TEST','F','parent','f'),/요청 위치와 다릅니다/);
+});

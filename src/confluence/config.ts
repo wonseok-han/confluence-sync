@@ -20,7 +20,7 @@ export function readEnv(): Env {
     token: process.env.CONFLUENCE_API_TOKEN,
     spaceKey: process.env.CONFLUENCE_SPACE_KEY,
     // 신규 이름 우선, 없으면 구 이름(CONFLUENCE_PARENT_PAGE_ID) 하위호환
-    parentId: process.env.CONFLUENCE_PARENT_ID ?? process.env.CONFLUENCE_PARENT_PAGE_ID,
+    parentId: (process.env.CONFLUENCE_PARENT_ID ?? process.env.CONFLUENCE_PARENT_PAGE_ID)?.trim() || undefined,
   };
 }
 

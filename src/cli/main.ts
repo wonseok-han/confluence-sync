@@ -5,6 +5,7 @@ import { printHelp, readPkgVersion } from './help.js';
 import { runInit } from './init.js';
 import { runConvert } from '../conversion/convert.js';
 import { runPull } from '../sync/pull.js';
+import { runRemap } from '../sync/remap.js';
 import { runPush } from '../sync/push.js';
 
 const argv = process.argv.slice(2);
@@ -15,6 +16,8 @@ try {
     switch (positionalArgs(argv)[0]) {
       case 'init': await runInit(argv); break;
       case 'convert': await runConvert(argv); break;
+      case 'remap': await runRemap(argv); break;
+      case 'sync': { const args = [...argv]; args.splice(args.indexOf('sync'), 1); await runPush(args); break; }
       case 'pull': await runPull(argv); break;
       case 'web': { const { runWeb } = await import('../web/server.js'); await runWeb(argv); break; }
       default: await runPush(argv);

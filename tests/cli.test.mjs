@@ -60,8 +60,8 @@ test('push uses frontmatter pageId to update an existing page instead of creatin
 
 test('push creates folder containers before pages and records their parent relationship',t=>{
  const {root,put}=workspace(t,{'folder/doc.md':'# Doc'});
- const r=offline(root,put,['--base',root],[{path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}},{path:'/wiki/api/v2/folders',method:'POST',body:{id:'folder'}},{path:'/wiki/api/v2/pages',method:'POST',body:{id:'doc'}}]);
- assert.equal(r.status,0,r.stderr);assert.equal(r.calls[2].body.parentId,'folder');const m=JSON.parse(readFileSync(join(root,'.confluence-sync.json'),'utf8'));assert.equal(m['folder/'].type,'folder');assert.equal(m['folder/doc.md'].pageId,'doc');
+ const r=offline(root,put,['--base',root],[{path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}},{path:'/wiki/rest/api/content/search?cql='+encodeURIComponent('type = folder AND space = "TEST" AND title = "folder"')+'&limit=100',body:{results:[]}},{path:'/wiki/api/v2/folders',method:'POST',body:{id:'folder'}},{path:'/wiki/api/v2/pages',method:'POST',body:{id:'doc'}}]);
+ assert.equal(r.status,0,r.stderr);assert.equal(r.calls[3].body.parentId,'folder');const m=JSON.parse(readFileSync(join(root,'.confluence-sync.json'),'utf8'));assert.equal(m['folder/'].type,'folder');assert.equal(m['folder/doc.md'].pageId,'doc');
 });
 
 test('selected push uses a mapped ancestor README without publishing its changed contents',t=>{
@@ -95,4 +95,31 @@ test('reference pages link by ID without any reference upload or mapping mutatio
  assert.match(r.calls[1].body.body.value,/viewpage.action\?pageId=123/);assert.match(r.calls[1].body.body.value,/>Alias<\/a>/);
  assert.equal(readFileSync(join(root,'refs/.confluence-sync.json'),'utf8'),original);
  assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(root,'main/.confluence-sync.json'),'utf8'))),['a.md']);
+});
+
+test('push reuses root folders with an explicitly empty parent setting',t=>{
+ const oldParent=process.env.CONFLUENCE_PARENT_ID;process.env.CONFLUENCE_PARENT_ID='';
+ t.after(()=>{if(oldParent===undefined)delete process.env.CONFLUENCE_PARENT_ID;else process.env.CONFLUENCE_PARENT_ID=oldParent;});
+ const {root,put}=workspace(t,{'센터_운영/공통_업무규칙/doc.md':'# Doc'});
+ const search=title=>'/wiki/rest/api/content/search?cql='+encodeURIComponent(`type = folder AND space = "TEST" AND title = "${title}"`)+'&limit=100';
+ const r=offline(root,put,['--base',root],[
+  {path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}},
+  {path:search('센터_운영'),body:{results:[{id:'f1',type:'folder',title:'센터_운영'}]}},
+  {path:'/wiki/rest/api/content/f1?expand=ancestors,space',body:{id:'f1',type:'folder',space:{id:'space'},ancestors:[],title:'센터_운영'}},
+  {path:search('공통_업무규칙'),body:{results:[{id:'f2',type:'folder',title:'공통_업무규칙'}]}},
+  {path:'/wiki/rest/api/content/f2?expand=ancestors,space',body:{id:'f2',type:'folder',space:{id:'space'},ancestors:[{id:'f1'}],title:'공통_업무규칙'}},
+  {path:'/wiki/api/v2/pages',method:'POST',body:{id:'doc'}}
+ ]);
+ assert.equal(r.status,0,r.stderr);assert.equal(r.calls.at(-1).body.parentId,'f2');
+ const m=JSON.parse(readFileSync(join(root,'.confluence-sync.json'),'utf8'));assert.equal(m['센터_운영/'].pageId,'f1');assert.equal(m['센터_운영/공통_업무규칙/'].pageId,'f2');
+ assert.match(r.stdout,/폴더 연결/);
+});
+
+test('failed mapped folder blocks every child even while a stale mapping ID remains',t=>{
+ const old=process.env.CONFLUENCE_PARENT_ID;process.env.CONFLUENCE_PARENT_ID='';t.after(()=>{if(old===undefined)delete process.env.CONFLUENCE_PARENT_ID;else process.env.CONFLUENCE_PARENT_ID=old;});
+ const mapping={'folder/':{pageId:'f',type:'folder',title:'folder'}};
+ const {root,put}=workspace(t,{'folder/a.md':'# A','folder/b.md':'# B','.confluence-sync.json':JSON.stringify(mapping)});
+ const r=offline(root,put,['--base',root],[{path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}},{path:'/wiki/rest/api/content/f?expand=ancestors,space',body:{id:'f',type:'folder',title:'renamed',space:{id:'space'},ancestors:[]}}]);
+ assert.equal(r.calls.length,2);assert.match(r.stderr,/folder\/a.md/);assert.match(r.stderr,/folder\/b.md/);
+ assert.deepEqual(JSON.parse(readFileSync(join(root,'.confluence-sync.json'),'utf8')),mapping);
 });

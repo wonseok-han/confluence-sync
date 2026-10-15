@@ -28,6 +28,15 @@ ${h('사용법:')}
   ${o('confluence-sync convert --to <형식>')}   이미 받은 .md 의 링크 표기를 바꾸기(로컬 전용)
   ${o('confluence-sync --help | --version')}
 
+${h('remap 옵션(로컬 매핑만 갱신, Confluence 호출 없음):')}
+  ${o('csync remap --base <dir>')}  pageId로 경로를 재연결하고 이동 대기 기록
+  ${o('--from-mapping <path>')}  원본 매핑에서 기존 ID·해시 가져오기(원본 유지)
+  ${o('--mapping <path>')}       저장할 매핑(기본: <base>/.confluence-sync.json)
+  ${o('--exclude <glob>')}       제외 패턴(반복 가능), .confluence-syncignore도 적용
+  ${o('--dry-run')}              변경 내역만 출력, 파일 저장 없음
+  이후 ${o('csync sync --base <dir> --dry-run')}으로 확인하고, 명시적으로 sync할 때 이동 반영.
+  기존 해시가 없으면 sync에서 본문도 갱신합니다. 폴더 ID의 경로 변경은 자동 추론하지 않습니다.
+
 ${h('web 옵션:')}
   ${o('--base <dir>')}      처음 열 폴더(기본: 홈 폴더). 화면에서 기준 폴더를 바꿀 수 있음
   ${o('--port <number>')}   웹 포트(기본: 4318)
