@@ -9,7 +9,7 @@ import { red, yellow, dim } from '../shared/colors.js';
 
 export type ConfluenceConfig = { baseUrl: string; email: string; token: string };
 export type ClientOpts = { force: boolean; verify: boolean };
-export type UpsertResult = 'created' | 'updated' | 'skipped' | 'recreated';
+export type UpsertResult = 'created' | 'updated' | 'skipped' | 'recreated' | 'moved';
 export type ImageRef = { filename: string; abs: string };
 /** getNode 결과: 본문(HTML/storage) + 출처 메타(frontmatter 용). */
 export type ContentNode = {
@@ -21,6 +21,12 @@ export type ContentNode = {
   url?: string;
   updated?: string;
 };
+
+class ConfluenceApiError extends Error {
+  constructor(readonly status: number, path: string, readonly responseBody: string, statusText: string) {
+    super(`Confluence API ${status} ${statusText}\n${path}\n${responseBody}`);
+  }
+}
 
 export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   const authHeader = () => 'Basic ' + Buffer.from(`${cfg.email}:${cfg.token}`).toString('base64');
@@ -36,7 +42,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
       },
     });
     if (!res.ok) {
-      throw new Error(`Confluence API ${res.status} ${res.statusText}\n${path}\n${await res.text()}`);
+      throw new ConfluenceApiError(res.status, path, await res.text(), res.statusText);
     }
     return res.status === 204 ? null : res.json();
   }
@@ -135,10 +141,36 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     if (existing?.pageId) {
       const changed = existing.hash !== hash || opts.force || forceUpdate;
       // 변경 없고 검증(--verify)도 안 하면 호출 없이 스킵
-      if (!changed && !opts.verify) return 'skipped';
-      const cur = await getPageOrNull(existing.pageId);
+      if (!changed && !opts.verify && !existing.pendingMove) return 'skipped';
+      let cur = await getPageOrNull(existing.pageId);
+      if (!cur && existing.pendingMove) throw new Error(`이동 대상 페이지 #${existing.pageId}가 없습니다. 자동 재생성하지 않습니다.`);
       if (cur) {
-        if (!changed) return 'skipped'; // 페이지 존재 확인됨, 내용도 동일
+        let moved = false;
+        if (existing.pendingMove) {
+          if (String(cur.spaceId) !== spaceId) throw new Error('이동 대상 페이지의 스페이스가 설정과 다릅니다.');
+          if ((cur.parentId ?? undefined) !== parentId) {
+            let targetId = parentId;
+            let position = 'append';
+            if (!targetId) {
+              // A sibling of the top-level homepage is also top-level.
+              const space = await api(`/api/v2/spaces/${spaceId}`);
+              targetId = space.homepageId;
+              if (!targetId) throw new Error('최상위 이동 기준 홈페이지가 없습니다. CONFLUENCE_PARENT_ID를 지정하세요.');
+              const target = await getPageOrNull(targetId);
+              if (!target || target.parentId || String(target.spaceId) !== spaceId) throw new Error('최상위 이동 기준 홈페이지를 확인할 수 없습니다.');
+              position = 'after';
+            }
+            if (targetId === existing.pageId) throw new Error('페이지를 자기 자신 아래로 이동할 수 없습니다.');
+            await api(`/rest/api/content/${existing.pageId}/move/${position}/${targetId}`, { method: 'PUT' });
+            cur = await getPageOrNull(existing.pageId);
+            if (!cur || (cur.parentId ?? undefined) !== parentId) throw new Error('이동 후 부모 위치 검증에 실패했습니다. 다시 sync하세요.');
+            moved = true;
+          }
+        }
+        if (!changed) {
+          delete existing.pendingMove;
+          return moved ? 'moved' : 'skipped';
+        }
         const nextVersion = (cur.version?.number ?? 1) + 1;
         await api(`/api/v2/pages/${existing.pageId}`, {
           method: 'PUT',
@@ -172,7 +204,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     const res = await fetch(`${cfg.baseUrl}${path}`, {
       headers: { Authorization: authHeader(), Accept: 'application/json' },
     });
-    if (!res.ok) throw new Error(`Confluence API ${res.status} ${res.statusText}\n${path}\n${await res.text()}`);
+    if (!res.ok) throw new ConfluenceApiError(res.status, path, await res.text(), res.statusText);
     return res.json();
   }
 
@@ -247,12 +279,87 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     return res.json();
   }
 
+  /** 같은 스페이스·부모·제목의 폴더만 재사용한다. 검색 결과는 현재 메타로 재검증. */
+  async function findFolder(spaceId: string, spaceKey: string, title: string, parentId?: string): Promise<string | null> {
+    const cql = `type = folder AND space = ${JSON.stringify(spaceKey)} AND title = ${JSON.stringify(title)}`;
+    let path: string | null = `/rest/api/content/search?cql=${encodeURIComponent(cql)}&limit=100`;
+    const matches = new Set<string>();
+    const otherParents = new Set<string>();
+    let homepageId: string | undefined;
+    while (path) {
+      const data = await getV1(path);
+      for (const candidate of data.results ?? []) {
+        if (candidate.type !== 'folder' || candidate.title !== title) continue;
+        const folder = await getV1(`/rest/api/content/${encodeURIComponent(candidate.id)}?expand=ancestors,space`);
+        if (!Array.isArray(folder.ancestors) || !folder.space?.id) {
+          throw new Error(`폴더 위치 메타데이터를 확인할 수 없습니다: ${candidate.id}`);
+        }
+        if (folder.type !== 'folder' || String(folder.space.id) !== spaceId || folder.title !== title) continue;
+        const actualParent = folder.ancestors.at(-1)?.id;
+        // The visible space root can be the homepage's children, not parentless content.
+        if (!parentId && actualParent && homepageId === undefined) {
+          homepageId = String((await api(`/api/v2/spaces/${spaceId}`)).homepageId ?? '');
+        }
+        if (actualParent === parentId || (!parentId && actualParent === homepageId)) {
+          matches.add(String(folder.id));
+        } else {
+          otherParents.add(actualParent ?? 'ROOT');
+        }
+      }
+      const next = data._links?.next;
+      // Keep pagination on this configured API base (including gateway cloud IDs).
+      path = next ? new URL(next, 'https://pagination.invalid').pathname.replace(/^\/wiki(?=\/rest\/)/, '') + new URL(next, 'https://pagination.invalid').search : null;
+    }
+    if (matches.size > 1) throw new Error(`같은 위치에 동명 폴더가 여러 개 있습니다: ${title}`);
+    if (!matches.size && otherParents.size) {
+      throw new Error(`동명 폴더 '${title}'가 다른 위치에 있습니다 (현재 부모: ${[...otherParents].join(', ')}, 요청 부모: ${parentId ?? 'ROOT/홈페이지'}). 부모 설정 또는 폴더 구조를 확인하세요.`);
+    }
+    return [...matches][0] ?? null;
+  }
+
   /** 폴더 생성(write:folder 필요). parentId 없으면 공간 최상위. 생성된 folder id 반환. */
   async function createFolder(spaceId: string, title: string, parentId?: string): Promise<string> {
     const body: Record<string, unknown> = { spaceId, title };
     if (parentId) body.parentId = parentId;
     const created = await api(`/api/v2/folders`, { method: 'POST', body: JSON.stringify(body) });
     return created.id;
+  }
+
+  /** 조회→재사용→생성. 동시 생성/검색 지연으로 충돌하면 한 번 재조회한다. */
+  async function upsertFolder(
+    spaceId: string, spaceKey: string, title: string, parentId?: string, mappedId?: string,
+  ): Promise<{ id: string; created: boolean }> {
+    parentId = parentId?.trim() || undefined;
+    if (mappedId) {
+      let folder: any;
+      try {
+        folder = await api(`/rest/api/content/${encodeURIComponent(mappedId)}?expand=ancestors,space`);
+      } catch (error) {
+        if (!(error instanceof ConfluenceApiError) || error.status !== 404) throw error;
+      }
+      if (folder) {
+        if (!Array.isArray(folder.ancestors) || !folder.space?.id) throw new Error(`폴더 위치 메타데이터를 확인할 수 없습니다: ${mappedId}`);
+        const actualParent = folder.ancestors.at(-1)?.id;
+        const homepageId = !parentId && actualParent ? String((await api(`/api/v2/spaces/${spaceId}`)).homepageId ?? '') : undefined;
+        if (folder.type !== 'folder' || String(folder.space.id) !== spaceId || folder.title !== title ||
+            !(actualParent === parentId || (!parentId && actualParent === homepageId))) {
+          throw new Error(`매핑 폴더 #${mappedId}의 스페이스·제목·부모가 '${title}'의 요청 위치와 다릅니다.`);
+        }
+        return { id: mappedId, created: false };
+      }
+    }
+    const found = await findFolder(spaceId, spaceKey, title, parentId);
+    if (found) return { id: found, created: false };
+    try {
+      return { id: await createFolder(spaceId, title, parentId), created: true };
+    } catch (error) {
+      const conflict = error instanceof ConfluenceApiError &&
+        (error.status === 409 || (error.status === 400 && /folder exists with the same title/i.test(error.responseBody)));
+      if (!conflict) throw error;
+      const raced = await findFolder(spaceId, spaceKey, title, parentId);
+      if (raced) return { id: raced, created: false };
+      throw error;
+    }
   }
 
   /** 폴더 삭제(--rebuild). */
@@ -263,6 +370,6 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   return {
     api, getPageOrNull, getSpaceId, getSpaceInfo, deleteAll, uploadImages, upsertPage,
     getNode, getChildPages, getChildFolders, listAttachments, downloadAttachment,
-    getContentOrNull, createFolder, deleteFolder,
+    getContentOrNull, findFolder, createFolder, upsertFolder, deleteFolder,
   };
 }
