@@ -88,48 +88,57 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
 
   /** 페이지의 기존 첨부 중 같은 파일명의 attachmentId 를 찾는다(없으면 null). */
   async function findAttachmentId(pageId: string, filename: string): Promise<string | null> {
-    try {
-      const data = await api(
-        `/rest/api/content/${pageId}/child/attachment?filename=${encodeURIComponent(filename)}`,
-      );
-      return data?.results?.[0]?.id ?? null;
-    } catch {
-      return null;
-    }
+    const data = await api(
+      `/rest/api/content/${pageId}/child/attachment?filename=${encodeURIComponent(filename)}`,
+    );
+    return data?.results?.[0]?.id ?? null;
   }
 
   /**
-   * 로컬 이미지를 페이지 첨부로 업로드(v1, multipart).
+   * 로컬 파일을 페이지 첨부로 업로드(v1, multipart).
    * 같은 파일명 첨부가 이미 있으면 데이터만 새 버전으로 갱신(중복 생성 400 방지),
    * 없으면 신규 생성한다.
    */
   async function uploadAttachment(pageId: string, filename: string, abs: string): Promise<void> {
     const buf = readFileSync(abs);
-    const form = new FormData();
-    form.append('file', new Blob([buf]), filename);
-    form.append('minorEdit', 'true');
-    const attId = await findAttachmentId(pageId, filename);
-    const path = attId
-      ? `/rest/api/content/${pageId}/child/attachment/${attId}/data` // 기존 첨부 데이터 갱신
-      : `/rest/api/content/${pageId}/child/attachment`; // 신규 첨부 생성
-    const res = await fetch(`${cfg.baseUrl}${path}`, {
-      method: 'POST',
-      headers: { Authorization: authHeader(), 'X-Atlassian-Token': 'nocheck' },
-      body: form as any,
-    });
-    if (!res.ok) throw new Error(`attachment ${res.status} ${res.statusText}\n${await res.text()}`);
+    // 롤백 오류에만 재시도한다. 매번 첨부를 재조회해 생성/갱신 경로를 다시 결정한다.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const attId = await findAttachmentId(pageId, filename);
+      const path = attId
+        ? `/rest/api/content/${pageId}/child/attachment/${attId}/data`
+        : `/rest/api/content/${pageId}/child/attachment`;
+      const form = new FormData();
+      form.append('file', new Blob([buf]), filename);
+      form.append('minorEdit', 'true');
+      const res = await fetch(`${cfg.baseUrl}${path}`, {
+        method: 'POST',
+        headers: { Authorization: authHeader(), 'X-Atlassian-Token': 'nocheck' },
+        body: form,
+      });
+      if (res.ok) return;
+      const detail = await res.text();
+      if (res.status === 500 && /UnexpectedRollbackException|rollback-only/i.test(detail) && attempt < 2) {
+        console.error(yellow(`    ↻ 첨부 트랜잭션 롤백, 재시도 ${attempt + 1}/2: ${filename}`));
+        await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** attempt));
+        continue;
+      }
+      const traceId = res.headers.get('atl-traceid') ?? res.headers.get('x-arequestid');
+      throw new Error(`attachment ${res.status} ${res.statusText}\nPOST ${path}${traceId ? `\ntraceId: ${traceId}` : ''}\n${detail}`);
+    }
   }
 
-  /** 페이지의 로컬 이미지들을 업로드. 성공 개수 반환. baseDir 은 로그 표시용. */
-  async function uploadImages(pageId: string, images: ImageRef[], baseDir: string): Promise<number> {
+  /** 페이지의 로컬 첨부를 업로드. 성공 개수 반환. */
+  async function uploadAttachments(pageId: string, attachments: ImageRef[], baseDir: string): Promise<number> {
     let ok = 0;
-    for (const img of images) {
-      if (!existsSync(img.abs)) { console.error(yellow(`    ⚠ 이미지 없음: ${relative(baseDir, img.abs)}`)); continue; }
-      try { await uploadAttachment(pageId, img.filename, img.abs); ok++; }
-      catch (e) { console.error(red(`    ✗ 이미지 업로드 실패 ${img.filename}`) + `\n${(e as Error).message}`); }
+    for (const file of attachments) {
+      if (!existsSync(file.abs)) { console.error(yellow(`    ⚠ 첨부 없음: ${relative(baseDir, file.abs)}`)); continue; }
+      try { await uploadAttachment(pageId, file.filename, file.abs); ok++; }
+      catch (e) { console.error(red(`    ✗ 첨부 업로드 실패 ${file.filename}`) + `\n${(e as Error).message}`); }
     }
     return ok;
   }
+
+  const uploadImages = uploadAttachments;
 
   /** 페이지 생성/갱신. 삭제 감지 시 재생성. 변경 없으면(opts.verify 아니면) 호출 없이 skip. */
   async function upsertPage(
@@ -368,7 +377,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   }
 
   return {
-    api, getPageOrNull, getSpaceId, getSpaceInfo, deleteAll, uploadImages, upsertPage,
+    api, getPageOrNull, getSpaceId, getSpaceInfo, deleteAll, uploadImages, uploadAttachments, upsertPage,
     getNode, getChildPages, getChildFolders, listAttachments, downloadAttachment,
     getContentOrNull, findFolder, createFolder, upsertFolder, deleteFolder,
   };

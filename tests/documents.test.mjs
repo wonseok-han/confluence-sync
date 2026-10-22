@@ -106,3 +106,24 @@ test('repair removes export artifacts and is idempotent without changing real Ja
  const original='---\ntitle: Title\n---\n# Title\n\n[data-colorid=x]{color:red;}Text\n\n- A\n\n- B\n\n```java\necho hello  \n```\n\n```java\npublic class Main {}\n```';
  const fixed=repairMarkdown(original);assert.ok(totalFixes(fixed.stats)>0);assert.doesNotMatch(fixed.text,/# Title|data-colorid/);assert.match(fixed.text,/```plaintext\necho hello\n```/);assert.match(fixed.text,/```java\npublic class Main/);assert.equal(repairMarkdown(fixed.text).text,fixed.text);
 });
+
+test('local file links become attachments with labels, fragments and deduplicated uploads',t=>{
+ const {root}=workspace(t,{'files/한 글.pdf':'pdf','files/source.mmd':'graph','screen.png':'png'});
+ const r=toStorage('[**PDF**](<files/한 글.pdf#page=2>) [again](files/한%20글.pdf) [source](files/source.mmd) ![](screen.png) [image](screen.png) [web](https://example.invalid/a.pdf) [missing](missing.pdf) [folder](files/) [mail](mailto:a@example.invalid) [doc](other.md)','doc.md',{},root);
+ assert.equal(r.attachments.length,3);assert.equal(r.images.length,1);
+ assert.match(r.storage,/<ac:link ac:anchor="page=2"><ri:attachment ri:filename="한 글.pdf" \/><ac:link-body><strong>PDF<\/strong>/);
+ assert.match(r.storage,/ri:filename="source.mmd"/);assert.match(r.storage,/<a href="https:\/\/example.invalid\/a.pdf"/);
+ assert.match(r.storage,/<a href="missing.pdf"/);assert.match(r.storage,/<a href="files\/"/);assert.match(r.storage,/<a href="other.md"/);
+});
+
+test('attachment content changes invalidate the document hash',t=>{
+ const {root,put}=workspace(t,{'report.pdf':'first'});const r=toStorage('[report](report.pdf)','doc.md',{},root);const before=docHash('Doc',r);
+ put('report.pdf','second');assert.notEqual(before,docHash('Doc',r));
+});
+
+test('different files sharing an attachment name receive distinct stable upload names',t=>{
+ const {root}=workspace(t,{'a/report.pdf':'one','b/report.pdf':'two'});
+ const render=()=>toStorage('[one](a/report.pdf) [two](b/report.pdf) [again](b/report.pdf)','doc.md',{},root);
+ const r=render();assert.equal(r.attachments.length,2);assert.notEqual(r.attachments[0].filename,r.attachments[1].filename);assert.deepEqual(r.attachments,render().attachments);
+ assert.match(r.storage,new RegExp(r.attachments[1].filename.replaceAll('.', '\\.')));
+});

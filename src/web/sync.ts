@@ -128,7 +128,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
     let reportedFailure = false;
     const secrets = [prepared.env.CONFLUENCE_API_TOKEN, Buffer.from(`${prepared.env.CONFLUENCE_EMAIL}:${prepared.env.CONFLUENCE_API_TOKEN}`).toString('base64')].filter(Boolean);
     const log = (text: string) => {
-      if (text.includes('✗') || text.includes('⚠ 이미지 없음')) reportedFailure = true; // CLI reports per-document / attachment failures without exiting.
+      if (text.includes('✗') || text.includes('⚠ 이미지 없음') || text.includes('⚠ 첨부 없음')) reportedFailure = true; // CLI reports per-document / attachment failures without exiting.
       for (const secret of secrets) text = text.split(secret).join('[비공개]');
       current.log = (current.log + text).slice(-512_000);
     };

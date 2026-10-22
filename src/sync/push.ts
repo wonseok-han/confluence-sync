@@ -150,7 +150,7 @@ export async function runPush(argv: string[]): Promise<void> {
       const pk = parentKeyOf(rel, folderIndex);
       const anchorNote = r.anchorLinks || r.anchorsPlaced
         ? `, 섹션링크: ${r.anchorLinks}, 앵커: ${r.anchorsPlaced}` : '';
-      console.log(`  [${status}] ${rel}  ${dim('→')}  ${cyan(`"${title}"`)}  ${dim(`(부모: ${pk ?? 'ROOT'}, 내부링크: ${r.internalLinks}${anchorNote}, 이미지: ${r.images.length})`)}`);
+      console.log(`  [${status}] ${rel}  ${dim('→')}  ${cyan(`"${title}"`)}  ${dim(`(부모: ${pk ?? 'ROOT'}, 내부링크: ${r.internalLinks}${anchorNote}, 이미지: ${r.images.length}, 첨부: ${r.attachments.length})`)}`);
       if (r.deadAnchors.length) {
         console.error(yellow(`    ⚠ 대응 헤딩 없는 앵커 ${r.deadAnchors.length}개: `) + dim(r.deadAnchors.slice(0, 3).join(' ')));
       }
@@ -264,8 +264,12 @@ export async function runPush(argv: string[]): Promise<void> {
         moved++;
         continue;
       }
-      const imgOk = await client.uploadImages(work[rel].pageId, r.images, BASE_DIR);
-      const imgNote = r.images.length ? `, 이미지 ${imgOk}/${r.images.length}` : '';
+      const imgOk = await client.uploadAttachments(work[rel].pageId, r.attachments, BASE_DIR);
+      const imgNote = r.attachments.length ? `, 첨부 ${imgOk}/${r.attachments.length}` : '';
+      if (imgOk !== r.attachments.length) {
+        delete work[rel].hash; // 부분 실패는 다음 동기화에서 재시도한다.
+        saveMapping(MAPPING_PATH, work);
+      }
       const label = result === 'created' ? green('＋ 생성')
         : result === 'recreated' ? magenta('♻ 재생성(삭제 복구)')
         : yellow('↻ 갱신');
@@ -289,7 +293,11 @@ export async function runPush(argv: string[]): Promise<void> {
       try {
         await client.upsertPage(work, spaceId, rel, r.title, r.storage, r.hash, r.parentId, true);
         saveMapping(MAPPING_PATH, work);
-        await client.uploadImages(work[rel].pageId, r.images, BASE_DIR);
+        const uploaded = await client.uploadAttachments(work[rel].pageId, r.attachments, BASE_DIR);
+        if (uploaded !== r.attachments.length) {
+          delete work[rel].hash;
+          saveMapping(MAPPING_PATH, work);
+        }
         console.log(`  ${cyan('🔗 링크 재연결')}  ${rel}  ${dim('→')}  ${cyan(`"${r.title}"`)}`);
         relinked++;
       } catch (e) {
