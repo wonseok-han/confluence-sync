@@ -123,3 +123,18 @@ test('failed mapped folder blocks every child even while a stale mapping ID rema
  assert.equal(r.calls.length,2);assert.match(r.stderr,/folder\/a.md/);assert.match(r.stderr,/folder\/b.md/);
  assert.deepEqual(JSON.parse(readFileSync(join(root,'.confluence-sync.json'),'utf8')),mapping);
 });
+
+test('push uploads linked files once, retries failure, skips unchanged and detects file-only edits',t=>{
+ const {root,put}=workspace(t,{'doc.md':'# Doc\n\n[PDF](report.pdf) [again](report.pdf)','report.pdf':'first'});
+ const space={path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}};
+ const lookup={path:'/wiki/rest/api/content/page/child/attachment?filename=report.pdf',body:{results:[]}};
+ const upload={path:'/wiki/rest/api/content/page/child/attachment',method:'POST'};
+ const update=[{path:'/wiki/api/v2/pages/page',body:{version:{number:1}}},{path:'/wiki/api/v2/pages/page',method:'PUT'}];
+ let r=offline(root,put,['--base',root],[space,{path:'/wiki/api/v2/pages',method:'POST',body:{id:'page'}},lookup,{...upload,status:500}]);
+ assert.equal(r.status,0,r.stderr);assert.match(r.calls[1].body.body.value,/ri:attachment ri:filename="report.pdf"/);
+ assert.equal(JSON.parse(readFileSync(join(root,'.confluence-sync.json'),'utf8'))['doc.md'].hash,undefined);
+ r=offline(root,put,['--base',root],[space,...update,lookup,upload]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,5);
+ r=offline(root,put,['--base',root],[space]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,1);
+ put('report.pdf','second');r=offline(root,put,['--base',root],[space,...update,{...lookup,body:{results:[{id:'att'}]}},{path:upload.path+'/att/data',method:'POST'}]);
+ assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,5);
+});

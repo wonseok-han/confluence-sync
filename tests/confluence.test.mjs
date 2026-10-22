@@ -176,3 +176,33 @@ test('mapped folder in wrong location is never silently reused or moved',async t
  mockFetch(t,[{path:'/wiki/rest/api/content/f?expand=ancestors,space',body:{...folderMetadata,ancestors:[{id:'other'}]}}]);
  await assert.rejects(client().upsertFolder('space','TEST','F','parent','f'),/요청 위치와 다릅니다/);
 });
+
+for(const existing of [false,true])test(`general file attachment ${existing?'updates':'creates'} with original binary bytes`,async t=>{
+ const {root,put}=workspace(t);const abs=put('report.pdf',Buffer.from([0,255,42,10]));let uploaded;
+ mockFetch(t,[{path:'/wiki/rest/api/content/1/child/attachment?filename=report.pdf',body:{results:existing?[{id:'att'}]:[]}},{path:'/wiki/rest/api/content/1/child/attachment'+(existing?'/att/data':''),method:'POST',check:r=>{
+  uploaded=r.body.get('file');assert.equal(uploaded.name,'report.pdf');
+ }}]);
+ assert.equal(await client().uploadAttachments('1',[{filename:'report.pdf',abs}],root),1);
+ assert.deepEqual(Buffer.from(await uploaded.arrayBuffer()),Buffer.from([0,255,42,10]));
+});
+
+test('rollback upload retries after re-querying and switches to existing attachment update',async t=>{
+ const {root,put}=workspace(t);const abs=put('report.pdf','bytes');t.mock.method(console,'error',()=>{});
+ const path='/wiki/rest/api/content/1/child/attachment';
+ mockFetch(t,[{path:path+'?filename=report.pdf',body:{results:[]}},{path,method:'POST',status:500,body:{message:'UnexpectedRollbackException: rollback-only'}},{path:path+'?filename=report.pdf',body:{results:[{id:'att'}]}},{path:path+'/att/data',method:'POST'}]);
+ assert.equal(await client().uploadAttachments('1',[{filename:'report.pdf',abs}],root),1);
+});
+
+test('persistent rollback stops after three attempts and reports failure',async t=>{
+ const {root,put}=workspace(t);const abs=put('report.pdf','bytes');const errors=[];t.mock.method(console,'error',s=>errors.push(s));
+ const path='/wiki/rest/api/content/1/child/attachment';
+ mockFetch(t,Array.from({length:3},()=>[{path:path+'?filename=report.pdf',body:{results:[]}},{path,method:'POST',status:500,body:{message:'UnexpectedRollbackException: rollback-only'}}]).flat());
+ assert.equal(await client().uploadAttachments('1',[{filename:'report.pdf',abs}],root),0);
+ assert.match(errors.join('\n'),/POST \/rest\/api\/content\/1\/child\/attachment/);
+});
+
+for(const status of [401,403,500])test(`attachment lookup failure ${status} does not fall through to creation`,async t=>{
+ const {root,put}=workspace(t);const abs=put('report.pdf','bytes');const errors=[];t.mock.method(console,'error',s=>errors.push(s));
+ mockFetch(t,[{path:'/wiki/rest/api/content/1/child/attachment?filename=report.pdf',status}]);
+ assert.equal(await client().uploadAttachments('1',[{filename:'report.pdf',abs}],root),0);assert.match(errors.join('\n'),new RegExp(String(status)));
+});

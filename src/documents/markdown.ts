@@ -5,8 +5,8 @@
  * - 로컬 이미지 → 첨부 참조(ri:attachment), 외부 URL 이미지는 그대로
  * 모든 경로는 baseDir 기준 상대경로로 해석한다.
  */
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve, relative, dirname, basename } from 'node:path';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+import { resolve, relative, dirname, basename, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 import MarkdownIt from 'markdown-it';
 import { resolveWikilinks, type LinkResolver } from './obsidian.js';
@@ -35,6 +35,7 @@ type RenderCtx = {
   mermaidSeq: number;
   anchorsPlaced: number;
   images: { filename: string; abs: string }[];
+  attachments: { filename: string; abs: string }[];
   internalLinks: number;
   anchorLinks: number; // 그중 섹션까지 가리키는 링크 수
   deadAnchors: string[]; // 대응하는 헤딩을 못 찾은 앵커(그대로 두되 알린다)
@@ -48,7 +49,7 @@ const md = new MarkdownIt({ html: true, linkify: true, breaks: false });
 const emptyCtx = (): RenderCtx => ({
   fileDir: '', titleIndex: {}, anchorIndex: {}, selfRel: '', selfTitle: '',
   anchorNames: new Set(), bodySlugs: [], headingSeq: 0, mermaidSeq: 0, anchorsPlaced: 0,
-  images: [], internalLinks: 0, anchorLinks: 0, deadAnchors: [], linkStack: [], linkedTitles: new Set(),
+  images: [], attachments: [], internalLinks: 0, anchorLinks: 0, deadAnchors: [], linkStack: [], linkedTitles: new Set(),
 });
 
 // 렌더 규칙은 md 인스턴스에 한 번만 등록되므로, 현재 변환 컨텍스트를 모듈 변수로 공유한다.
@@ -123,6 +124,22 @@ md.renderer.rules.fence = (tokens, idx) => {
   return code + (lang === 'mermaid' ? mermaidMacro(ctx.selfRel, ctx.mermaidSeq++) : '');
 };
 
+/** 페이지 첨부 이름은 유일해야 한다. 동일 경로는 한 번만 업로드한다. */
+function addAttachment(abs: string): string {
+  const existing = ctx.attachments.find(a => a.abs === abs);
+  if (existing) return existing.filename;
+  let filename = basename(abs);
+  if (ctx.attachments.some(a => a.filename === filename)) {
+    const ext = extname(filename), stem = basename(filename, ext);
+    const suffix = hashOf(relative(baseDir, abs).split('\\').join('/')).slice(0, 12);
+    filename = `${stem}-${suffix}${ext}`;
+    let n = 1;
+    while (ctx.attachments.some(a => a.filename === filename)) filename = `${stem}-${suffix}-${n++}${ext}`;
+  }
+  ctx.attachments.push({ filename, abs });
+  return filename;
+}
+
 md.renderer.rules.link_open = (tokens, idx, opts, _env, self) => {
   const originalHref = tokens[idx].attrGet('href') || '';
   const href = ctx.rewriteHref?.(originalHref) ?? originalHref;
@@ -138,6 +155,17 @@ md.renderer.rules.link_open = (tokens, idx, opts, _env, self) => {
     const anchor = t.anchor ? ` ac:anchor="${escapeXml(t.anchor)}"` : '';
     const page = t.title ? `<ri:page ri:content-title="${escapeXml(t.title)}" />` : '';
     return `<ac:link${anchor}>${page}<ac:link-body>`;
+  }
+  // 일반 로컬 파일 링크도 첨부로 전환한다. 문서·외부 URL·없는 대상은 유지한다.
+  const path = href.split('#')[0];
+  if (path && !/^[a-z][a-z\d+.-]*:|^\/\//i.test(path) && !/\.md$/i.test(decodePath(path))) {
+    const abs = resolve(baseDir, ctx.fileDir, decodePath(path));
+    if (existsSync(abs) && statSync(abs).isFile()) {
+      const filename = addAttachment(abs);
+      ctx.linkStack.push(true);
+      const fragment = href.includes('#') ? ` ac:anchor="${escapeXml(decodePath(href.slice(href.indexOf('#') + 1)))}"` : '';
+      return `<ac:link${fragment}><ri:attachment ri:filename="${escapeXml(filename)}" /><ac:link-body>`;
+    }
   }
   ctx.linkStack.push(false);
   return self.renderToken(tokens, idx, opts);
@@ -161,7 +189,7 @@ md.renderer.rules.image = (tokens, idx) => {
   }
   // markdown-it 이 링크 경로를 퍼센트 인코딩하므로 디코드해서 실제 파일명/경로로 복원(한글·공백 대응)
   const abs = resolve(baseDir, ctx.fileDir, decodePath(src.split('#')[0]));
-  const filename = basename(abs);
+  const filename = addAttachment(abs);
   ctx.images.push({ filename, abs });
   return `<ac:image${widthAttr}><ri:attachment ri:filename="${escapeXml(filename)}" /></ac:image>`;
 };
@@ -179,6 +207,7 @@ export function splitTitleAndBody(markdown: string, fallback: string): { title: 
 export type Rendered = {
   storage: string;
   images: { filename: string; abs: string }[];
+  attachments: { filename: string; abs: string }[];
   internalLinks: number;
   anchorLinks: number;
   /** 이 문서에 심은 Anchor 매크로 수 */
@@ -228,6 +257,7 @@ export function toStorage(
   return {
     storage,
     images: ctx.images,
+    attachments: ctx.attachments,
     internalLinks: ctx.internalLinks,
     anchorLinks: ctx.anchorLinks,
     anchorsPlaced: ctx.anchorsPlaced,
@@ -237,13 +267,13 @@ export function toStorage(
 }
 
 /**
- * 변경 감지용 문서 해시: 제목 + storage + 참조 로컬 이미지의 내용 해시.
- * 이미지 내용을 포함하므로, 같은 파일명으로 이미지만 교체해도 해시가 바뀌어 재동기화 대상이 된다.
- * 이미지가 없으면 hashOf(title + '\0' + storage) 와 동일(이미지 없는 문서는 기존 해시 유지).
+ * 변경 감지용 문서 해시: 제목 + storage + 참조 로컬 첨부의 내용 해시.
+ * 첨부 내용을 포함하므로, 같은 파일명으로 파일만 교체해도 해시가 바뀌어 재동기화 대상이 된다.
+ * 첨부가 없으면 hashOf(title + '\0' + storage) 와 동일(첨부 없는 문서는 기존 해시 유지).
  */
 export function docHash(title: string, r: Rendered): string {
   const parts = [title, r.storage];
-  for (const img of r.images) {
+  for (const img of r.attachments) {
     let digest = 'missing';
     try {
       if (existsSync(img.abs)) digest = createHash('sha256').update(readFileSync(img.abs)).digest('hex');
