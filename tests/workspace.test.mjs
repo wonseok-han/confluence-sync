@@ -26,7 +26,7 @@ const children = (id, pages = [], folders = []) => [
 ];
 const load = (root, path = mapFile) => JSON.parse(readFileSync(join(root, path), 'utf8'));
 function baseline(root, entries) {
- const rels = collectMarkdown(root).map(path => path.slice(root.length + 1));
+ const rels = collectMarkdown(root).map(path => path.slice(root.length + 1).split('\\').join('/'));
  const tree = buildTreeRenderer(root, rels);
  const mapping = {};
  for (const [rel, id] of Object.entries(entries)) {
