@@ -1,3 +1,4 @@
+import {mappingPath} from '../dist/sync/metadata.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, symlinkSync, realpathSync } from 'node:fs';
@@ -37,7 +38,7 @@ test('real CLI dry run respects selection, ignores and hierarchy without changin
   assert.equal(result.state, 'succeeded'); assert.ok(result.planId);
   assert.match(result.log, /guide\/a.md/); assert.doesNotMatch(result.log, /ignored.md/);
   assert.match(result.log, /실제 호출 없음/);
-  assert.equal(existsSync(join(root, '.confluence-sync.json')), false);
+  assert.equal(existsSync(mappingPath(root)), false);
   assert.equal(readFileSync(join(root, 'guide/a.md'), 'utf8'), '# A\n\n[[README]]');
 });
 
@@ -146,7 +147,7 @@ test('web adapter runs real incremental push with all Confluence calls intercept
   await sync.preview(body); const preview = await finished(sync); assert.equal(preview.state, 'succeeded');
   assert.equal(readFileSync(calls, 'utf8'), '');
   await sync.push(preview.planId); assert.equal((await finished(sync)).state, 'succeeded');
-  assert.equal(JSON.parse(readFileSync(join(root, 'vault/.confluence-sync.json'), 'utf8'))['a.md'].pageId, 'page');
+  assert.equal(JSON.parse(readFileSync(mappingPath(join(root,'vault')), 'utf8'))['a.md'].pageId, 'page');
   const sent = readFileSync(calls, 'utf8').trim().split('\n').map(JSON.parse);
   assert.deepEqual(sent.map(call => call.method), ['GET', 'POST']);
   assert.equal(sent[1].body.parentId, '123');

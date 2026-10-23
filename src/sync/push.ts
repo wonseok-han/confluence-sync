@@ -1,4 +1,5 @@
 /** Incremental Confluence push and local preview orchestration. */
+import { mappingPath } from './metadata.js';
 import { positionalArgs } from '../cli/args.js';
 import { existsSync, statSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
@@ -48,7 +49,7 @@ export async function runPush(argv: string[]): Promise<void> {
   const BASE_DIR = resolve(baseInput);
   // mapping 은 base 루트에 둔다(문서셋에 종속). --mapping 으로 위치 override 가능.
   const mappingOpt = optVal('--mapping');
-  const MAPPING_PATH = mappingOpt ? resolve(mappingOpt) : resolve(BASE_DIR, '.confluence-sync.json');
+  const MAPPING_PATH = mappingOpt ? resolve(mappingOpt) : mappingPath(BASE_DIR);
 
   const env = readEnv(BASE_DIR);
   const workspace = loadWorkspace(BASE_DIR);

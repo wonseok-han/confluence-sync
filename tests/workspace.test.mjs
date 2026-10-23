@@ -1,3 +1,4 @@
+import {mappingPath, workspacePath} from '../dist/sync/metadata.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
@@ -24,7 +25,7 @@ const children = (id, pages = [], folders = []) => [
  { path: `/wiki/rest/api/content/${id}/child/folder?limit=100`, body: { results: folders } },
  { path: `/wiki/rest/api/content/${id}/child/page?limit=100`, body: { results: pages } },
 ];
-const load = (root, path = mapFile) => JSON.parse(readFileSync(join(root, path), 'utf8'));
+const load = (root, path = mapFile) => JSON.parse(readFileSync(path === mapFile ? mappingPath(root) : path === configFile ? workspacePath(root) : join(root, path), 'utf8'));
 function baseline(root, entries) {
  const rels = collectMarkdown(root).map(path => path.slice(root.length + 1).split('\\').join('/'));
  const tree = buildTreeRenderer(root, rels);
@@ -127,7 +128,7 @@ test('dry-run verify checks remote versions without changing documents, mapping 
  const { root, put } = workspace(t, { 'doc.md': '# Doc' }); baseline(root, { 'doc.md': '1' });
  const before = readFileSync(join(root, mapFile), 'utf8');
  const result = offline(root, put, ['--base', root, '--dry-run', '--verify'], [space, { path: page('1'), body: { version: { number: 1 } } }]);
- assert.equal(result.status, 0, result.stderr); assert.equal(readFileSync(join(root, mapFile), 'utf8'), before); assert.equal(existsSync(join(root, configFile)), false);
+ assert.equal(result.status, 0, result.stderr); assert.equal(readFileSync(join(root, mapFile), 'utf8'), before); assert.equal(existsSync(workspacePath(root)), false);
 });
 
 test('pull refuses local edits after staging and preserves every existing source and baseline', async t => {
@@ -148,7 +149,7 @@ test('a failed descendant download leaves the entire existing workspace unchange
  configure(t); const { root } = workspace(t, { 'README.md': '# Home' }); baseline(root, { 'README.md': '100' });
  const before = readFileSync(join(root, 'README.md'), 'utf8');
  mockFetch(t, [space, remote('100', 'Home', '<p>New remote</p>', 2), ...children('100', [{ id: '101', title: 'Child' }]), { ...remote('101', 'Child'), status: 403 }]);
- await assert.rejects(runPull(['pull', '--space', '--out', root]), /403/); assert.equal(readFileSync(join(root, 'README.md'), 'utf8'), before); assert.equal(load(root)['README.md'].remoteVersion, 1); assert.equal(existsSync(join(root, configFile)), false);
+ await assert.rejects(runPull(['pull', '--space', '--out', root]), /403/); assert.equal(readFileSync(join(root, 'README.md'), 'utf8'), before); assert.equal(load(root)['README.md'].remoteVersion, 1); assert.equal(existsSync(workspacePath(root)), false);
 });
 
 test('pull filename collisions fail before any staged content is applied', async t => {

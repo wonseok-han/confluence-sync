@@ -1,3 +1,4 @@
+import {mappingPath} from '../dist/sync/metadata.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {join,relative} from 'node:path';
@@ -66,7 +67,7 @@ test('ignore file negation and command exclusions combine',t=>{
 });
 
 test('mapping writes stable data and missing files start empty',t=>{
- const {root}=workspace(t);const path=join(root,'.confluence-sync.json');assert.deepEqual(loadMapping(path),{});
+ const {root}=workspace(t);const path=mappingPath(root);assert.deepEqual(loadMapping(path),{});
  const data={'a.md':{pageId:'12',hash:'abc'},'folder/':{pageId:'13',type:'folder'}};saveMapping(path,data);assert.deepEqual(loadMapping(path),data);assert.ok(readFileSync(path,'utf8').endsWith('\n'));
 });
 

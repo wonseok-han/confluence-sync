@@ -31,11 +31,16 @@ ${h('사용법:')}
 ${h('remap 옵션(로컬 매핑만 갱신, Confluence 호출 없음):')}
   ${o('csync remap --base <dir>')}  pageId로 경로를 재연결하고 이동 대기 기록
   ${o('--from-mapping <path>')}  원본 매핑에서 기존 ID·해시 가져오기(원본 유지)
-  ${o('--mapping <path>')}       저장할 매핑(기본: <base>/.confluence-sync.json)
-  ${o('--exclude <glob>')}       제외 패턴(반복 가능), .confluence-syncignore도 적용
+  ${o('--mapping <path>')}       저장할 매핑(기본: <base>/.csync/mapping.json)
+  ${o('--exclude <glob>')}       제외 패턴(반복 가능), .csync/ignore도 적용
   ${o('--dry-run')}              변경 내역만 출력, 파일 저장 없음
   이후 ${o('csync sync --base <dir> --dry-run')}으로 확인하고, 명시적으로 sync할 때 이동 반영.
   기존 해시가 없으면 sync에서 본문도 갱신합니다. 폴더 ID의 경로 변경은 자동 추론하지 않습니다.
+
+${h('메타데이터 이전(로컬 전용):')}
+  ${o('csync init --migrate --base <dir> --dry-run')}  기존 루트 메타데이터 이전 미리보기
+  ${o('csync init --migrate --base <dir>')}            .csync/ 안으로 이전(.env·문서 유지)
+  기존 이름도 계속 읽습니다. 기존·새 파일의 내용이 다르면 중단합니다.
 
 ${h('관리 범위 설정(로컬 전용):')}
   ${o('csync init --base <dir> --scope <path>')}  저장된 관리 범위 설정(.env 유지)
@@ -51,8 +56,8 @@ ${h('web 옵션:')}
 ${h('동기화 옵션:')}
   ${o('--reference-root <dir>')}  동기화 링크 참조 폴더(반복 가능, 참조 문서는 업로드하지 않음)
   ${o('--base <dir>')}      동기화 루트 (환경변수 또는 현재 위치의 상위 작업공간에서 자동 탐색)
-  ${o('--mapping <path>')}  매핑 파일 위치 (기본: <base>/.confluence-sync.json)
-  ${o('--exclude <glob>')}  동기화 제외 패턴(반복 가능). <base>/.confluence-syncignore(.gitignore 방식)도 사용
+  ${o('--mapping <path>')}  매핑 파일 위치 (기본: <base>/.csync/mapping.json)
+  ${o('--exclude <glob>')}  동기화 제외 패턴(반복 가능). <base>/.csync/ignore(.gitignore 방식)도 사용
   ${o('--dry-run')}         호출 없이 대상·상태(신규/변경/동일)·링크·이미지 출력
   ${o('--list')}            인식된 문서·제목·계층만 출력 (Confluence 호출·인증 없음)
   ${o('--force')}           로컬 해시가 같아도 갱신 (원격 충돌 검사는 유지)
@@ -75,8 +80,8 @@ ${h('pull(역방향) 옵션:')}
   ${o('--children')}          하위 페이지까지 재귀적으로 가져와 폴더 트리로 복원
   ${o('--space')}             홈페이지 하위 트리를 --out 자체에 연결(같은 이름의 바깥 폴더를 만들지 않음)
   ${o('--obsidian')}          내부 링크를 [[wikilink]] 로 출력(기본: 어디서나 열리는 상대 .md 링크)
-  ${o('--base <dir>')}        매핑 키의 기준(기본: --out 에서 위로 올라가며 .confluence-sync.json 을 찾음)
-  ${o('--mapping <path>')}    매핑 파일 위치 (기본: <base>/.confluence-sync.json)
+  ${o('--base <dir>')}        매핑 키의 기준(기본: --out 에서 위로 올라가며 .csync/ 또는 기존 매핑을 찾음)
+  ${o('--mapping <path>')}    매핑 파일 위치 (기본: <base>/.csync/mapping.json)
   ${o('--no-mapping')}        매핑을 기록하지 않음
   (이미지는 항상 attachments/<문서명>/ 하위에 저장됨)
   대상을 생략하면 저장된 관리 범위 또는 연결된 루트를 가져옵니다.

@@ -7,6 +7,8 @@ import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { loadWorkspace, saveWorkspace, scopePath, resolveSyncBase, inNestedWorkspace } from '../sync/workspace.js';
+import { migrateMetadata, mappingPath } from '../sync/metadata.js';
+import { loadMapping } from '../sync/mapping.js';
 import { bold, cyan, dim, green, red, yellow } from '../shared/colors.js';
 
 type Field = {
@@ -71,6 +73,16 @@ function promptSecret(query: string): Promise<string> {
 }
 
 export async function runInit(argv: string[]): Promise<void> {
+  if (argv.includes('--migrate')) {
+    if (argv.includes('--scope')) throw new Error('--migrate와 --scope는 각각 실행하세요.');
+    const index = argv.indexOf('--base');
+    const base = resolveSyncBase(index >= 0 ? argv[index + 1] : undefined) ?? process.cwd();
+    loadMapping(mappingPath(base));
+    loadWorkspace(base);
+    const count = migrateMetadata(base, argv.includes('--dry-run'));
+    console.log(`${argv.includes('--dry-run') ? '이전 미리보기' : '이전 완료'}: ${count}개 메타데이터. 문서·.env 유지, Confluence 호출 없음.`);
+    return;
+  }
   if (argv.includes('--scope')) {
     const baseArg = argv.indexOf('--base');
     const base = resolveSyncBase(baseArg >= 0 ? argv[baseArg + 1] : undefined) ?? process.cwd();

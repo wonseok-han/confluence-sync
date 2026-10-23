@@ -1,11 +1,11 @@
 /** Shared workspace identity and persistent sync boundaries. No network access. */
-import { existsSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, realpathSync, mkdirSync } from 'node:fs';
 import { dirname, join, relative, resolve, isAbsolute } from 'node:path';
 import { parse } from 'dotenv';
-import { MAPPING_FILE } from './mapping.js';
+import { workspacePath, hasMetadata } from './metadata.js';
 import type { Env } from '../confluence/config.js';
 
-export const WORKSPACE_FILE = '.confluence-workspace.json';
+export { WORKSPACE_FILE } from './metadata.js';
 export type Workspace = {
   version: 1;
   syncPaths?: string[];
@@ -19,7 +19,7 @@ export function within(base: string, path: string): boolean {
 }
 export function findSyncBase(from: string): string | undefined {
   for (let dir = resolve(from); ; dir = dirname(dir)) {
-    if (existsSync(join(dir, WORKSPACE_FILE)) || existsSync(join(dir, MAPPING_FILE))) return dir;
+    if (hasMetadata(dir)) return dir;
     if (dirname(dir) === dir) return undefined;
   }
 }
@@ -33,7 +33,7 @@ export function resolveSyncBase(explicit?: string): string | undefined {
   return value ? resolve(value) : undefined;
 }
 export function loadWorkspace(base: string): Workspace {
-  const path = join(base, WORKSPACE_FILE);
+  const path = workspacePath(base);
   if (!existsSync(path)) return { version: 1 };
   const value = JSON.parse(readFileSync(path, 'utf8'));
   if (!value || value.version !== 1 ||
@@ -46,7 +46,9 @@ export function loadWorkspace(base: string): Workspace {
   return value;
 }
 export function saveWorkspace(base: string, value: Workspace): void {
-  writeFileSync(join(base, WORKSPACE_FILE), JSON.stringify(value, null, 2) + '\n');
+  const path = workspacePath(base);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
 }
 export function scopePath(base: string, path: string): string {
   const abs = resolve(base, path);
@@ -72,7 +74,7 @@ export function assertWorkspaceConnection(workspace: Workspace, env: Env): void 
 /** Nested workspaces are independent; never traverse them from an outer sync. */
 export function inNestedWorkspace(base: string, rel: string): boolean {
   for (let dir = dirname(resolve(base, rel)); dir !== base && within(base, dir); dir = dirname(dir)) {
-    if (existsSync(join(dir, WORKSPACE_FILE)) || existsSync(join(dir, MAPPING_FILE))) return true;
+    if (hasMetadata(dir)) return true;
   }
   return false;
 }

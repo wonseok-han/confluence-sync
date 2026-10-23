@@ -5,7 +5,8 @@ import { positionalArgs } from '../cli/args.js';
 import { collectMarkdown, readDoc, buildFolderIndex, parentKeyOf } from '../documents/catalog.js';
 import { buildIgnorer } from './ignore.js';
 import { resolveSyncBase, loadWorkspace, inScope, inNestedWorkspace } from './workspace.js';
-import { MAPPING_FILE, saveMapping, type Mapping } from './mapping.js';
+import { mappingPath } from './metadata.js';
+import { saveMapping, type Mapping } from './mapping.js';
 
 function readMapping(path: string): Mapping {
   if (!existsSync(path)) return {};
@@ -39,7 +40,7 @@ export async function runRemap(argv: string[]): Promise<void> {
   if (!baseInput) throw new Error('remap: --base <dir> 또는 CONFLUENCE_SYNC_BASE가 필요합니다.');
   const base = resolve(baseInput);
   const workspace = loadWorkspace(base);
-  const output = resolve(opts['--mapping']?.[0] ?? resolve(base, MAPPING_FILE));
+  const output = resolve(opts['--mapping']?.[0] ?? mappingPath(base));
   const source = opts['--from-mapping']?.[0];
   if (source && !existsSync(resolve(source))) throw new Error(`원본 매핑이 없습니다: ${source}`);
   const mapping = readMapping(output);

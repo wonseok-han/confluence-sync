@@ -1,3 +1,4 @@
+import {mappingPath} from '../dist/sync/metadata.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync, existsSync} from 'node:fs';
@@ -8,7 +9,7 @@ import {runRemap} from '../dist/sync/remap.js';
 import {runPush} from '../dist/sync/push.js';
 import {workspace,mockFetch,configure} from './helpers/fixtures.mjs';
 const fm = (id, title='A') => `---\npageId: ${id}\ntitle: ${title}\n---\n\nBody\n`;
-const load = root => JSON.parse(readFileSync(join(root,'.confluence-sync.json'),'utf8'));
+const load = root => JSON.parse(readFileSync(mappingPath(root),'utf8'));
 
 test('remap is offline, preserves hash, removes old key, and is repeatable',async t=>{
  mockFetch(t,[]);
@@ -23,14 +24,14 @@ test('separate source mapping stays untouched, dry-run writes nothing, repeat im
  mockFetch(t,[]);const source=workspace(t,{'.confluence-sync.json':JSON.stringify({'old.md':{pageId:'1',hash:'kept'}})});
  const {root}=workspace(t,{'new.md':fm('1')});const from=join(source.root,'.confluence-sync.json');const before=readFileSync(from,'utf8');
  const args=['remap','--base',root,'--from-mapping',from];
- await runRemap([...args,'--dry-run']);assert.equal(existsSync(join(root,'.confluence-sync.json')),false);
+ await runRemap([...args,'--dry-run']);assert.equal(existsSync(mappingPath(root)),false);
  await runRemap(args);await runRemap(args);assert.equal(load(root)['new.md'].hash,'kept');assert.equal(readFileSync(from,'utf8'),before);
 });
 
 for (const kind of ['duplicate','conflict','invalid']) test(`remap rejects ${kind} without replacing mapping`,async t=>{
  mockFetch(t,[]);const original=kind==='invalid'?'broken':JSON.stringify({'a.md':{pageId:'1',hash:'keep'}});
  const {root}=workspace(t,{'.confluence-sync.json':original,'a.md':fm(kind==='conflict'?'2':'1'),...(kind==='duplicate'?{'b.md':fm('1')}:{})});
- await assert.rejects(runRemap(['remap','--base',root]));assert.equal(readFileSync(join(root,'.confluence-sync.json'),'utf8'),original);
+ await assert.rejects(runRemap(['remap','--base',root]));assert.equal(readFileSync(mappingPath(root),'utf8'),original);
 });
 
 test('remap honors ignore and README parent identity',async t=>{
@@ -41,12 +42,12 @@ test('remap honors ignore and README parent identity',async t=>{
 test('CLI remap needs no credentials and dry-run creates no mapping',t=>{
  const {root}=workspace(t,{'a.md':fm('1')});const env={...process.env};for(const key of Object.keys(env))if(key.startsWith('CONFLUENCE_'))delete env[key];
  const result=spawnSync(process.execPath,[fileURLToPath(new URL('../dist/sync.js',import.meta.url)),'remap','--base',root,'--dry-run'],{cwd:root,env,encoding:'utf8'});
- assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/Confluence 호출 없음/);assert.equal(existsSync(join(root,'.confluence-sync.json')),false);
+ assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/Confluence 호출 없음/);assert.equal(existsSync(mappingPath(root)),false);
 });
 
 test('sync dry-run displays pending move without calls or writes',async t=>{
  mockFetch(t,[]);const {root}=workspace(t,{'a.md':fm('1'),'.confluence-sync.json':JSON.stringify({'a.md':{pageId:'1',hash:'old',pendingMove:{parentKey:null}}})});
- const before=readFileSync(join(root,'.confluence-sync.json'),'utf8');await runPush(['--base',root,'--dry-run']);assert.equal(readFileSync(join(root,'.confluence-sync.json'),'utf8'),before);
+ const before=readFileSync(mappingPath(root),'utf8');await runPush(['--base',root,'--dry-run']);assert.equal(readFileSync(mappingPath(root),'utf8'),before);
 });
 
 test('push creates destination folder then moves existing page without uploading unchanged body or attachments',async t=>{
@@ -62,7 +63,7 @@ test('push creates destination folder then moves existing page without uploading
 
 test('duplicate source mapping IDs cannot be hidden by import merging',async t=>{
  mockFetch(t,[]);const {root,put}=workspace(t,{'new.md':fm('1')});const source=put('source.json',JSON.stringify({'a.md':{pageId:'1'},'b.md':{pageId:'1'}}));
- await assert.rejects(runRemap(['remap','--base',root,'--from-mapping',source]),/중복/);assert.equal(existsSync(join(root,'.confluence-sync.json')),false);
+ await assert.rejects(runRemap(['remap','--base',root,'--from-mapping',source]),/중복/);assert.equal(existsSync(mappingPath(root)),false);
 });
 
 test('tree changes after remap require a fresh plan before any sync call',async t=>{

@@ -23,7 +23,8 @@ import { buildTreeRenderer } from './render.js';
 import { docHash } from '../documents/markdown.js';
 import { rewriteTableLinks } from '../documents/tables.js';
 import { buildIgnorer } from './ignore.js';
-import { loadMapping, saveMapping, MAPPING_FILE } from './mapping.js';
+import { mappingPath as defaultMappingPath, metadataFiles } from './metadata.js';
+import { loadMapping, saveMapping } from './mapping.js';
 import { cyan, dim, green } from '../shared/colors.js';
 
 type Client = ReturnType<typeof createClient>;
@@ -387,7 +388,7 @@ export async function runPull(argv: string[]): Promise<void> {
   const outDir = resolve(optVal(argv, '--out') ?? resolveSyncBase(explicitBase) ?? process.cwd());
   const baseDir = resolve(explicitBase ?? findSyncBase(outDir) ?? outDir);
   if (!within(baseDir, outDir)) throw new Error(`--out 이 base 밖입니다: ${outDir}`);
-  const mappingPath = resolve(optVal(argv, '--mapping') ?? join(baseDir, MAPPING_FILE));
+  const mappingPath = resolve(optVal(argv, '--mapping') ?? defaultMappingPath(baseDir));
   const workspace = loadWorkspace(baseDir);
   const oldMapping = loadMapping(mappingPath);
   const env = readEnv(baseDir);
@@ -437,7 +438,7 @@ export async function runPull(argv: string[]): Promise<void> {
     }
   };
   remember(baseDir);
-  for (const path of [mappingPath, join(baseDir, '.env'), join(baseDir, '.confluence-workspace.json'), join(baseDir, '.confluence-syncignore')]) originals.set(path, stamp(path));
+  for (const path of [mappingPath, join(baseDir, '.env'), ...metadataFiles(baseDir)]) originals.set(path, stamp(path));
   const ignore = buildIgnorer(baseDir, []);
   const rels = (existsSync(baseDir) ? collectMarkdown(baseDir) : []).map(file => relative(baseDir, file).split('\\').join('/')).filter(rel => !inNestedWorkspace(baseDir, rel) && !ignore.ignores(rel));
   const tree = existsSync(baseDir) ? buildTreeRenderer(baseDir, rels) : undefined;
@@ -503,7 +504,7 @@ export async function runPull(argv: string[]): Promise<void> {
         if (!ownerRel || !oldMapping[ownerRel]?.hash || oldMapping[ownerRel].hash !== localHashes.get(ownerRel)) throw new Error(`첨부 파일 충돌: ${rel}. 별도 --out으로 받아 비교하세요.`);
       }
     }
-    for (const path of [mappingPath, join(baseDir, '.env'), join(baseDir, '.confluence-workspace.json'), join(baseDir, '.confluence-syncignore')]) if (stamp(path) !== originals.get(path)) throw new Error('pull 도중 설정·매핑이 변경되었습니다.');
+    for (const path of [mappingPath, join(baseDir, '.env'), ...metadataFiles(baseDir)]) if (stamp(path) !== originals.get(path)) throw new Error('pull 도중 설정·매핑이 변경되었습니다.');
     mkdirSync(baseDir, { recursive: true });
     for (const dir of stagedDirs) mkdirSync(join(baseDir, relative(stage, dir)), { recursive: true });
     for (const file of stagedFiles) {

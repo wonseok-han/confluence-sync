@@ -1,4 +1,5 @@
 import { loadWorkspace, inScope, inNestedWorkspace, type Workspace } from '../sync/workspace.js';
+import { mappingPath as defaultMappingPath, METADATA_DIR } from '../sync/metadata.js';
 import { referenceRoots } from '../sync/references.js';
 /** Web adapter for the existing push CLI. Only preview and incremental push are exposed. */
 import { spawn } from 'node:child_process';
@@ -44,13 +45,13 @@ async function fingerprint(base: string, env: Settings) {
   const walk = async (dir: string) => {
     const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
-      if (entry.name === 'node_modules' || (entry.name.startsWith('.') && !['.confluence-sync.json', '.confluence-syncignore', '.confluence-workspace.json'].includes(entry.name))) continue;
+      if (entry.name === 'node_modules' || (entry.name.startsWith('.') && ![METADATA_DIR, '.confluence-sync.json', '.confluence-syncignore', '.confluence-workspace.json'].includes(entry.name))) continue;
       const path = join(dir, entry.name);
       if (entry.isDirectory()) await walk(path);
       else if (entry.isFile()) {
         const info = await stat(path);
         hash.update(JSON.stringify([relative(base, path), info.size, info.mtimeMs, info.ctimeMs]));
-        if (/\.md$/i.test(path) || entry.name.startsWith('.')) hash.update(await readFile(path));
+        if (/\.md$/i.test(path) || entry.name.startsWith('.') || relative(base, path).split(/[\\/]/).includes(METADATA_DIR)) hash.update(await readFile(path));
       }
     }
   };
@@ -73,16 +74,16 @@ async function prepare(input: unknown): Promise<Prepared> {
   const requested = target === base ? docs : resolveSelection(docs, [target], base);
   if (target !== base && requested.some(rel => !inScope(rel, workspace))) throw new Error('선택한 대상이 저장된 관리 범위 밖입니다.');
   const picked = requested.filter(rel => inScope(rel, workspace) && !inNestedWorkspace(base, rel));
-  if (!picked.length) throw new Error('동기화할 Markdown 문서가 없습니다. 선택 범위와 .confluence-syncignore를 확인해 주세요.');
+  if (!picked.length) throw new Error('동기화할 Markdown 문서가 없습니다. 선택 범위와 .csync/ignore(또는 기존 제외 파일)를 확인해 주세요.');
   // A damaged mapping must not silently turn a whole document set into new pages.
-  const mappingPath = join(base, '.confluence-sync.json');
+  const mappingPath = defaultMappingPath(base);
   try {
     if (!(await lstat(mappingPath)).isFile()) throw new Error('invalid mapping');
     const mapping = JSON.parse(await readFile(mappingPath, 'utf8'));
     if (!mapping || Array.isArray(mapping) || typeof mapping !== 'object'
       || Object.values(mapping).some(value => !value || typeof value !== 'object' || typeof (value as { pageId?: unknown }).pageId !== 'string')) throw new Error('invalid mapping');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('.confluence-sync.json 매핑 파일이 올바르지 않습니다. 기존 매핑을 확인해 주세요.');
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('페이지 매핑 파일이 올바르지 않습니다. .csync/mapping.json 또는 기존 매핑을 확인해 주세요.');
   }
   const { env, source } = await settings(base, body.envFile);
   const selection = { base, target: target === base ? '' : target, envFile: body.envFile, verify: body.verify, referenceRoots: refs };
