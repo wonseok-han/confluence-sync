@@ -45,5 +45,5 @@ test('pull children creates parent README and local child links; no-mapping is r
 test('whole-space pull starts from homepage and recursively materializes folder nodes',async t=>{
  const {root}=workspace(t);configure(t);
  mockFetch(t,[{path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space',homepageId:'home'}]}},{path:'/wiki/rest/api/content/home?expand=body.export_view,body.storage,version',body:{id:'home',type:'folder',title:'Root'}},{path:'/wiki/rest/api/content/home/child/folder?limit=100',body:{results:[]}},{path:'/wiki/rest/api/content/home/child/page?limit=100',body:{results:[{id:'2',title:'Child'}]}},{path:'/wiki/rest/api/content/2?expand=body.export_view,body.storage,version',body:{id:'2',type:'page',title:'Child',body:{export_view:{value:'<p>Body</p>'}}}},{path:'/wiki/rest/api/content/2/child/folder?limit=100',body:{results:[]}},{path:'/wiki/rest/api/content/2/child/page?limit=100',body:{results:[]}}]);
- await runPull(['pull','--space','--out',root]);assert.ok(existsSync(join(root,'Root/Child.md')));assert.equal(loadMapping(join(root,'.confluence-sync.json'))['Root/'].type,'folder');
+ await runPull(['pull','--space','--out',root]);assert.ok(existsSync(join(root,'Child.md')));assert.equal(existsSync(join(root,'Root')),false);assert.equal(JSON.parse(readFileSync(join(root,'.confluence-workspace.json'),'utf8')).root.id,'home');
 });

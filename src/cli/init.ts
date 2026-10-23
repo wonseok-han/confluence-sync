@@ -6,6 +6,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
+import { loadWorkspace, saveWorkspace, scopePath, resolveSyncBase, inNestedWorkspace } from '../sync/workspace.js';
 import { bold, cyan, dim, green, red, yellow } from '../shared/colors.js';
 
 type Field = {
@@ -70,6 +71,22 @@ function promptSecret(query: string): Promise<string> {
 }
 
 export async function runInit(argv: string[]): Promise<void> {
+  if (argv.includes('--scope')) {
+    const baseArg = argv.indexOf('--base');
+    const base = resolveSyncBase(baseArg >= 0 ? argv[baseArg + 1] : undefined) ?? process.cwd();
+    const paths: string[] = [];
+    for (let i = 0; i < argv.length; i++) if (argv[i] === '--scope') {
+      const value = argv[++i];
+      if (!value || value.startsWith('--')) throw new Error('--scope <상대 경로>가 필요합니다.');
+      paths.push(scopePath(base, value));
+    }
+    for (const path of paths) if (inNestedWorkspace(base, /\.md$/i.test(path) ? path : `${path}/.boundary`)) throw new Error(`독립된 하위 작업공간입니다: ${path}. 해당 폴더를 --base로 사용하세요. 중첩 매핑은 자동 병합하지 않습니다.`);
+    const workspace = loadWorkspace(base);
+    workspace.syncPaths = [...new Set(paths)];
+    saveWorkspace(base, workspace);
+    console.log(`관리 범위 저장: ${base} → ${workspace.syncPaths.join(', ')}. Confluence 호출 없음.`);
+    return;
+  }
   const target = resolve(process.cwd(), '.env');
   const force = argv.includes('--force');
 

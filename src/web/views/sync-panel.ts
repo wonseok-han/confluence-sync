@@ -13,8 +13,8 @@ export const syncPanel = `
       <p class="hint">설정 경로를 비우면 기준 폴더의 .env를 사용합니다. 없으면 웹 서버 실행 환경을 사용합니다.</p>
       <dl id="sync-config" class="sync-config"><dt>연결 설정</dt><dd>설정 확인을 누르면 업로드 위치를 볼 수 있습니다.</dd></dl>
       <p id="sync-config-status" class="hint" role="status"></p>
-      <label class="repair-option"><input id="sync-verify" type="checkbox">변경 없는 문서도 Confluence 페이지 존재 확인</label>
-      <p class="hint">.confluence-syncignore와 기존 페이지 매핑을 적용합니다. 미리보기는 로컬 변경 비교이며 서버 연결·권한은 검사하지 않습니다.</p>
+      <label class="repair-option"><input id="sync-verify" type="checkbox">미리보기에서 원격 버전·페이지 존재 확인</label>
+      <p class="hint">저장된 관리 범위와 제외 규칙을 적용합니다. 원격 확인을 선택하면 미리보기에서도 Confluence를 조회하며, 파일이나 원격 내용을 변경하지 않습니다.</p>
     </div>
     <div class="action-bar"><span class="save-note">먼저 대상을 확인한 뒤 업로드하세요.</span><div class="actions"><button id="sync-preview" disabled>동기화 미리보기</button><button id="sync-push" class="primary" disabled>Confluence에 동기화</button></div></div>
     <div class="feedback"><p id="sync-status" class="status" role="status" aria-live="polite">문서를 선택하고 동기화 미리보기를 실행하세요.</p><button id="sync-reconnect" hidden>진행 상태 다시 확인</button></div>

@@ -13,22 +13,22 @@ test('unchanged page skips without any network access',async t=>{
 test('new page sends storage and parent, then records the returned id',async t=>{
  mockFetch(t,[{path:page,method:'POST',body:{id:'new'},check:r=>{
   const b=JSON.parse(r.body);assert.equal(b.parentId,'parent');assert.equal(b.spaceId,'space');assert.deepEqual(b.body,{representation:'storage',value:'<p>A</p>'});assert.match(r.headers.Authorization,/^Basic /);
- }}]);const m={};assert.equal(await client().upsertPage(m,'space','a.md','A','<p>A</p>','hash','parent'),'created');assert.deepEqual(m['a.md'],{pageId:'new',title:'A',hash:'hash'});
+ }}]);const m={};assert.equal(await client().upsertPage(m,'space','a.md','A','<p>A</p>','hash','parent'),'created');assert.deepEqual(m['a.md'],{pageId:'new',title:'A',hash:'hash',remoteVersion:1});
 });
 
 test('changed page increments server version and preserves mapping until update succeeds',async t=>{
  mockFetch(t,[{path:page+'/1',body:{version:{number:7}}},{path:page+'/1',method:'PUT',check:r=>assert.equal(JSON.parse(r.body).version.number,8)}]);
- const m={'a.md':{pageId:'1',hash:'old'}};assert.equal(await client().upsertPage(m,'space','a.md','A','new','new'),'updated');assert.equal(m['a.md'].hash,'new');
+ const m={'a.md':{pageId:'1',hash:'old',remoteVersion:7}};assert.equal(await client().upsertPage(m,'space','a.md','A','new','new'),'updated');assert.equal(m['a.md'].hash,'new');
 });
 
 test('failed update leaves prior mapping untouched',async t=>{
- mockFetch(t,[{path:page+'/1',body:{version:{number:2}}},{path:page+'/1',method:'PUT',status:409,body:{message:'conflict'}}]);const m={'a.md':{pageId:'1',hash:'old'}};
+ mockFetch(t,[{path:page+'/1',body:{version:{number:2}}},{path:page+'/1',method:'PUT',status:409,body:{message:'conflict'}}]);const m={'a.md':{pageId:'1',hash:'old',remoteVersion:2}};
  await assert.rejects(client().upsertPage(m,'space','a.md','A','new','new'),/409/);assert.equal(m['a.md'].hash,'old');
 });
 
-test('verify checks unchanged pages and recreates a deleted page',async t=>{
- mockFetch(t,[{path:page+'/1',status:404},{path:page,method:'POST',body:{id:'2'}}]);const m={'a.md':{pageId:'1',hash:'same'}};
- assert.equal(await client({verify:true}).upsertPage(m,'space','a.md','A','body','same'),'recreated');assert.equal(m['a.md'].pageId,'2');
+test('verify refuses a deleted mapped page without recreating it',async t=>{
+ mockFetch(t,[{path:page+'/1',status:404}]);const m={'a.md':{pageId:'1',hash:'same',remoteVersion:1}};
+ await assert.rejects(client({verify:true}).upsertPage(m,'space','a.md','A','body','same'),/자동 재생성하지/);assert.equal(m['a.md'].pageId,'1');
 });
 
 test('verify retains existing unchanged page without PUT',async t=>{
@@ -37,7 +37,7 @@ test('verify retains existing unchanged page without PUT',async t=>{
 
 for(const opts of [{force:true},{force:false}])test(`forced update overrides identical hashes (${opts.force?'global':'per-call'})`,async t=>{
  mockFetch(t,[{path:page+'/1',body:{version:{number:1}}},{path:page+'/1',method:'PUT'}]);
- assert.equal(await client(opts).upsertPage({'a.md':{pageId:'1',hash:'same'}},'space','a.md','A','body','same',undefined,!opts.force),'updated');
+ assert.equal(await client(opts).upsertPage({'a.md':{pageId:'1',hash:'same',remoteVersion:1}},'space','a.md','A','body','same',undefined,!opts.force),'updated');
 });
 
 test('authorization errors must not be interpreted as deleted pages',async t=>{
@@ -93,26 +93,26 @@ test('failed binary download is reported as an error',async t=>{
  mockFetch(t,[{path:'/wiki/download/missing',status:404}]);await assert.rejects(client().downloadAttachment('/download/missing'),/download 404/);
 });
 
-const pending = () => ({'a.md':{pageId:'1',hash:'same',pendingMove:{parentKey:'dest/'}}});
+const pending = () => ({'a.md':{pageId:'1',hash:'same',remoteVersion:1,pendingMove:{parentKey:'dest/'}}});
 test('move-only sync verifies destination without a content update',async t=>{
- mockFetch(t,[{path:page+'/1',body:{id:'1',spaceId:'space',parentId:'old'}},{path:'/wiki/rest/api/content/1/move/append/dest',method:'PUT'},{path:page+'/1',body:{id:'1',spaceId:'space',parentId:'dest'}}]);
+ mockFetch(t,[{path:page+'/1?body-format=storage',body:{body:{storage:{value:'body'}},id:'1',spaceId:'space',parentId:'old',version:{number:1}}},{path:'/wiki/rest/api/content/1/move/append/dest',method:'PUT'},{path:page+'/1?body-format=storage',body:{body:{storage:{value:'body'}},id:'1',spaceId:'space',parentId:'dest',version:{number:2}}}]);
  const m=pending();assert.equal(await client().upsertPage(m,'space','a.md','A','body','same','dest'),'moved');assert.equal(m['a.md'].pendingMove,undefined);
 });
 test('already moved page clears pending plan without mutation',async t=>{
- mockFetch(t,[{path:page+'/1',body:{spaceId:'space',parentId:'dest'}}]);const m=pending();assert.equal(await client().upsertPage(m,'space','a.md','A','body','same','dest'),'skipped');assert.equal(m['a.md'].pendingMove,undefined);
+ mockFetch(t,[{path:page+'/1?body-format=storage',body:{body:{storage:{value:'body'}},spaceId:'space',parentId:'dest',version:{number:1}}}]);const m=pending();assert.equal(await client().upsertPage(m,'space','a.md','A','body','same','dest'),'skipped');assert.equal(m['a.md'].pendingMove,undefined);
 });
 test('move and content change uses fresh version after move',async t=>{
- mockFetch(t,[{path:page+'/1',body:{spaceId:'space',parentId:'old',version:{number:1}}},{path:'/wiki/rest/api/content/1/move/append/dest',method:'PUT'},{path:page+'/1',body:{spaceId:'space',parentId:'dest',version:{number:2}}},{path:page+'/1',method:'PUT',check:r=>assert.equal(JSON.parse(r.body).version.number,3)}]);
+ mockFetch(t,[{path:page+'/1?body-format=storage',body:{body:{storage:{value:'body'}},spaceId:'space',parentId:'old',version:{number:1}}},{path:'/wiki/rest/api/content/1/move/append/dest',method:'PUT'},{path:page+'/1?body-format=storage',body:{body:{storage:{value:'body'}},spaceId:'space',parentId:'dest',version:{number:2}}},{path:page+'/1',method:'PUT',check:r=>assert.equal(JSON.parse(r.body).version.number,3)}]);
  const m=pending();assert.equal(await client().upsertPage(m,'space','a.md','A','body','new','dest'),'updated');assert.equal(m['a.md'].hash,'new');assert.equal(m['a.md'].pendingMove,undefined);
 });
 for(const status of [403,404])test(`missing or inaccessible remapped page ${status} never creates a replacement`,async t=>{
- mockFetch(t,[{path:page+'/1',status}]);const m=pending();await assert.rejects(client().upsertPage(m,'space','a.md','A','body','same','dest'));assert.ok(m['a.md'].pendingMove);
+ mockFetch(t,[{path:page+'/1?body-format=storage',status}]);const m=pending();await assert.rejects(client().upsertPage(m,'space','a.md','A','body','same','dest'));assert.ok(m['a.md'].pendingMove);
 });
 test('failed move retains plan and original hash',async t=>{
- mockFetch(t,[{path:page+'/1',body:{spaceId:'space',parentId:'old'}},{path:'/wiki/rest/api/content/1/move/append/dest',method:'PUT',status:400}]);const m=pending();await assert.rejects(client().upsertPage(m,'space','a.md','A','body','new','dest'));assert.ok(m['a.md'].pendingMove);assert.equal(m['a.md'].hash,'same');
+ mockFetch(t,[{path:page+'/1?body-format=storage',body:{body:{storage:{value:'body'}},spaceId:'space',parentId:'old',version:{number:1}}},{path:'/wiki/rest/api/content/1/move/append/dest',method:'PUT',status:400}]);const m=pending();await assert.rejects(client().upsertPage(m,'space','a.md','A','body','new','dest'));assert.ok(m['a.md'].pendingMove);assert.equal(m['a.md'].hash,'same');
 });
 test('top-level move uses a verified top-level homepage sibling',async t=>{
- mockFetch(t,[{path:page+'/1',body:{spaceId:'space',parentId:'old'}},{path:'/wiki/api/v2/spaces/space',body:{homepageId:'home'}},{path:page+'/home',body:{spaceId:'space'}},{path:'/wiki/rest/api/content/1/move/after/home',method:'PUT'},{path:page+'/1',body:{spaceId:'space'}}]);const m=pending();assert.equal(await client().upsertPage(m,'space','a.md','A','body','same'),'moved');
+ mockFetch(t,[{path:page+'/1?body-format=storage',body:{body:{storage:{value:'body'}},spaceId:'space',parentId:'old',version:{number:1}}},{path:'/wiki/api/v2/spaces/space',body:{homepageId:'home'}},{path:page+'/home',body:{body:{storage:{value:'body'}},spaceId:'space'}},{path:'/wiki/rest/api/content/1/move/after/home',method:'PUT'},{path:page+'/1?body-format=storage',body:{body:{storage:{value:'body'}},spaceId:'space'}}]);const m=pending();assert.equal(await client().upsertPage(m,'space','a.md','A','body','same'),'moved');
 });
 
 const folderSearch = title => '/wiki/rest/api/content/search?cql='+encodeURIComponent(`type = folder AND space = "TEST" AND title = ${JSON.stringify(title)}`)+'&limit=100';
@@ -168,9 +168,9 @@ test('mapped folder is verified and reused without search or creation',async t=>
  mockFetch(t,[{path:'/wiki/rest/api/content/f?expand=ancestors,space',body:folderMetadata}]);
  assert.deepEqual(await client().upsertFolder('space','TEST','F','parent','f'),{id:'f',created:false});
 });
-test('missing mapped folder falls back to lookup',async t=>{
- mockFetch(t,[{path:'/wiki/rest/api/content/old?expand=ancestors,space',status:404},...foundFolderSteps()]);
- assert.deepEqual(await client().upsertFolder('space','TEST','F','parent','old'),{id:'f',created:false});
+test('missing mapped folder is not recreated',async t=>{
+ mockFetch(t,[{path:'/wiki/rest/api/content/old?expand=ancestors,space',status:404}]);
+ await assert.rejects(client().upsertFolder('space','TEST','F','parent','old'),/자동 재생성하지/);
 });
 test('mapped folder in wrong location is never silently reused or moved',async t=>{
  mockFetch(t,[{path:'/wiki/rest/api/content/f?expand=ancestors,space',body:{...folderMetadata,ancestors:[{id:'other'}]}}]);
@@ -205,4 +205,32 @@ for(const status of [401,403,500])test(`attachment lookup failure ${status} does
  const {root,put}=workspace(t);const abs=put('report.pdf','bytes');const errors=[];t.mock.method(console,'error',s=>errors.push(s));
  mockFetch(t,[{path:'/wiki/rest/api/content/1/child/attachment?filename=report.pdf',status}]);
  assert.equal(await client().uploadAttachments('1',[{filename:'report.pdf',abs}],root),0);assert.match(errors.join('\n'),new RegExp(String(status)));
+});
+
+for (const opts of [{}, {force:true}, {verify:true}]) test(`remote edits reject writes even with force/verify ${JSON.stringify(opts)}`,async t=>{
+ const m={'a.md':{pageId:'1',hash:'old',remoteVersion:3}};
+ mockFetch(t,[{path:page+'/1',body:{id:'1',spaceId:'space',version:{number:4}}}]);
+ await assert.rejects(client(opts).upsertPage(m,'space','a.md','A','local','changed'),/원격 변경 충돌/);
+ assert.deepEqual(m['a.md'],{pageId:'1',hash:'old',remoteVersion:3});
+});
+test('legacy mappings without remote versions cannot overwrite existing pages',async t=>{
+ mockFetch(t,[{path:page+'/1',body:{version:{number:5}}}]);
+ await assert.rejects(client().upsertPage({'a.md':{pageId:'1',hash:'old'}},'space','a.md','A','local','new'),/버전 기준이 없습니다/);
+});
+test('verify detects remote-only changes while preserving the baseline',async t=>{
+ const m={'a.md':{pageId:'1',hash:'same',remoteVersion:1}};
+ mockFetch(t,[{path:page+'/1',body:{version:{number:2}}}]);
+ await assert.rejects(client({verify:true}).upsertPage(m,'space','a.md','A','body','same'),/원격 변경 충돌/);
+ assert.equal(m['a.md'].remoteVersion,1);
+});
+
+test('a concurrent remote edit during a move is never adopted as a baseline or overwritten',async t=>{
+ const m=pending();
+ mockFetch(t,[
+  {path:page+'/1?body-format=storage',body:{spaceId:'space',parentId:'old',version:{number:1},title:'A',body:{storage:{value:'before'}}}},
+  {path:'/wiki/rest/api/content/1/move/append/dest',method:'PUT'},
+  {path:page+'/1?body-format=storage',body:{spaceId:'space',parentId:'dest',version:{number:3},title:'A',body:{storage:{value:'concurrent edit'}}}},
+ ]);
+ await assert.rejects(client().upsertPage(m,'space','a.md','A','local','new','dest'),/이동 도중 원격/);
+ assert.equal(m['a.md'].remoteVersion,1);assert.equal(m['a.md'].hash,'same');assert.ok(m['a.md'].pendingMove);
 });

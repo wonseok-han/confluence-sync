@@ -164,3 +164,13 @@ test('reference folders pass to CLI and reference mapping changes invalidate pre
   await assert.rejects(sync.push(planId), /변경/); assert.equal(calls.length,1);
   await assert.rejects(sync.preview({...input,referenceRoots:'invalid'}), /참조/);
 });
+
+test('workspace scope changes invalidate web preview and the same CLI verify option is used for preview', async t => {
+ const {root,put}=workspace(t,{'.env':env,'a.md':'# A','b.md':'# B'});
+ const calls=[];const sync=createWebSync(async args=>{calls.push(args);return 0;});
+ await sync.preview({...request(root),verify:true});const preview=await finished(sync);
+ assert.ok(calls[0].includes('--verify'));assert.ok(calls[0].includes('--dry-run'));
+ put('.confluence-workspace.json',JSON.stringify({version:1,syncPaths:['a.md']}));
+ await assert.rejects(sync.push(preview.planId),/변경/);
+ await assert.rejects(sync.preview({...request(root),target:join(root,'b.md')}),/관리 범위/);
+});

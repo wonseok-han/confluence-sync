@@ -1,3 +1,4 @@
+import { loadWorkspace, inScope, inNestedWorkspace, type Workspace } from '../sync/workspace.js';
 import { referenceRoots } from '../sync/references.js';
 /** Web adapter for the existing push CLI. Only preview and incremental push are exposed. */
 import { spawn } from 'node:child_process';
@@ -30,9 +31,10 @@ async function settings(base: string, envFile: string) {
   env.CONFLUENCE_PARENT_ID ||= env.CONFLUENCE_PARENT_PAGE_ID;
   return { env, source };
 }
-function publicConfig(env: Settings, source: string) {
+function publicConfig(env: Settings, source: string, workspace?: Workspace) {
   return { source, baseUrl: env.CONFLUENCE_BASE_URL, email: env.CONFLUENCE_EMAIL,
-    spaceKey: env.CONFLUENCE_SPACE_KEY, parentId: env.CONFLUENCE_PARENT_ID,
+    spaceKey: env.CONFLUENCE_SPACE_KEY, parentId: workspace?.root?.id ?? env.CONFLUENCE_PARENT_ID,
+    syncPaths: workspace?.syncPaths ?? ['.'],
     hasToken: !!env.CONFLUENCE_API_TOKEN,
     missing: keys.slice(0, 4).filter(key => !env[key]) };
 }
@@ -42,7 +44,7 @@ async function fingerprint(base: string, env: Settings) {
   const walk = async (dir: string) => {
     const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
-      if (entry.name === 'node_modules' || (entry.name.startsWith('.') && !['.confluence-sync.json', '.confluence-syncignore'].includes(entry.name))) continue;
+      if (entry.name === 'node_modules' || (entry.name.startsWith('.') && !['.confluence-sync.json', '.confluence-syncignore', '.confluence-workspace.json'].includes(entry.name))) continue;
       const path = join(dir, entry.name);
       if (entry.isDirectory()) await walk(path);
       else if (entry.isFile()) {
@@ -67,7 +69,10 @@ async function prepare(input: unknown): Promise<Prepared> {
   if (!within(base, target)) throw new Error('동기화 대상은 기준 폴더 안에 있어야 합니다.');
   const ignorer = buildIgnorer(base, []);
   const docs = collectMarkdown(base).map(path => relative(base, path).split('\\').join('/')).filter(path => !ignorer.ignores(path));
-  const picked = target === base ? docs : resolveSelection(docs, [target], base);
+  const workspace = loadWorkspace(base);
+  const requested = target === base ? docs : resolveSelection(docs, [target], base);
+  if (target !== base && requested.some(rel => !inScope(rel, workspace))) throw new Error('선택한 대상이 저장된 관리 범위 밖입니다.');
+  const picked = requested.filter(rel => inScope(rel, workspace) && !inNestedWorkspace(base, rel));
   if (!picked.length) throw new Error('동기화할 Markdown 문서가 없습니다. 선택 범위와 .confluence-syncignore를 확인해 주세요.');
   // A damaged mapping must not silently turn a whole document set into new pages.
   const mappingPath = join(base, '.confluence-sync.json');
@@ -87,7 +92,7 @@ async function prepare(input: unknown): Promise<Prepared> {
     });
     return [root, await fingerprint(root, env), createHash('sha256').update(config).digest('hex')];
   }));
-  return { selection, env, config: publicConfig(env, source), fingerprint: JSON.stringify(snapshots) };
+  return { selection, env, config: publicConfig(env, source, workspace), fingerprint: JSON.stringify(snapshots) };
 }
 
 export const runSyncCLI: SyncRunner = (args, settings, log) => new Promise((resolveJob, reject) => {
@@ -124,7 +129,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
     for (const root of prepared.selection.referenceRoots) args.push('--reference-root', root);
     if (target) args.push(target);
     if (kind === 'preview') args.push('--dry-run');
-    else if (verify) args.push('--verify');
+    if (verify) args.push('--verify');
     let reportedFailure = false;
     const secrets = [prepared.env.CONFLUENCE_API_TOKEN, Buffer.from(`${prepared.env.CONFLUENCE_EMAIL}:${prepared.env.CONFLUENCE_API_TOKEN}`).toString('base64')].filter(Boolean);
     const log = (text: string) => {
@@ -154,7 +159,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
     config: async (base: string, envFile: string) => {
       const resolved = await realpath(resolve(base));
       const { env, source } = await settings(resolved, envFile);
-      return publicConfig(env, source);
+      return publicConfig(env, source, loadWorkspace(resolved));
     },
     preview: async (input: unknown) => {
       if (running()) throw new Error('동기화 작업이 진행 중입니다.');

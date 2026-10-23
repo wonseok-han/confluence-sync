@@ -26,7 +26,7 @@ export function initSync({ api, context, setBusy, showSync }) {
   }
   function renderConfig(config) {
     loadedKey = configKey(); $('sync-config').replaceChildren();
-    for (const [name, value] of [['설정 출처', config.source], ['서버', config.baseUrl || '미설정'], ['계정', config.email || '미설정'], ['스페이스', config.spaceKey || '미설정'], ['상위 페이지 / 폴더', config.parentId || '스페이스 최상위'], ['API 토큰', config.hasToken ? '설정됨' : '미설정']]) {
+    for (const [name, value] of [['설정 출처', config.source], ['서버', config.baseUrl || '미설정'], ['계정', config.email || '미설정'], ['스페이스', config.spaceKey || '미설정'], ['상위 페이지 / 폴더', config.parentId || '스페이스 최상위'], ['관리 범위', config.syncPaths?.join(', ') || '.'], ['API 토큰', config.hasToken ? '설정됨' : '미설정']]) {
       const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = name; dd.textContent = value; $('sync-config').append(dt, dd);
     }
     $('sync-config-status').textContent = config.missing.length ? `설정 필요: ${config.missing.join(', ')}. 미리보기는 인증 없이 사용할 수 있습니다.` : '접속 설정을 불러왔습니다. 실제 연결·권한 확인은 동기화 시 수행합니다.';

@@ -50,12 +50,13 @@ test('full push creates and persists a page; second push skips and content edit 
  const {root,put}=workspace(t,{'doc.md':'# Doc\n\nOriginal'});const space={path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}};
  let r=offline(root,put,['--base',root],[space,{path:'/wiki/api/v2/pages',method:'POST',body:{id:'page'}}]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls[1].body.title,'Doc');assert.equal(JSON.parse(readFileSync(join(root,'.confluence-sync.json'),'utf8'))['doc.md'].pageId,'page');
  r=offline(root,put,['--base',root],[space]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,1);
- put('doc.md','# Doc\n\nChanged');r=offline(root,put,['--base',root],[space,{path:'/wiki/api/v2/pages/page',body:{version:{number:4}}},{path:'/wiki/api/v2/pages/page',method:'PUT'}]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.at(-1).body.version.number,5);assert.match(r.calls.at(-1).body.body.value,/Changed/);
+ put('doc.md','# Doc\n\nChanged');r=offline(root,put,['--base',root],[space,{path:'/wiki/api/v2/pages/page',body:{version:{number:1}}},{path:'/wiki/api/v2/pages/page',body:{version:{number:1}}},{path:'/wiki/api/v2/pages/page',method:'PUT'}]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.at(-1).body.version.number,2);assert.match(r.calls.at(-1).body.body.value,/Changed/);
 });
 
-test('push uses frontmatter pageId to update an existing page instead of creating duplicates',t=>{
+test('frontmatter identity without a remote baseline cannot overwrite an existing page',t=>{
  const {root,put}=workspace(t,{'doc.md':'---\npageId: existing\n---\n# Doc\n\nBody'});
- const r=offline(root,put,['--base',root],[{path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}},{path:'/wiki/rest/api/content/existing',body:{id:'existing'}},{path:'/wiki/api/v2/pages/existing',body:{version:{number:2}}},{path:'/wiki/api/v2/pages/existing',method:'PUT'}]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.at(-1).body.id,'existing');
+ const r=offline(root,put,['--base',root],[{path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}},{path:'/wiki/api/v2/pages/existing',body:{version:{number:2}}}]);
+ assert.equal(r.status,1,r.stderr);assert.match(r.stderr,/버전 기준이 없습니다/);assert.equal(existsSync(join(root,'.confluence-sync.json')),false);
 });
 
 test('push creates folder containers before pages and records their parent relationship',t=>{
@@ -69,12 +70,14 @@ test('selected push uses a mapped ancestor README without publishing its changed
  const r=offline(root,put,['--base',root,'guide/doc.md'],[{path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}},{path:'/wiki/api/v2/pages',method:'POST',body:{id:'child'}}]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls[1].body.parentId,'parent');assert.equal(JSON.parse(readFileSync(join(root,'.confluence-sync.json'),'utf8'))['guide/README.md'].hash,'old');
 });
 
-test('verify recreates a deleted target and republishes its unchanged linking page',t=>{
+test('verify refuses deleted targets before any mutation and keeps mappings',t=>{
  const {root,put}=workspace(t,{'a.md':'# A\n\n[B](b.md)','b.md':'# B'});
  const space={path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}};
  let r=offline(root,put,['--base',root],[space,{path:'/wiki/api/v2/pages',method:'POST',body:{id:'a'}},{path:'/wiki/api/v2/pages',method:'POST',body:{id:'b'}}]);assert.equal(r.status,0,r.stderr);
- r=offline(root,put,['--base',root,'--verify'],[space,{path:'/wiki/api/v2/pages/a',body:{version:{number:1}}},{path:'/wiki/api/v2/pages/b',status:404},{path:'/wiki/api/v2/pages',method:'POST',body:{id:'new-b'}},{path:'/wiki/api/v2/pages/a',body:{version:{number:1}}},{path:'/wiki/api/v2/pages/a',method:'PUT'}]);
- assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/링크 재연결/);assert.equal(JSON.parse(readFileSync(join(root,'.confluence-sync.json'),'utf8'))['b.md'].pageId,'new-b');
+ const before=readFileSync(join(root,'.confluence-sync.json'),'utf8');
+ r=offline(root,put,['--base',root,'--verify'],[space,{path:'/wiki/api/v2/pages/a',body:{version:{number:1}}},{path:'/wiki/api/v2/pages/b',status:404}]);
+ assert.equal(r.status,1,r.stderr);assert.match(r.stderr,/자동 재생성하지/);assert.ok(r.calls.every(call=>call.method==='GET'));
+ assert.equal(readFileSync(join(root,'.confluence-sync.json'),'utf8'),before);
 });
 
 test('rebuild removes mapped content then creates a new page',t=>{
@@ -129,12 +132,12 @@ test('push uploads linked files once, retries failure, skips unchanged and detec
  const space={path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}};
  const lookup={path:'/wiki/rest/api/content/page/child/attachment?filename=report.pdf',body:{results:[]}};
  const upload={path:'/wiki/rest/api/content/page/child/attachment',method:'POST'};
- const update=[{path:'/wiki/api/v2/pages/page',body:{version:{number:1}}},{path:'/wiki/api/v2/pages/page',method:'PUT'}];
+ const update=number=>[{path:'/wiki/api/v2/pages/page',body:{version:{number}}},{path:'/wiki/api/v2/pages/page',body:{version:{number}}},{path:'/wiki/api/v2/pages/page',method:'PUT'}];
  let r=offline(root,put,['--base',root],[space,{path:'/wiki/api/v2/pages',method:'POST',body:{id:'page'}},lookup,{...upload,status:500}]);
- assert.equal(r.status,0,r.stderr);assert.match(r.calls[1].body.body.value,/ri:attachment ri:filename="report.pdf"/);
+ assert.equal(r.status,1,r.stderr);assert.match(r.calls[1].body.body.value,/ri:attachment ri:filename="report.pdf"/);
  assert.equal(JSON.parse(readFileSync(join(root,'.confluence-sync.json'),'utf8'))['doc.md'].hash,undefined);
- r=offline(root,put,['--base',root],[space,...update,lookup,upload]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,5);
+ r=offline(root,put,['--base',root],[space,...update(1),lookup,upload]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,6);
  r=offline(root,put,['--base',root],[space]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,1);
- put('report.pdf','second');r=offline(root,put,['--base',root],[space,...update,{...lookup,body:{results:[{id:'att'}]}},{path:upload.path+'/att/data',method:'POST'}]);
- assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,5);
+ put('report.pdf','second');r=offline(root,put,['--base',root],[space,...update(2),{...lookup,body:{results:[{id:'att'}]}},{path:upload.path+'/att/data',method:'POST'}]);
+ assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,6);
 });

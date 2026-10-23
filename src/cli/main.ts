@@ -1,5 +1,4 @@
 /** CLI command dispatch. Feature modules do not run on import. */
-import 'dotenv/config';
 import { positionalArgs } from './args.js';
 import { printHelp, readPkgVersion } from './help.js';
 import { runInit } from './init.js';

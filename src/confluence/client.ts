@@ -9,7 +9,7 @@ import { red, yellow, dim } from '../shared/colors.js';
 
 export type ConfluenceConfig = { baseUrl: string; email: string; token: string };
 export type ClientOpts = { force: boolean; verify: boolean };
-export type UpsertResult = 'created' | 'updated' | 'skipped' | 'recreated' | 'moved';
+export type UpsertResult = 'created' | 'updated' | 'skipped' | 'moved';
 export type ImageRef = { filename: string; abs: string };
 /** getNode 결과: 본문(HTML/storage) + 출처 메타(frontmatter 용). */
 export type ContentNode = {
@@ -20,6 +20,7 @@ export type ContentNode = {
   storage: string;
   url?: string;
   updated?: string;
+  version?: number;
 };
 
 class ConfluenceApiError extends Error {
@@ -48,8 +49,8 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   }
 
   /** 페이지 조회. 삭제(휴지통)·부재면 404 → null 반환(그 외 오류는 throw) */
-  async function getPageOrNull(pageId: string): Promise<any | null> {
-    const res = await fetch(`${cfg.baseUrl}/api/v2/pages/${pageId}`, {
+  async function getPageOrNull(pageId: string, withBody = false): Promise<any | null> {
+    const res = await fetch(`${cfg.baseUrl}/api/v2/pages/${pageId}${withBody ? '?body-format=storage' : ''}`, {
       headers: { Authorization: authHeader(), Accept: 'application/json' },
     });
     if (res.status === 404) return null;
@@ -140,7 +141,27 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
 
   const uploadImages = uploadAttachments;
 
-  /** 페이지 생성/갱신. 삭제 감지 시 재생성. 변경 없으면(opts.verify 아니면) 호출 없이 skip. */
+  /** Read-only preflight. An unknown baseline must never authorize overwriting an existing page. */
+  async function checkPage(mapping: Mapping, spaceId: string, key: string, hash: string, forceUpdate = false): Promise<void> {
+    const entry = mapping[key];
+    if (!entry?.pageId) return;
+    const changed = entry.hash !== hash || opts.force || forceUpdate;
+    if (!changed && !opts.verify && !entry.pendingMove) return;
+    const current = await getPageOrNull(entry.pageId);
+    assertPageBaseline(entry, current, spaceId, key, changed || !!entry.pendingMove);
+  }
+
+  function assertPageBaseline(entry: Mapping[string], current: any, spaceId: string, key: string, writes: boolean): void {
+    if (!current) throw new Error(`원격 페이지 #${entry.pageId}가 없습니다: ${key}. 자동 재생성하지 않습니다.`);
+    if (current.spaceId !== undefined && String(current.spaceId) !== spaceId) throw new Error(`페이지 스페이스가 다릅니다: ${key}`);
+    if (entry.remoteVersion === undefined) {
+      if (writes) throw new Error(`원격 버전 기준이 없습니다: ${key}. 로컬 변경을 보관한 뒤 pull로 기준을 확보하세요.`);
+      return;
+    }
+    if (current.version?.number !== entry.remoteVersion) throw new Error(`원격 변경 충돌: ${key} (기준 v${entry.remoteVersion}, 현재 v${current.version?.number ?? '?'}) — pull로 원격 내용을 확인하세요.`);
+  }
+
+  /** Incremental push with remote-version protection; --force does not bypass conflicts. */
   async function upsertPage(
     mapping: Mapping, spaceId: string, key: string,
     title: string, storage: string, hash: string, parentId: string | undefined,
@@ -151,8 +172,8 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
       const changed = existing.hash !== hash || opts.force || forceUpdate;
       // 변경 없고 검증(--verify)도 안 하면 호출 없이 스킵
       if (!changed && !opts.verify && !existing.pendingMove) return 'skipped';
-      let cur = await getPageOrNull(existing.pageId);
-      if (!cur && existing.pendingMove) throw new Error(`이동 대상 페이지 #${existing.pageId}가 없습니다. 자동 재생성하지 않습니다.`);
+      let cur = await getPageOrNull(existing.pageId, !!existing.pendingMove);
+      assertPageBaseline(existing, cur, spaceId, key, changed || !!existing.pendingMove);
       if (cur) {
         let moved = false;
         if (existing.pendingMove) {
@@ -170,14 +191,19 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
               position = 'after';
             }
             if (targetId === existing.pageId) throw new Error('페이지를 자기 자신 아래로 이동할 수 없습니다.');
+            const priorBody = cur.body?.storage?.value;
+            const priorTitle = cur.title;
+            if (typeof priorBody !== 'string') throw new Error('이동 전 원격 본문을 확인할 수 없습니다.');
             await api(`/rest/api/content/${existing.pageId}/move/${position}/${targetId}`, { method: 'PUT' });
-            cur = await getPageOrNull(existing.pageId);
+            cur = await getPageOrNull(existing.pageId, true);
+            if (cur?.body?.storage?.value !== priorBody || cur?.title !== priorTitle) throw new Error('이동 도중 원격 본문·제목이 변경되었습니다. 본문을 덮어쓰지 않습니다.');
             if (!cur || (cur.parentId ?? undefined) !== parentId) throw new Error('이동 후 부모 위치 검증에 실패했습니다. 다시 sync하세요.');
             moved = true;
           }
         }
         if (!changed) {
           delete existing.pendingMove;
+          if (moved && cur.version?.number) existing.remoteVersion = cur.version.number;
           return moved ? 'moved' : 'skipped';
         }
         const nextVersion = (cur.version?.number ?? 1) + 1;
@@ -191,10 +217,9 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
             version: { number: nextVersion, message: `sync from git: ${key}` },
           }),
         });
-        mapping[key] = { pageId: existing.pageId, title, hash };
+        mapping[key] = { pageId: existing.pageId, title, hash, remoteVersion: nextVersion };
         return 'updated';
       }
-      // cur === null: Confluence 에서 삭제됨 → 아래에서 신규 생성으로 복구
     }
     const body: Record<string, unknown> = {
       spaceId, status: 'current', title,
@@ -202,8 +227,8 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     };
     if (parentId) body.parentId = parentId;
     const created = await api(`/api/v2/pages`, { method: 'POST', body: JSON.stringify(body) });
-    mapping[key] = { pageId: created.id, title, hash };
-    return existing?.pageId ? 'recreated' : 'created';
+    mapping[key] = { pageId: created.id, title, hash, remoteVersion: created.version?.number ?? 1 };
+    return 'created';
   }
 
   // ---- pull(역방향) 전용 ----
@@ -234,6 +259,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
       storage: data.body?.storage?.value ?? '',
       url: base && webui ? `${base}${webui}` : undefined,
       updated: data.version?.when,
+      ...(data.version?.number !== undefined ? { version: data.version.number } : {}),
     };
   }
 
@@ -356,6 +382,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
         }
         return { id: mappedId, created: false };
       }
+      throw new Error(`매핑 폴더 #${mappedId}가 없습니다. 자동 재생성하지 않습니다.`);
     }
     const found = await findFolder(spaceId, spaceKey, title, parentId);
     if (found) return { id: found, created: false };
@@ -377,7 +404,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   }
 
   return {
-    api, getPageOrNull, getSpaceId, getSpaceInfo, deleteAll, uploadImages, uploadAttachments, upsertPage,
+    api, getPageOrNull, getSpaceId, getSpaceInfo, deleteAll, uploadImages, uploadAttachments, upsertPage, checkPage,
     getNode, getChildPages, getChildFolders, listAttachments, downloadAttachment,
     getContentOrNull, findFolder, createFolder, upsertFolder, deleteFolder,
   };
