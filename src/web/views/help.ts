@@ -1,20 +1,24 @@
+import { tokenGuide } from './token-guide.js';
 /** In-app guide for the local document workflow. */
 export const helpDialog = `
 <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-title">
   <header class="help-heading"><div><span class="eyebrow">WORKSPACE GUIDE</span><h2 id="help-title">사용 도움말</h2></div><form method="dialog"><button aria-label="도움말 닫기" autofocus>닫기</button></form></header>
-  <nav class="help-nav" aria-label="도움말 목차"><a href="#help-convert">문서 변환</a><a href="#help-sync">동기화</a><a href="#help-links">참조 링크</a><a href="#help-faq">자주 묻는 질문</a></nav>
+  <nav class="help-nav" aria-label="도움말 목차"><a href="#help-convert">문서 변환</a><a href="#help-sync">Confluence</a><a href="#help-token">API 토큰 발급</a><a href="#help-links">참조 링크</a><a href="#help-faq">자주 묻는 질문</a></nav>
   <div class="help-body" tabindex="0" aria-label="사용 도움말 내용">
     <p class="help-intro">Obsidian에서 작업한 문서를 변환한 다음, 변환 결과 폴더를 기준으로 Confluence에 올릴 수 있습니다. 두 탭의 기준 폴더는 각각 설정합니다.</p>
     <section id="help-convert"><h3>문서 변환</h3>
-      <ol><li><strong>변환 폴더 선택…</strong>으로 원본 폴더를 엽니다. 화살표는 폴더를 펼치고, 이름을 누르면 변환 대상을 선택합니다.</li><li>파일을 선택하고 기본적으로 접힌 <strong>문서 미리보기</strong>를 펼치면 표와 이미지를 포함한 본문이 표시됩니다. 파일 하나를 선택하면 그 파일만, 폴더를 선택하면 하위 Markdown 전체를 변환합니다.</li><li>변환 형식과 출력 폴더를 정하고 <strong>변환 미리보기</strong>로 원본과 결과를 비교합니다.</li><li><strong>변환 후 저장</strong>을 누른 뒤 <strong>결과 폴더 열기</strong>로 확인합니다. 웹 변환은 별도 출력 폴더에 저장합니다.</li></ol>
+      <ol><li><strong>기준 폴더 변경…</strong>으로 원본 폴더를 엽니다. 화살표는 폴더를 펼치고, 이름을 누르면 변환 대상을 선택합니다.</li><li>파일을 선택하고 기본적으로 접힌 <strong>문서 미리보기</strong>를 펼치면 표와 이미지를 포함한 본문이 표시됩니다. 파일 하나를 선택하면 그 파일만, 폴더를 선택하면 하위 Markdown 전체를 변환합니다.</li><li>변환 형식과 출력 폴더를 정하고 <strong>변환 미리보기</strong>로 원본과 결과를 비교합니다.</li><li><strong>변환 후 저장</strong>을 누른 뒤 <strong>결과 폴더 열기</strong>로 확인합니다. 웹 변환은 별도 출력 폴더에 저장합니다.</li></ol>
       <dl><dt>Markdown</dt><dd>찾을 수 있는 위키링크를 상대 링크로 바꾸고 PDF 페이지 참조를 이미지로 변환합니다. 찾지 못한 문서 위키링크는 그대로 남습니다.</dd><dt>Obsidian</dt><dd>해석 가능한 Markdown 문서 링크를 위키링크로 바꿉니다.</dd><dt>Confluence 변환 오류 보정</dt><dd>옛 변환 결과의 CSS 잔해, 불필요한 이스케이프와 코드블록 언어 등을 보정합니다. 미리보기로 바뀐 내용을 확인하세요.</dd><dt>출력 위치</dt><dd>파일 하나는 출력 폴더 바로 아래에, 폴더 전체는 선택 폴더 내부 구조를 유지해 저장합니다. 출력 경로를 비우면 원본 기준 폴더 옆에 새 결과 폴더를 만듭니다.</dd></dl>
     </section>
-    <section id="help-sync"><h3>Confluence 동기화</h3>
-      <ol><li><strong>동기화 폴더 선택…</strong>으로 업로드할 문서가 모인 폴더를 엽니다.</li><li><strong>설정 확인</strong>으로 서버·스페이스·저장된 스코프를 확인합니다. 미설정이면 <strong>스페이스 트리 조회</strong>에서 원격 항목을 직접 선택하고 <strong>선택 스코프 저장</strong>을 누릅니다. 전체도 /를 직접 선택해야 합니다.</li><li><strong>동기화 미리보기</strong>에서 신규·변경 문서와 링크 경고를 확인합니다. 기본은 로컬 비교입니다. 원격 버전 확인을 선택하면 Confluence를 읽기 전용으로 조회합니다.</li><li><strong>Confluence에 동기화</strong>를 누르면 실제 업로드합니다. 문서나 설정을 바꾸면 다시 미리보기해야 합니다.</li></ol>
-      <dl><dt>선택 문서</dt><dd>왼쪽에서 선택한 Markdown 문서입니다.</dd><dt>현재 폴더</dt><dd>현재 탐색 중인 폴더와 그 하위 문서입니다. 상위 페이지를 연결하기 위한 처리가 함께 수행될 수 있습니다.</dd><dt>기준 폴더 전체</dt><dd>선택한 원격 스코프에 대응하는 로컬 기준 폴더의 Markdown입니다. 제외 규칙과 독립된 하위 작업공간은 빠집니다.</dd><dt>설정 파일</dt><dd>비우면 기준 폴더의 <code>.env</code>를 사용하고, 없으면 웹 서버 실행 환경을 사용합니다. 다른 설정 파일을 직접 지정할 수도 있습니다.</dd></dl>
-      <p class="help-note">스코프 설정은 본문 다운로드 없이 메타데이터만 조회하며 CLI init --scope와 같은 코어를 사용합니다. 스코프가 없으면 미리보기와 동기화를 실행할 수 없습니다.</p>
+    <section id="help-sync"><h3>Confluence: Push / Pull</h3>
+      <p>01의 <strong>기준 폴더</strong> 카드에 Push·Pull 대상 폴더와 전체 경로가 표시됩니다. 아래 문서 탐색으로 하위 폴더를 열어도 기준은 바뀌지 않습니다. <strong>기준 폴더로</strong> 버튼으로 돌아갈 수 있습니다. <strong>업로드(Push)</strong>는 로컬 → Confluence, <strong>가져오기(Pull)</strong>는 Confluence → 로컬입니다. 각각 직접 실행하며 자동 병합하지 않습니다.</p>
+      <ol><li><strong>기준 폴더 변경…</strong>으로 업로드할 문서가 모인 폴더를 엽니다.</li><li><strong>설정 확인</strong>으로 서버·스페이스·저장된 스코프를 확인합니다. 미설정이면 <strong>트리 불러오기</strong>에서 원격 항목을 직접 선택하고 <strong>이 위치를 스코프로 저장</strong>을 누릅니다. 전체도 /를 직접 선택해야 합니다.</li><li><strong>업로드 미리보기</strong>에서 신규·변경 문서와 링크 경고를 확인합니다. 기본은 로컬 비교입니다. 원격 버전 확인을 선택하면 Confluence를 읽기 전용으로 조회합니다.</li><li><strong>Confluence에 업로드</strong>를 누르면 실제 업로드합니다. 문서나 설정을 바꾸면 다시 미리보기해야 합니다.</li></ol>
+      <p><strong>가져오기(Pull)</strong>에서는 연결 설정과 저장된 원격 스코프를 확인하고 <strong>Confluence에서 가져오기</strong>를 누릅니다. 스코프와 하위 문서를 기준 폴더로 내려받으며, 로컬 변경·이동 대기가 있으면 중단합니다. 로컬 문서 선택이나 참조 폴더는 Pull에 적용되지 않습니다.</p>
+      <dl><dt>작업 대상</dt><dd>01의 기준 폴더 전체와 저장된 원격 스코프를 연결합니다. Push는 기준 폴더의 변경을 업로드하고 Pull은 스코프의 문서를 가져옵니다. 제외 규칙과 독립된 하위 작업공간은 적용됩니다.</dd><dt>왼쪽 문서 선택</dt><dd>본문 미리보기와 표 편집에만 사용합니다. 선택 파일이나 탐색 위치를 바꿔도 업로드 대상은 기준 폴더 전체입니다. 파일 하나만 업로드하려면 CLI에서 <code>csync push 파일.md</code>를 사용하세요.</dd><dt>설정 파일</dt><dd>기준 폴더의 <code>.env</code> 사용 또는 파일 선택으로 <code>.env</code> 가져오기 중 하나를 선택합니다. 가져온 값은 현재 웹 작업에만 적용되며, 별도 저장 버튼으로 기준 폴더에 저장할 수 있습니다. 기존 파일은 교체 확인을 받습니다. 서버 실행 환경을 대신 사용하지 않습니다.</dd></dl>
+      <p class="help-note">스코프 설정은 본문 다운로드 없이 메타데이터만 조회하며 CLI init --scope와 같은 코어를 사용합니다. 스코프가 없으면 업로드와 가져오기를 실행할 수 없습니다. 기존 매핑이 있어도 스코프를 변경할 수 있으며, 변경 영향 창에서 확인한 뒤 저장합니다. 저장은 연결 설정만 변경합니다. 범위 밖 매핑이나 루트·폴더 구조 충돌은 해당 문서의 Push를 차단합니다.</p>
       <p class="help-note">원격 확인을 선택하지 않은 미리보기는 서버의 권한이나 원격 버전을 검증하지 않습니다. 실행 시에는 변경 문서의 원격 버전 충돌을 검사합니다. 실행 중 일부 문서가 실패하면 로그를 확인하고 다시 미리보기하세요.</p>
     </section>
+    ${tokenGuide}
     <section id="help-links"><h3>다른 폴더의 문서와 연결하기</h3>
       <p>업로드할 문서는 프로젝트 폴더에 있고, 연결할 문서는 별도 DBP 폴더에 있다면 <strong>참조 문서 폴더</strong>에 DBP의 동기화 루트를 추가하세요. 여러 경로를 한 줄씩 입력하거나 폴더 선택창으로 추가할 수 있습니다.</p>
       <pre><code>[[원본/긴/경로/문서명|표시 이름]]

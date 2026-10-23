@@ -1,19 +1,32 @@
+import { readPkgVersion } from '../../shared/version.js';
 import { helpDialog } from './help.js';
 import { syncPanel } from './sync-panel.js';
 /** HTML shell; Monaco and application code are bundled as local assets. */
 export const webPage = (token: string) => `<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="csync-token" content="${token}"><title>문서 워크스페이스 · confluence-sync</title><link rel="stylesheet" href="/assets/app.css"></head><body>
-<header class="app-header"><a class="brand" href="/" aria-label="confluence-sync 홈"><span class="brand-symbol" aria-hidden="true">⇄</span>confluence<span class="brand-light">sync</span></a><span class="local-status"><i></i>로컬 워크스페이스</span></header>
+<header class="app-header"><a class="brand" href="/" aria-label="confluence-sync 홈"><span class="brand-symbol" aria-hidden="true">⇄</span>confluence<span class="brand-light">sync</span></a><span class="app-version" aria-label="현재 버전">v${readPkgVersion()}</span><span class="local-status"><i></i>로컬 워크스페이스</span></header>
 <main class="app-main">
-  <div class="page-heading"><div><div class="eyebrow">DOCUMENT WORKSPACE</div><h1>문서 워크스페이스<span class="title-dot">.</span></h1></div><div class="page-heading-actions"><p>문서를 변환하고, Confluence와 동기화하세요.</p><button id="open-help" aria-haspopup="dialog" aria-controls="help-dialog">사용 도움말</button></div></div>
-  <div class="mode-tabs" role="tablist" aria-label="문서 작업"><button id="tab-convert" role="tab" aria-selected="true" aria-controls="convert-view">문서 변환</button><button id="tab-sync" role="tab" aria-selected="false" aria-controls="sync-view" tabindex="-1">Confluence 동기화</button></div>
+  <div class="page-heading"><div><div class="eyebrow">DOCUMENT WORKSPACE</div><h1>문서 워크스페이스<span class="title-dot">.</span></h1></div><div class="page-heading-actions"><p>문서를 변환하고, Confluence에서 가져오거나 업로드하세요.</p><button id="open-help" aria-haspopup="dialog" aria-controls="help-dialog">사용 도움말</button></div></div>
+  <div class="mode-tabs" role="tablist" aria-label="문서 작업"><button id="tab-convert" role="tab" aria-selected="true" aria-controls="convert-view">문서 변환</button><button id="tab-sync" role="tab" aria-selected="false" aria-controls="sync-view" tabindex="-1">Confluence</button></div>
   <div class="workspace">
     <aside class="panel explorer" aria-label="파일 탐색">
-      <div class="panel-heading"><h2><span class="section-number">01</span>문서</h2><span id="count" class="count">폴더 탐색</span></div>
-      <div class="folder-picker"><button id="choose-base" class="folder-button"><span aria-hidden="true">＋</span>문서 폴더 선택…</button><div class="path-row"><input id="base-input" class="path-input" aria-label="문서 폴더 경로" placeholder="폴더 경로 직접 입력"><button id="apply-base" class="quiet">열기</button></div><p class="hint">화살표로 펼치고, 이름을 눌러 선택하세요.</p></div>
-      <div class="explorer-navigation"><button id="up" class="quiet" aria-label="상위 폴더" title="상위 폴더">↑</button><p id="path" class="path"></p></div>
+      <div class="panel-heading"><h2><span class="section-number">01</span>로컬 문서</h2><span id="count" class="count">폴더 탐색</span></div>
+      <div class="folder-picker root-picker">
+        <section class="workspace-root-card" aria-labelledby="root-heading">
+          <div class="workspace-root-heading"><h3 id="root-heading">기준 폴더</h3><span id="root-purpose" class="root-purpose">변환 기준</span></div>
+          <strong id="root-name" class="root-name">폴더를 선택하세요</strong>
+          <p id="root-path" class="root-path">아직 설정되지 않았습니다.</p>
+          <p id="root-hint" class="root-hint">문서와 참조 링크를 찾는 기준입니다.</p>
+        </section>
+        <button id="choose-base" class="folder-button"><span aria-hidden="true">↻</span>기준 폴더 변경…</button>
+        <details id="root-path-editor" class="root-path-editor"><summary>경로를 직접 입력해 변경</summary><label for="base-input">새 기준 폴더 경로</label><input id="base-input" class="path-input" placeholder="폴더의 전체 경로"><button id="apply-base" type="button">이 폴더를 기준으로 설정</button></details>
+      </div>
+      <div class="explorer-navigation">
+        <div class="explorer-nav-heading"><span>문서 탐색</span><button id="base-home" class="quiet" type="button" aria-label="기준 폴더로 돌아가기">기준 폴더로</button></div>
+        <div class="explorer-nav-row"><button id="up" class="quiet" aria-label="상위 폴더" title="상위 폴더">↑</button><p id="path" class="path" aria-label="현재 탐색 위치"></p></div>
+      </div>
       <div class="search-wrap"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="하위 폴더까지 파일 이름 검색" aria-label="파일 이름 검색"></div>
-      <div id="files" class="files"></div><div class="explorer-footer"><span class="file-type">MD</span>폴더 또는 Markdown을 선택하세요</div>
+      <div id="files" class="files"></div><div class="explorer-footer"><span class="file-type">MD</span><span id="explorer-note">파일·폴더를 선택해 변환하세요</span></div>
     </aside>
     <div id="convert-view" class="workspace-content" role="tabpanel" aria-labelledby="tab-convert">
       <section id="document-preview-panel" class="panel document-preview" aria-label="문서 미리보기">

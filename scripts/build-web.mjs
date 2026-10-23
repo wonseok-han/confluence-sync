@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { rm, copyFile } from 'node:fs/promises';
+import { rm, copyFile, cp } from 'node:fs/promises';
 await rm(new URL('../dist/web/assets/', import.meta.url), { recursive: true, force: true });
 await build({
   entryPoints: {
@@ -12,3 +12,6 @@ await build({
 
 await copyFile('node_modules/monaco-editor/LICENSE', 'dist/web/assets/Monaco-LICENSE.txt');
 await copyFile('node_modules/monaco-editor/ThirdPartyNotices.txt', 'dist/web/assets/Monaco-ThirdPartyNotices.txt');
+
+// Guide screenshots include click annotations and account redaction.
+await cp(new URL('../docs/images/guide/', import.meta.url), new URL('../dist/web/assets/guide/', import.meta.url), { recursive: true });

@@ -70,23 +70,6 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     return { id: String(space.id), homepageId: space.homepageId ? String(space.homepageId) : undefined };
   }
 
-  /** 매핑에 기록된 페이지를 모두 삭제(휴지통). 매핑 파일 영속화는 호출자 책임. */
-  async function deleteAll(mapping: Mapping): Promise<void> {
-    // 페이지(자식) 먼저, 폴더(컨테이너) 나중에 삭제
-    const entries = Object.entries(mapping).sort(
-      ([, a], [, b]) => (a.type === 'folder' ? 1 : 0) - (b.type === 'folder' ? 1 : 0),
-    );
-    console.log(yellow(`--rebuild: 기존 ${entries.length}건 삭제`));
-    for (const [key, { pageId, type }] of entries) {
-      try {
-        await api(type === 'folder' ? `/api/v2/folders/${pageId}` : `/api/v2/pages/${pageId}`, { method: 'DELETE' });
-        console.log(`  ${yellow('🗑  삭제')} ${key} ${dim(`(#${pageId})`)}`);
-      } catch (e) {
-        console.error(red(`  ✗ 삭제 실패 ${key}`) + `\n${(e as Error).message}`);
-      }
-    }
-  }
-
   /** 페이지의 기존 첨부 중 같은 파일명의 attachmentId 를 찾는다(없으면 null). */
   async function findAttachmentId(pageId: string, filename: string): Promise<string | null> {
     const data = await api(
@@ -422,14 +405,9 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     }
   }
 
-  /** 폴더 삭제(--rebuild). */
-  async function deleteFolder(id: string): Promise<void> {
-    await api(`/api/v2/folders/${id}`, { method: 'DELETE' });
-  }
-
   return {
-    api, getContentInfo, assertInScope, getPageOrNull, getSpaceId, getSpaceInfo, deleteAll, uploadImages, uploadAttachments, upsertPage, checkPage,
+    api, getContentInfo, assertInScope, getPageOrNull, getSpaceId, getSpaceInfo, uploadImages, uploadAttachments, upsertPage, checkPage,
     getNode, getChildPages, getChildFolders, listAttachments, downloadAttachment,
-    getContentOrNull, findFolder, createFolder, upsertFolder, deleteFolder,
+    getContentOrNull, findFolder, createFolder, upsertFolder,
   };
 }

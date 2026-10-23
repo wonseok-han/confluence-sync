@@ -1,40 +1,39 @@
 /** --help / --version 출력. */
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { bold, cyan, dim } from '../shared/colors.js';
 
-/** 설치된 패키지(package.json)의 버전을 읽는다(dist·src 어느 쪽에서 실행해도 ../../package.json). */
-export function readPkgVersion(): string {
-  try {
-    const pkgPath = fileURLToPath(new URL('../../package.json', import.meta.url));
-    return JSON.parse(readFileSync(pkgPath, 'utf8')).version ?? 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
+import { readPkgVersion } from '../shared/version.js';
+export { readPkgVersion };
 
 export function printHelp(): void {
   const h = (s: string) => bold(s); // 섹션 제목
   const o = (s: string) => cyan(s); // 옵션/명령
   console.log(`${bold(cyan(`confluence-sync v${readPkgVersion()}`))}
-${dim('Confluence Cloud ↔ Markdown 양방향 동기화 CLI.')}
+${dim('Confluence Cloud ↔ Markdown 가져오기(Pull)·업로드(Push) CLI.')}
 ${dim('짧은 이름')} ${o('csync')} ${dim('로도 실행할 수 있습니다(아래 confluence-sync 를 csync 로 대체 가능).')}
 
 ${h('사용법:')}
-  ${o('confluence-sync')} [옵션] [경로...]      문서를 동기화(md → Confluence)
-  ${o('confluence-sync web')}                   문서 변환·Confluence 동기화 웹 화면(로컬 전용)
+  ${o('csync push [경로...]')} [옵션]          로컬 → Confluence 업로드
+  ${o('confluence-sync web')}                   문서 변환·Confluence Push/Pull 웹 화면(로컬 전용)
   ${o('confluence-sync init')}                  대화형으로 .env 설정 파일 생성
-  ${o('confluence-sync pull [pageId|url]')}     Confluence 페이지/폴더를 .md 로 가져오기(역방향)
+  ${o('confluence-sync pull [pageId|url]')}     Confluence 페이지/폴더를 .md 로 가져오기 (Confluence → 로컬)
   ${o('confluence-sync convert --to <형식>')}   이미 받은 .md 의 링크 표기를 바꾸기(로컬 전용)
   ${o('confluence-sync --help | --version')}
+  ${o('csync')}만 실행하면 도움말을 표시합니다. 업로드는 ${o('csync push')}를 명시하세요.
+  Pull과 Push는 각각 실행하며 자동 병합하지 않습니다.
 
-${h('remap 옵션(로컬 매핑만 갱신, Confluence 호출 없음):')}
-  ${o('csync remap --base <dir>')}  pageId로 경로를 재연결하고 이동 대기 기록
+${h('파일 이동과 매핑:')}
+  pageId를 유지하고 파일을 옮기면 push가 기존 매핑을 자동 재연결하고 원격 위치를 이동합니다.
+  ${o('csync push --dry-run')}으로 이동 계획 확인 → ${o('csync push')}로 반영.
+  보통 remap은 필요하지 않습니다. 아래는 매핑만 정리하거나 가져오는 고급 작업입니다.
+  ${o('csync remap')}            현재 작업공간을 자동 탐색해 pageId로 경로 재연결
+  ${o('csync remap --dry-run')}  변경 내역만 미리보기
+  ${o('--base <dir>')}           다른 위치의 작업공간 지정
+  아래는 별도 매핑을 가져오거나 기본 경로를 바꿀 때만 사용하는 고급 옵션입니다.
   ${o('--from-mapping <path>')}  원본 매핑에서 기존 ID·해시 가져오기(원본 유지)
   ${o('--mapping <path>')}       저장할 매핑(기본: <base>/.csync/mapping.json)
   ${o('--exclude <glob>')}       제외 패턴(반복 가능), .csync/ignore도 적용
   ${o('--dry-run')}              변경 내역만 출력, 파일 저장 없음
-  이후 ${o('csync sync --base <dir> --dry-run')}으로 확인하고, 명시적으로 sync할 때 이동 반영.
+  이후 ${o('csync push --dry-run')}으로 확인하고, 명시적으로 push할 때 이동 반영.
   기존 해시가 없으면 sync에서 본문도 갱신합니다. 폴더 ID의 경로 변경은 자동 추론하지 않습니다.
 
 ${h('메타데이터 이전(로컬 전용):')}
@@ -44,9 +43,12 @@ ${h('메타데이터 이전(로컬 전용):')}
 
 ${h('관리 범위 설정(로컬 전용):')}
   ${o('csync init --base <dir> --scope <원격경로|id:ID>')}  필수 원격 스코프 직접 설정(.env 유지, 메타데이터 조회만)
+  ${o('csync init --base <dir> --scope <경로> --dry-run')}  기존 매핑 영향 확인(저장 없음)
+  변경 시 대화형 확인을 받습니다. 비대화형은 확인 토큰을 ${o('--confirm-scope <토큰>')}로 전달합니다.
+  스코프 저장은 연결만 바꿉니다. 범위 밖·루트·폴더 충돌은 Push 전에 차단합니다.
   ${o('--base')}는 로컬 루트, ${o('--scope')}는 스페이스 기준 원격 경로 하나. 기본값 없음.
   전체도 ${o('--scope /')}로 직접 선택합니다. 기존 부모 환경변수·로컬 범위는 자동 전환하지 않습니다.
-  sync·pull·remap·웹이 같은 범위를 적용하며, 독립된 하위 매핑은 자동 병합하지 않습니다.
+  push·pull·remap·웹이 같은 범위를 적용하며, 독립된 하위 매핑은 자동 병합하지 않습니다.
 
 ${h('web 옵션:')}
   ${o('--base <dir>')}      처음 열 폴더(기본: 홈 폴더). 화면에서 기준 폴더를 바꿀 수 있음
@@ -54,7 +56,7 @@ ${h('web 옵션:')}
   ${o('--no-open')}         브라우저를 자동으로 열지 않음
   localhost / 127.0.0.1 로컬 주소에서 실행. 화면에서 출력 폴더 지정 가능. 원본 유지.
 
-${h('동기화 옵션:')}
+${h('push(업로드) 옵션:')}
   ${o('--reference-root <dir>')}  동기화 링크 참조 폴더(반복 가능, 참조 문서는 업로드하지 않음)
   ${o('--base <dir>')}      동기화 루트 (환경변수 또는 현재 위치의 상위 작업공간에서 자동 탐색)
   ${o('--mapping <path>')}  매핑 파일 위치 (기본: <base>/.csync/mapping.json)
@@ -63,7 +65,6 @@ ${h('동기화 옵션:')}
   ${o('--list')}            인식된 문서·제목·계층만 출력 (Confluence 호출·인증 없음)
   ${o('--force')}           로컬 해시가 같아도 갱신 (원격 충돌 검사는 유지)
   ${o('--verify')}          변경 없는 문서도 원격 버전·존재 확인. --dry-run과 함께 읽기 전용 검사
-  ${o('--rebuild')}         v2 스코프 기반 동기화에서는 거부
   ${o('--no-color')}        컬러 출력 끄기
   ${o('-h, --help')}        이 도움말
   ${o('-v, --version')}     버전 출력
@@ -73,22 +74,22 @@ ${h('경로 인자:')}
   상위 ${o('README.md')} 는 자식을 붙일 부모 pageId 를 얻는 데만 쓰이고 내용은 갱신되지 않습니다
   ${dim('(아직 페이지가 없으면 자식을 붙일 곳이 없으므로 그때는 생성됩니다).')}
   상위 문서까지 갱신하려면 함께 지정하세요.
-  예)  ${o('confluence-sync 20-design')}        ${o('confluence-sync 90-glossary.md')}
+  예)  ${o('csync push 20-design')}        ${o('csync push 90-glossary.md')}
 
 ${h('pull(역방향) 옵션:')}
   ${o('--out <dir>')}         .md 를 생성할 디렉토리(기본: 현재 폴더)
-  ${o('--children')}          하위 페이지까지 재귀적으로 가져와 폴더 트리로 복원
   ${o('--space')}             / 스코프를 직접 선택한 경우에만 사용 가능
   ${o('--obsidian')}          내부 링크를 [[wikilink]] 로 출력(기본: 어디서나 열리는 상대 .md 링크)
   ${o('--base <dir>')}        매핑 키의 기준(기본: --out 에서 위로 올라가며 .csync/ 또는 기존 매핑을 찾음)
   ${o('--mapping <path>')}    매핑 파일 위치 (기본: <base>/.csync/mapping.json)
   (이미지는 항상 attachments/<문서명>/ 하위에 저장됨)
-  대상을 생략하면 저장된 원격 스코프를 재귀적으로 가져옵니다. 미설정 시 중단합니다.
+  대상과 그 하위 페이지·폴더를 항상 재귀적으로 가져옵니다.
+  대상을 생략하면 저장된 원격 스코프를 가져옵니다. 미설정 시 중단합니다.
   --root·--no-mapping은 지원하지 않습니다. 하위 ID는 스코프 안의 기존 매핑만 사용합니다.
   로컬 변경·이동 대기 문서는 덮어쓰지 않으며, 전체 다운로드 후 충돌 검사합니다.
   받아온 문서는 원격 버전·pageId 와 ${dim('변경 해시')}가 매핑에 기록되어, ${bold('pull 직후 push 하면 "변경없음"')} 입니다
   ${dim('(기록하지 않으면 방금 받아온 내용을 그대로 되올려 보내게 됩니다).')}
-  예)  ${o('confluence-sync pull https://.../pages/12345/Title --out ./docs --children')}
+  예)  ${o('confluence-sync pull https://.../pages/12345/Title --out ./docs')}
        ${o('confluence-sync init --base ./docs --scope /')}
        ${o('confluence-sync pull --base ./docs')}
 

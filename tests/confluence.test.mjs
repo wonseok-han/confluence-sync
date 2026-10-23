@@ -75,12 +75,8 @@ for(const existing of [false,true])test(`image upload ${existing?'updates existi
  assert.equal(await client().uploadImages('1',[{filename:'screen.png',abs}],root),1);
 });
 
-test('folder create/delete uses folder endpoints and accepts no-content success',async t=>{
- mockFetch(t,[{path:'/wiki/api/v2/folders',method:'POST',body:{id:'f'},check:r=>assert.equal(JSON.parse(r.body).parentId,'p')},{path:'/wiki/api/v2/folders/f',method:'DELETE',status:204}]);const c=client();assert.equal(await c.createFolder('space','Folder','p'),'f');await c.deleteFolder('f');
-});
-
-test('rebuild deletes pages before containing folders',async t=>{
- mockFetch(t,[{path:page+'/p',method:'DELETE',status:204},{path:'/wiki/api/v2/folders/f',method:'DELETE',status:204}]);await client().deleteAll({'folder/':{pageId:'f',type:'folder'},'folder/a.md':{pageId:'p'}});
+test('folder creation uses the folder endpoint and preserves its parent',async t=>{
+ mockFetch(t,[{path:'/wiki/api/v2/folders',method:'POST',body:{id:'f'},check:r=>assert.equal(JSON.parse(r.body).parentId,'p')}]);assert.equal(await client().createFolder('space','Folder','p'),'f');
 });
 
 test('missing images and failed upload are reported without claiming successful attachments',async t=>{

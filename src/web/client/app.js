@@ -35,9 +35,9 @@ function savePreferences() {
   try {
     localStorage.setItem(preferencesKey, JSON.stringify({
       workspaces, mode,
-      referenceRoots: $('sync-references').value, out: $('out-input').value, envFile: $('sync-env').value,
+      referenceRoots: $('sync-references').value, out: $('out-input').value,
       convertScope: convertKind, direction: $('direction').value, fix: $('fix').checked,
-      scope: $('sync-scope').value, verify: $('sync-verify').checked,
+      verify: $('sync-verify').checked,
       sideBySide: $('side-by-side').checked,
     }));
   } catch { /* Storage may be disabled; the workspace remains usable. */ }
@@ -57,9 +57,9 @@ function displayMode(next) {
     $('tab-' + name).tabIndex = name === mode ? 0 : -1;
     $(name + '-view').hidden = name !== mode;
   }
-  $('choose-base').lastChild.textContent = mode === 'sync' ? '동기화 폴더 선택…' : '변환 폴더 선택…';
-  $('base-input').setAttribute('aria-label', mode === 'sync' ? '동기화 기준 폴더 경로' : '변환 기준 폴더 경로');
-  $('workspace-note').textContent = mode === 'sync' ? '동기화를 실행하면 선택한 문서를 Confluence에 업로드합니다.' : '변환은 이 컴퓨터에서 처리됩니다.';
+  $('choose-base').lastChild.textContent = '기준 폴더 변경…';
+  $('base-input').setAttribute('aria-label', mode === 'sync' ? 'Confluence 작업 기준 폴더 경로' : '변환 기준 폴더 경로');
+  $('workspace-note').textContent = mode === 'sync' ? 'Push는 업로드, Pull은 가져오기입니다. 작업 방향을 확인하세요.' : '변환은 이 컴퓨터에서 처리됩니다.';
   if (mode === 'convert') editor?.layout();
 }
 async function showMode(next) {
@@ -135,8 +135,19 @@ const inside = (root, path) => path === root || path.startsWith(root.endsWith('/
 function controls() {
   documentPreview.update();
   for (const id of ['preview', 'save', 'next-document']) $(id).disabled = busy || !file;
-  for (const id of [ 'preview-document', 'tab-convert', 'tab-sync', 'choose-base', 'apply-base', 'base-input', 'up', 'choose-out', 'out-input', 'direction', 'fix', 'search']) $(id).disabled = busy;
+  for (const id of [ 'preview-document', 'tab-convert', 'tab-sync', 'choose-base', 'apply-base', 'base-input', 'base-home', 'up', 'choose-out', 'out-input', 'direction', 'fix', 'search']) $(id).disabled = busy;
   if (!busy) $('up').disabled = folder === parent || (base && !inside(base, parent));
+  const root = base || folder;
+  $('root-name').textContent = root ? root.split(/[\\/]/).filter(Boolean).pop() || root : '폴더를 선택하세요';
+  $('root-path').textContent = root || '아직 설정되지 않았습니다.';
+  $('root-purpose').textContent = mode === 'sync' ? 'Push · Pull 기준' : '변환 기준';
+  $('root-hint').textContent = mode === 'sync' ? '이 폴더 전체가 Push·Pull 대상입니다. 하위 폴더를 열어도 기준은 바뀌지 않습니다.' : '문서와 참조 링크를 찾는 기준입니다. 아래에서 변환할 파일·폴더를 선택하세요.';
+  $('base-home').disabled = busy || !root || root === folder;
+  const localPath = root && folder && inside(root, folder) ? folder.slice(root.length).replace(/\\/g, '/') : folder || '';
+  $('path').textContent = !folder ? '폴더를 선택하세요' : folder === root ? '기준 폴더 /' : `기준 폴더 ${localPath}`;
+  $('path').title = folder || '';
+  $('explorer-note').textContent = mode === 'sync' ? '문서 선택은 미리보기·편집용입니다' : '파일·폴더를 선택해 변환하세요';
+
   $('fix').disabled = busy || $('direction').value === 'repair';
   $('selected').textContent = file ? file.split(/[\\/]/).pop() : '변환할 문서를 선택하세요';
   const folderMode = convertKind === 'folder';
@@ -229,7 +240,8 @@ async function browse(path, chooseBase = false) {
     if (version !== navigation) return;
     folder = data.path; parent = data.parent; entries = data.entries;
     treeCache = new Map([[folder, entries]]); expanded = new Set([folder]); treeLoading = new Set();
-    if (chooseBase) { base = folder; file = null; if (!restoring) reset(); }
+    if (chooseBase || !base) { base = folder; file = null; if (!restoring) reset(); }
+    if (chooseBase) $('root-path-editor').open = false;
     $('base-input').value = base || folder;
     $('path').textContent = folder; $('path').title = folder; $('base-input').title = base || folder; $('search').value = ''; render(); controls();
     return true;
@@ -238,7 +250,7 @@ async function browse(path, chooseBase = false) {
 async function pickFolder(kind) {
   busy = true; controls(); render(); status('시스템 폴더 다이얼로그에서 폴더를 선택해 주세요.');
   try {
-    const data = await api('/api/pick-folder', { kind, start: kind === 'base' ? folder : $('out-input').value || parent });
+    const data = await api('/api/pick-folder', { kind, start: kind === 'base' ? base || folder : $('out-input').value || parent });
     if (data.path) {
       if (kind === 'base') await browse(data.path, true);
       else { $('out-input').value = data.path; reset(); }
@@ -251,6 +263,7 @@ $('choose-out').onclick = () => pickFolder('out');
 $('apply-base').onclick = () => browse($('base-input').value, true);
 $('base-input').onkeydown = event => { if (event.key === 'Enter') browse($('base-input').value, true); };
 $('up').onclick = () => browse(parent);
+$('base-home').onclick = () => { if (!busy && base) browse(base); };
 function clearSearch() {
   clearTimeout(searchTimer); searchController?.abort(); searchVersion++;
   searchResults = null; searchRoot = null; searching = false; searchMessage = '';
@@ -363,6 +376,7 @@ syncUI = initSync({
   },
   setBusy: value => { busy = value; controls(); render(); },
   showSync: () => showMode('sync'),
+  refresh: async () => { if (mode === 'sync') await browse(base || folder); },
 });
 // Persist only local UI preferences, never credentials, logs or upload approval.
 document.querySelector('.app-main').addEventListener('input', savePreferences);
@@ -418,10 +432,9 @@ async function restoreWorkspace() {
   const saved = loadPreferences();
   const text = name => typeof saved[name] === 'string' ? saved[name] : '';
   busy = true; controls();
-  $('sync-references').value = text('referenceRoots'); $('out-input').value = text('out'); $('sync-env').value = text('envFile');
+  $('sync-references').value = text('referenceRoots'); $('out-input').value = text('out');
   if (['file', 'folder'].includes(saved.convertScope)) convertKind = saved.convertScope;
   if (['markdown', 'obsidian', 'repair'].includes(saved.direction)) $('direction').value = saved.direction;
-  if (['file', 'folder', 'all'].includes(saved.scope)) $('sync-scope').value = saved.scope;
   if (typeof saved.fix === 'boolean') $('fix').checked = saved.fix;
   if (typeof saved.verify === 'boolean') $('sync-verify').checked = saved.verify;
   if (typeof saved.sideBySide === 'boolean') {

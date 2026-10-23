@@ -38,14 +38,14 @@ function offline(root,put,args,steps) {
 }
 const mockScoped=(t,root,steps)=>mockFetch(t,steps,scopeResponder(root,steps));
 
-for(const args of [['--dry-run'],['--list'],[],['pull'],['pull','--space'],['remap']])test(`scope is mandatory without any implicit whole-space fallback: ${args}`,t=>{
+for(const args of [['push','--dry-run'],['push','--list'],['push'],['pull'],['pull','--space'],['remap']])test(`scope is mandatory without any implicit whole-space fallback: ${args}`,t=>{
  const {root,put}=workspace(t,{'doc.md':'# Doc'});const result=offline(root,put,[...args,'--base',root],[]);
  assert.equal(result.status,1);assert.match(result.stderr,/스코프가 설정되지/);assert.equal(existsSync(join(root,'.csync')),false);
 });
 
 test('legacy local scopes and parent settings never become a remote scope automatically',t=>{
  const {root,put}=workspace(t,{'doc.md':'# Doc','.confluence-workspace.json':JSON.stringify({version:1,syncPaths:['.']}),'.env':'CONFLUENCE_PARENT_ID=123'});
- const result=offline(root,put,['--base',root,'--dry-run'],[]);assert.equal(result.status,1);assert.match(result.stderr,/자동 전환하지/);
+ const result=offline(root,put,['push','--base',root,'--dry-run'],[]);assert.equal(result.status,1);assert.match(result.stderr,/자동 전환하지/);
  assert.equal(loadWorkspace(root).version,1);
 });
 
@@ -74,20 +74,20 @@ test('ambiguous remote titles require an explicit ID and never select the first 
 
 test('existing mappings cannot be silently rebound to a different remote scope',async t=>{
  const {root}=workspace(t);selected(root);saveMapping(mappingPath(root),{'doc.md':{pageId:'101'}});
- const before=readFileSync(workspacePath(root),'utf8');mockFetch(t,[space,info('200','Patents','folder',[{id:'100',title:'Home'}])]);
- await assert.rejects(configureScope(root,env,'id:200'),/기존 매핑/);assert.equal(readFileSync(workspacePath(root),'utf8'),before);
+ const before=readFileSync(workspacePath(root),'utf8');mockFetch(t,[space,info('200','Patents','folder',[{id:'100',title:'Home'}]),info('101','Doc','page',[{id:'100',title:'Home'}])]);
+ await assert.rejects(configureScope(root,env,'id:200'),/영향 확인/);assert.equal(readFileSync(workspacePath(root),'utf8'),before);
 });
 
 test('manually composed documents can be pushed without any pull after explicit scope selection',t=>{
  const {root,put}=workspace(t,{'idea.md':'# Idea\n\nLocal text'});selected(root,{id:'200',type:'folder',path:'/Patents'});
- const result=offline(root,put,['--base',root],[space,{path:'/wiki/api/v2/pages',method:'POST',body:{id:'201',version:{number:1}}}]);
+ const result=offline(root,put,['push','--base',root],[space,{path:'/wiki/api/v2/pages',method:'POST',body:{id:'201',version:{number:1}}}]);
  assert.equal(result.status,0,result.stderr);assert.equal(result.calls.at(-1).body.parentId,'200');assert.match(result.calls.at(-1).body.body.value,/Local text/);
  assert.equal(loadMapping(mappingPath(root))['idea.md'].remoteVersion,1);
 });
 
 test('an unbound root README cannot overwrite the selected remote page on first push',t=>{
  const {root,put}=workspace(t,{'README.md':'# Local'});selected(root);
- const result=offline(root,put,['--base',root],[]);assert.equal(result.status,1);assert.match(result.stderr,/루트 README/);
+ const result=offline(root,put,['push','--base',root],[]);assert.equal(result.status,1);assert.match(result.stderr,/루트 README/);
 });
 
 test('an existing mapped page outside the selected remote scope cannot be updated',async t=>{
@@ -104,27 +104,27 @@ test('scope browse is metadata only and foreign parent IDs cannot escape the spa
 
 test('outer synchronization excludes a separately configured nested workspace',t=>{
  const {root,put}=workspace(t,{'doc.md':'# Doc','nested/private.md':'# Private','nested/.confluence-sync.json':'{}'});selected(root);
- const result=offline(root,put,['--base',root,'--dry-run'],[]);assert.equal(result.status,0,result.stderr);assert.doesNotMatch(result.stdout,/private.md/);
+ const result=offline(root,put,['push','--base',root,'--dry-run'],[]);assert.equal(result.status,0,result.stderr);assert.doesNotMatch(result.stdout,/private.md/);
 });
 
 test('pull→push keeps the scope as the root and new root documents stay under the selected scope',async t=>{
  configure(t);const {root,put}=workspace(t);selected(root);
  const steps=[space,remote('100','Home'),...children('100',[{id:'101',title:'Child'}]),remote('101','Child'),...children('101')];mockScoped(t,root,steps);
  await runPull(['pull','--base',root]);assert.ok(existsSync(join(root,'README.md')));assert.equal(existsSync(join(root,'Home')),false);
- let result=offline(root,put,['--base',root],[space]);assert.equal(result.status,0,result.stderr);
- put('New.md','# New');result=offline(root,put,['--base',root],[space,{path:'/wiki/api/v2/pages',method:'POST',body:{id:'102'}}]);
+ let result=offline(root,put,['push','--base',root],[space]);assert.equal(result.status,0,result.stderr);
+ put('New.md','# New');result=offline(root,put,['push','--base',root],[space,{path:'/wiki/api/v2/pages',method:'POST',body:{id:'102'}}]);
  assert.equal(result.status,0,result.stderr);assert.equal(result.calls.at(-1).body.parentId,'100');
 });
 
 test('all changed pages are checked before creating a new page',t=>{
  const {root,put}=workspace(t,{'z.md':'# Z'});selected(root,{id:'200',type:'folder',path:'/Patents'});baseline(root,{'z.md':'201'});put('z.md','# Z\n\nEdit');put('a.md','# New');
- const result=offline(root,put,['--base',root],[space,{path:'/wiki/api/v2/pages/201',body:{version:{number:2}}}]);
+ const result=offline(root,put,['push','--base',root],[space,{path:'/wiki/api/v2/pages/201',body:{version:{number:2}}}]);
  assert.equal(result.status,1);assert.match(result.stderr,/원격 변경 충돌/);assert.ok(result.calls.every(call=>call.method==='GET'));
 });
 
 test('remote changes after preflight are checked again before writing',t=>{
  const {root,put}=workspace(t,{'doc.md':'# Doc'});selected(root,{id:'200',type:'folder',path:'/Patents'});baseline(root,{'doc.md':'201'});put('doc.md','# Doc\n\nEdit');
- const result=offline(root,put,['--base',root],[space,{path:'/wiki/api/v2/pages/201',body:{version:{number:1}}},{path:'/wiki/api/v2/pages/201',body:{version:{number:2}}}]);
+ const result=offline(root,put,['push','--base',root],[space,{path:'/wiki/api/v2/pages/201',body:{version:{number:1}}},{path:'/wiki/api/v2/pages/201',body:{version:{number:2}}}]);
  assert.equal(result.status,1);assert.ok(result.calls.every(call=>call.method==='GET'));assert.equal(loadMapping(mappingPath(root))['doc.md'].remoteVersion,1);
 });
 
@@ -156,13 +156,13 @@ test('pull cannot expand a subtree into whole-space mode or drop mapping protect
 test('read-only validation never initializes the workspace or rewrites mapping',t=>{
  const {root,put}=workspace(t,{'doc.md':'# Doc'});selected(root,{id:'200',type:'folder',path:'/Patents'});baseline(root,{'doc.md':'201'});
  const before=readFileSync(mappingPath(root),'utf8'),config=readFileSync(workspacePath(root),'utf8');
- const result=offline(root,put,['--base',root,'--dry-run','--verify'],[space,{path:'/wiki/api/v2/pages/201',body:{version:{number:1}}}]);
+ const result=offline(root,put,['push','--base',root,'--dry-run','--verify'],[space,{path:'/wiki/api/v2/pages/201',body:{version:{number:1}}}]);
  assert.equal(result.status,0,result.stderr);assert.equal(readFileSync(mappingPath(root),'utf8'),before);assert.equal(readFileSync(workspacePath(root),'utf8'),config);
 });
 
 test('existing site bindings prevent using the same page IDs against a different site',t=>{
  const {root,put}=workspace(t,{'doc.md':'# Doc'});bindScope(root,{connection:{baseUrl:'https://other.invalid/wiki'}});
- const result=offline(root,put,['--base',root],[]);assert.equal(result.status,1);assert.match(result.stderr,/사이트·스페이스/);
+ const result=offline(root,put,['push','--base',root],[]);assert.equal(result.status,1);assert.match(result.stderr,/사이트·스페이스/);
 });
 
 test('CLI init requires an explicit remote scope and preserves the existing env file',t=>{
@@ -188,9 +188,9 @@ test('a remote attachment can be pulled when clean, while local attachment edits
  await assert.rejects(runPull(['pull','--base',root]),/로컬 변경 충돌|첨부 파일 충돌/);assert.equal(readFileSync(join(root,'attachments/README/image.png'),'utf8'),'local edit');assert.equal(loadMapping(mappingPath(root))['README.md'].remoteVersion,2);
 });
 
-test('scope arguments on sync and pull are never silently ignored',t=>{
+test('scope arguments on push and pull are never silently ignored',t=>{
  const {root,put}=workspace(t,{'doc.md':'# Doc'});selected(root);
- for(const args of [['sync'],['pull']]) {
+ for(const args of [['push'],['pull']]) {
   const result=offline(root,put,[...args,'--base',root,'--scope','/Other'],[]);assert.equal(result.status,1);assert.match(result.stderr,/init --scope/);
  }
 });

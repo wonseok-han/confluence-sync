@@ -16,10 +16,13 @@ try {
       case 'init': await runInit(argv); break;
       case 'convert': await runConvert(argv); break;
       case 'remap': await runRemap(argv); break;
-      case 'sync': { const args = [...argv]; args.splice(args.indexOf('sync'), 1); await runPush(args); break; }
+      case 'push': { const args = [...argv]; args.splice(args.indexOf(positionalArgs(argv)[0]), 1); await runPush(args); break; }
       case 'pull': await runPull(argv); break;
       case 'web': { const { runWeb } = await import('../web/server.js'); await runWeb(argv); break; }
-      default: await runPush(argv);
+      case undefined:
+        if (!argv.length) { printHelp(); break; }
+        throw new Error('실행할 명령을 지정하세요. 업로드: csync push, 가져오기: csync pull, 도움말: csync --help');
+      default: throw new Error('지원하지 않는 명령입니다. 업로드: csync push, 가져오기: csync pull, 도움말: csync --help');
     }
   }
 } catch (error) {

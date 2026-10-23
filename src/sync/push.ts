@@ -14,14 +14,15 @@ import { loadMapping, saveMapping, type Mapping } from './mapping.js';
 import { createClient } from '../confluence/client.js';
 import { buildIgnorer } from './ignore.js';
 import { resolveSyncBase, loadWorkspace, inScope, inNestedWorkspace, assertWorkspaceConnection, requireScope } from './workspace.js';
-import { verifyScope } from './scope.js';
+import { verifyScope, inspectScopeMapping } from './scope.js';
+import { reconcilePages } from './reconcile.js';
 import { bold, dim, red, green, yellow, cyan, gray } from '../shared/colors.js';
 
 export async function runPush(argv: string[]): Promise<void> {
+  if (argv.includes('--rebuild')) throw new Error('--rebuild는 v2에서 제거되었습니다. 파일 이동·갱신은 push, 본문 강제 갱신은 push --force를 사용하세요. 기존 페이지는 삭제하지 않습니다.');
   if (argv.includes('--scope')) throw new Error('스코프는 csync init --scope로 명시적으로 설정하세요. sync는 저장된 스코프만 사용합니다.');
   const DRY_RUN = argv.includes('--dry-run');
   const LIST = argv.includes('--list');
-  const REBUILD = argv.includes('--rebuild');
   const FORCE = argv.includes('--force');
   const VERIFY = argv.includes('--verify');
   function optVal(name: string): string | undefined {
@@ -42,7 +43,7 @@ export async function runPush(argv: string[]): Promise<void> {
     console.error(
       red('✗ 동기화 루트가 지정되지 않았습니다.') + '\n' +
       '  --base <dir> 인자 또는 env CONFLUENCE_SYNC_BASE 로 동기화할 디렉토리를 지정하세요.\n' +
-      `  예) ${cyan('confluence-sync --base ./docs')}\n` +
+      `  예) ${cyan('confluence-sync push --base ./docs')}\n` +
       `  설정(.env)을 만들려면:  ${cyan('confluence-sync init')}\n` +
       `  전체 도움말:           ${cyan('confluence-sync --help')}`,
     );
@@ -56,7 +57,6 @@ export async function runPush(argv: string[]): Promise<void> {
   const env = readEnv(BASE_DIR);
   const workspace = loadWorkspace(BASE_DIR);
   const remoteScope = requireScope(workspace);
-  if (REBUILD) throw new Error('--rebuild는 스코프 기반 동기화에서 지원하지 않습니다.');
   if ((!DRY_RUN && !LIST) || (VERIFY && !LIST)) assertWorkspaceConnection(workspace, env);
 
   if (!existsSync(BASE_DIR) || !statSync(BASE_DIR).isDirectory()) {
@@ -118,29 +118,27 @@ export async function runPush(argv: string[]): Promise<void> {
     return;
   }
 
-  const mapping = loadMapping(MAPPING_PATH);
+  const mapping = reconcilePages(BASE_DIR, loadMapping(MAPPING_PATH), allRel, files, remoteScope);
   const root = remoteScope;
   if (root.type === 'page' && allRel.includes('README.md') && mapping['README.md']?.pageId !== root.id) throw new Error('루트 README.md는 선택한 원격 페이지의 본문입니다. pull로 기준을 확보하거나 새 하위 문서는 다른 파일명을 사용하세요.');
   const rootParent = root.id;
-  // A remap plan is valid only for the tree it was prepared against.
-  for (const rel of files) {
-    const entry = mapping[rel];
-    if (root?.type === 'page' && rel === 'README.md' && entry?.pendingMove) throw new Error('작업공간 루트는 remap으로 이동할 수 없습니다.');
-    if (entry?.pendingMove && entry.pendingMove.parentKey !== parentKeyOf(rel, folderIndex)) {
-      throw new Error(`구조가 remap 이후 변경되었습니다: ${rel}. remap을 다시 실행하세요.`);
-    }
-    const id = readDoc(BASE_DIR, rel).fm.pageId;
-    if (entry && id && entry.pageId !== id) throw new Error(`pageId 충돌: ${rel}`);
-    if (!entry && id && Object.values(mapping).some(e => e.pageId === id && e.pendingMove)) {
-      throw new Error(`remap 이후 경로가 변경되었습니다: ${rel}. remap을 다시 실행하세요.`);
-    }
-  }
 
+  if (workspace.scopeCheckRequired && DRY_RUN && !VERIFY) console.log(yellow('스코프 연결 변경 후 위치 확인이 필요합니다. push --dry-run --verify로 원격 범위와 구조를 확인하세요.'));
   let client: ReturnType<typeof createClient> | undefined;
   let spaceId = '';
   if (!LIST && (!DRY_RUN || VERIFY)) {
     client = createClient({ baseUrl: env.baseUrl!, email: env.email!, token: env.token! }, { force: FORCE, verify: VERIFY, scope: { id: root.id, spaceId: workspace.connection!.spaceId! } });
     spaceId = await verifyScope(client, workspace);
+    if (workspace.scopeCheckRequired) {
+      const active = new Set(files);
+      for (const rel of files) for (const dir of ancestorFolderDirs(rel)) active.add(`${dir}/`);
+      const entries = Object.fromEntries(Object.entries(mapping).filter(([key]) => active.has(key)));
+      const impact = await inspectScopeMapping(client, workspace, entries, allRel, mapping);
+      const blocked = impact.filter(entry => ['outside', 'rootConflict', 'folderConflict'].includes(entry.status));
+      if (blocked.length) throw new Error('새 스코프와 로컬 구조를 확인해야 합니다. 원격 변경 전 중단했습니다.\n' + blocked.map(entry => `${entry.path} (#${entry.pageId}): ${entry.status === 'outside' ? '스코프 밖' : entry.status === 'rootConflict' ? '루트 매핑 충돌' : '기존 폴더의 부모 위치 불일치'} (현재 ${entry.remotePath})`).join('\n'));
+      for (const entry of impact) if (entry.status === 'pageMove' && explicit.has(entry.path)) mapping[entry.path].pendingMove = { parentKey: parentKeyOf(entry.path, folderIndex) };
+    }
+
     for (const rel of files) {
       if (isCarriedParent(rel) && mapping[rel]?.pageId) { await client.assertInScope(mapping[rel].pageId); continue; }
       const { title, body, fm } = readDoc(BASE_DIR, rel);

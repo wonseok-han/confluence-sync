@@ -30,7 +30,7 @@ const finished = async sync => {
  }
  assert.fail('job still running');
 };
-const request = base => ({ base, target: '', envFile: '', verify: false });
+const request = base => ({ base, target: '', envId: '', verify: false });
 
 test('fresh metadata lives only in .csync and is never collected as Markdown or assets', t => {
  const { root, put } = workspace(t, { '.env': env, 'doc.md': '# Doc' });

@@ -9,7 +9,7 @@ import { startWeb } from '../dist/web/server.js';
 import { workspace, mockFetch } from './helpers/fixtures.mjs';
 
 const env = 'CONFLUENCE_BASE_URL=https://example.invalid/wiki\nCONFLUENCE_EMAIL=demo@example.invalid\nCONFLUENCE_API_TOKEN=synthetic-secret\nCONFLUENCE_SPACE_KEY=TEST\nCONFLUENCE_PARENT_ID=123\n';
-const request = root => { if(!existsSync(workspacePath(root)))bindScope(root,{scope:{id:'123',type:'folder',path:'/Patents'}}); return { base: root, target: '', envFile: '', verify: false }; };
+const request = root => { if(!existsSync(workspacePath(root)))bindScope(root,{scope:{id:'123',type:'folder',path:'/Patents'}}); return { base: root, target: '', envId: '', verify: false }; };
 async function finished(sync) {
   for (let i = 0; i < 300; i++) {
     if (!sync.running()) return sync.current();
@@ -25,16 +25,17 @@ test('sync config uses selected .env exclusively and never exposes token', async
   assert.equal(config.spaceKey, 'TEST'); assert.equal(config.scope, null);assert.equal('parentId' in config,false); assert.equal(config.hasToken, true);
   assert.ok(!JSON.stringify(config).includes('synthetic-secret'));
   const custom = put('other.env', 'CONFLUENCE_SPACE_KEY=OTHER');
-  const partial = await sync.config(root, custom);
+  const imported = await sync.importEnv({base:root,text:readFileSync(custom,'utf8'),name:'other.env'});
+  const partial = await sync.config(root, imported.envId);
   assert.equal(partial.spaceKey, 'OTHER'); assert.equal(partial.hasToken, false);
   assert.ok(partial.missing.includes('CONFLUENCE_API_TOKEN'));
-  await assert.rejects(sync.config(root, join(root, 'missing.env')), /읽을 수 없습니다/);
+  await assert.rejects(sync.config(root, join(root, 'missing.env')), /다시 가져오세요/);
 });
 
-test('real CLI dry run respects selection, ignores and hierarchy without changing files', async t => {
+test('real CLI dry run covers the workspace, ignores and hierarchy without changing files', async t => {
   const { root } = workspace(t, { '.env': env, 'README.md': '# Parent', 'guide/a.md': '# A\n\n[[README]]', 'ignored.md': '# Ignore', '.confluence-syncignore': 'ignored.md' });
   const sync = createWebSync();
-  await sync.preview({ ...request(root), target: join(root, 'guide') });
+  await sync.preview(request(root));
   const result = await finished(sync);
   assert.equal(result.state, 'succeeded'); assert.ok(result.planId);
   assert.match(result.log, /guide\/a.md/); assert.doesNotMatch(result.log, /ignored.md/);
@@ -48,11 +49,11 @@ test('push needs a successful single-use preview and passes only incremental CLI
   const calls = [];
   const sync = createWebSync(async (args, settings, log) => { calls.push({ args, settings }); log('완료\n'); return 0; });
   await assert.rejects(sync.push('unknown'), /미리보기/);
-  await sync.preview({ ...request(root), target: join(root, 'a.md'), verify: true });
+  await sync.preview({ ...request(root), verify: true });
   const { planId } = await finished(sync);
   await sync.push(planId); assert.equal((await finished(sync)).state, 'succeeded');
   assert.ok(calls[0].args.includes('--dry-run'));
-  assert.deepEqual(calls[1].args, ['--base', realpathSync.native(root), realpathSync.native(join(root, 'a.md')), '--verify']);
+  assert.deepEqual(calls[1].args, ['push', '--base', realpathSync.native(root), '--verify']);
   assert.equal(calls[1].settings.CONFLUENCE_API_TOKEN, 'synthetic-secret');
   await assert.rejects(sync.push(planId), /미리보기/);
 });
@@ -161,7 +162,7 @@ test('reference folders pass to CLI and reference mapping changes invalidate pre
   const sync = createWebSync(async args => { calls.push(args); return 0; });
   const input = { ...request(join(root, 'main')), referenceRoots: [join(root, 'ref')] };
   await sync.preview(input); const { planId } = await finished(sync);
-  assert.deepEqual(calls[0].slice(2,4), ['--reference-root', realpathSync(join(root,'ref'))]);
+  assert.deepEqual(calls[0].slice(3,5), ['--reference-root', realpathSync(join(root,'ref'))]);
   put('ref/.confluence-sync.json', '{"b.md":{"pageId":"456"}}');
   await assert.rejects(sync.push(planId), /변경/); assert.equal(calls.length,1);
   await assert.rejects(sync.preview({...input,referenceRoots:'invalid'}), /참조/);
@@ -180,16 +181,16 @@ test('remote scope metadata changes invalidate web preview and verify is shared 
 test('web requires explicit scope selection and exposes no inferred scope from the env parent',async t=>{
  const {root}=workspace(t,{'.env':env,'doc.md':'# Doc'});const sync=createWebSync(async()=>0);
  assert.equal((await sync.config(root,'')).scope,null);
- await assert.rejects(sync.preview({base:root,target:'',envFile:'',verify:false}),/스코프가 설정되지/);
- await assert.rejects(sync.setScope({base:root,envFile:'',scopeId:''}),/직접 선택/);
+ await assert.rejects(sync.preview({base:root,target:'',envId:'',verify:false}),/스코프가 설정되지/);
+ await assert.rejects(sync.setScope({base:root,envId:'',scopeId:''}),/직접 선택/);
  assert.equal(existsSync(join(root,'.csync')),false);
 });
 
 test('scope HTTP endpoints require the local token before accepting any remote tree request',async t=>{
  const {root}=workspace(t,{'.env':env,'doc.md':'# Doc'});const {server,url}=await startWeb({start:root,port:0});
  t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections();}));
- for(const path of ['/api/sync/scopes','/api/sync/scope']) {
-  const response=await fetch(url+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({base:root,envFile:'',scopeId:'123'})});
+ for(const path of ['/api/sync/scopes','/api/sync/scope','/api/sync/env/import','/api/sync/env/save','/api/sync/pull']) {
+  const response=await fetch(url+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({base:root,envId:'',scopeId:'123'})});
   assert.equal(response.status,403);
  }
 });
@@ -200,9 +201,78 @@ test('web scope selection uses the same metadata-only configuration and invalida
  const rootInfo={path:'/wiki/rest/api/content/100?expand=ancestors,space,version',body:{id:'100',title:'Home',type:'page',space:{id:'space'},ancestors:[]}};
  const selectedInfo={path:'/wiki/rest/api/content/200?expand=ancestors,space,version',body:{id:'200',title:'Patents',type:'folder',space:{id:'space'},ancestors:[{id:'100',title:'Home'}]}};
  const calls=mockFetch(t,[space,rootInfo,{path:'/wiki/rest/api/content/100/child/folder?limit=100',body:{results:[{id:'200',title:'Patents'}]}},{path:'/wiki/rest/api/content/100/child/page?limit=100',body:{results:[]}},space,selectedInfo,space,selectedInfo]);
- const tree=await sync.scopes({base:root,envFile:''});assert.equal(tree.children[0].id,'200');assert.equal((await sync.config(root,'')).scope,null);
- const config=await sync.setScope({base:root,envFile:'',scopeId:'200'});assert.equal(config.scope.id,'200');
- const input={base:root,target:'',envFile:'',verify:false};await sync.preview(input);const preview=await finished(sync);assert.ok(preview.planId);
- await sync.setScope({base:root,envFile:'',scopeId:'200'});await assert.rejects(sync.push(preview.planId),/미리보기/);
+ const tree=await sync.scopes({base:root,envId:''});assert.equal(tree.children[0].id,'200');assert.equal((await sync.config(root,'')).scope,null);
+ const config=await sync.setScope({base:root,envId:'',scopeId:'200'});assert.equal(config.scope.id,'200');
+ const input={base:root,target:'',envId:'',verify:false};await sync.preview(input);const preview=await finished(sync);assert.ok(preview.planId);
+ await sync.setScope({base:root,envId:'',scopeId:'200'});await assert.rejects(sync.push(preview.planId),/미리보기/);
  assert.ok(calls.every(call=>(call.method??'GET')==='GET'));assert.equal(existsSync(mappingPath(root)),false);
+});
+
+
+test('workspace web settings never fall back to server credentials',async t=>{
+ const {root}=workspace(t,{'a.md':'# A'});const before=process.env.CONFLUENCE_API_TOKEN;process.env.CONFLUENCE_API_TOKEN='server-secret';
+ t.after(()=>{if(before===undefined)delete process.env.CONFLUENCE_API_TOKEN;else process.env.CONFLUENCE_API_TOKEN=before;});
+ const config=await createWebSync().config(root,'');assert.equal(config.hasToken,false);assert.equal(config.missing.length,4);
+});
+
+test('import remains session-only, ignores unrelated keys and passes exact credentials to the CLI',async t=>{
+ const {root}=workspace(t,{'.env':env,'a.md':'# A'});const original=readFileSync(join(root,'.env'),'utf8');const calls=[];
+ const sync=createWebSync(async(args,settings,log)=>{calls.push(settings);log(settings.CONFLUENCE_API_TOKEN);return 0;});
+ const imported=await sync.importEnv({base:root,text:env.replace('synthetic-secret','import-secret')+'UNRELATED=do-not-import\n',name:'.env.demo'});
+ assert.ok(!JSON.stringify(imported).includes('import-secret'));assert.equal(readFileSync(join(root,'.env'),'utf8'),original);
+ await sync.preview({...request(root),envId:imported.envId});const job=await finished(sync);
+ assert.equal(job.state,'succeeded');assert.equal(calls[0].CONFLUENCE_API_TOKEN,'import-secret');assert.equal(calls[0].UNRELATED,undefined);assert.ok(!job.log.includes('import-secret'));assert.ok(!JSON.stringify(job).includes('import-secret'));
+ await assert.rejects(createWebSync().config(root,imported.envId),/다시 가져오세요/);
+});
+
+test('saving imported settings requires an unchanged file snapshot and preserves unrelated dotenv content',async t=>{
+ const {root,put}=workspace(t,{'.env':'# Existing notes\nUNRELATED="multi\nline"\n'+env,'a.md':'# A'});const sync=createWebSync();
+ const imported=await sync.importEnv({base:root,text:env.replace('synthetic-secret','new-secret'),name:'.env'});
+ const body={base:root,envId:imported.envId};const before=readFileSync(join(root,'.env'),'utf8');const preview=await sync.saveEnv(body);
+ assert.equal(preview.needsConfirmation,true);assert.equal(readFileSync(join(root,'.env'),'utf8'),before);
+ put('.env',before+'# external edit\n');await assert.rejects(sync.saveEnv({...body,expectedHash:preview.expectedHash}),/変更|변경/);
+ const fresh=await sync.saveEnv(body);await sync.saveEnv({...body,expectedHash:fresh.expectedHash});
+ const saved=readFileSync(join(root,'.env'),'utf8');assert.match(saved,/# Existing notes/);assert.match(saved,/UNRELATED="multi\nline"/);assert.match(saved,/# external edit/);assert.match(saved,/new-secret/);assert.ok(!saved.includes('synthetic-secret'));
+});
+
+test('new env save is explicit and refuses symlink targets and incomplete imports',async t=>{
+ const {root,put}=workspace(t,{'a.md':'# A'});const sync=createWebSync();const imported=await sync.importEnv({base:root,text:env,name:'.env'});const body={base:root,envId:imported.envId};
+ const preview=await sync.saveEnv(body);assert.equal(preview.needsConfirmation,false);assert.equal(preview.expectedHash,null);assert.equal(existsSync(join(root,'.env')),false);
+ await sync.saveEnv({...body,expectedHash:null});assert.match(readFileSync(join(root,'.env'),'utf8'),/synthetic-secret/);
+ const other=workspace(t,{'a.md':'# A'});const target=other.put('outside.env','keep');symlinkSync(target,join(other.root,'.env'));
+ await assert.rejects(sync.saveEnv({base:other.root,envId:imported.envId}),/심볼릭/);assert.equal(readFileSync(target,'utf8'),'keep');
+ const partial=await sync.importEnv({base:root,text:'CONFLUENCE_SPACE_KEY=TEST',name:'.env'});await assert.rejects(sync.saveEnv({base:root,envId:partial.envId}),/필수 연결/);
+});
+
+
+test('web pull works with an empty local document folder and uses the shared CLI pull command',async t=>{
+ const {root}=workspace(t,{'.env':env});bindScope(root);const calls=[];const sync=createWebSync(async(args,settings)=>{calls.push({args,settings});return 0;});
+ await sync.pull({base:root,envId:''});const job=await finished(sync);
+ assert.equal(job.kind,'pull');assert.equal(job.state,'succeeded');assert.deepEqual(calls[0].args,['pull','--base',realpathSync(root)]);assert.equal(calls[0].settings.CONFLUENCE_SPACE_KEY,'TEST');assert.equal(job.planId,null);
+});
+
+test('web pull requires credentials and scope, excludes local selection, and invalidates push approval',async t=>{
+ const {root}=workspace(t,{'.env':env,'a.md':'# A'});const calls=[];const sync=createWebSync(async args=>{calls.push(args);return 0;});
+ await assert.rejects(sync.pull({base:root,envId:''}),/스코프/);const input=request(root);await sync.preview(input);const preview=await finished(sync);assert.ok(preview.planId);
+ await sync.pull({...input,target:'/outside',referenceRoots:['/outside'],verify:true});await finished(sync);assert.deepEqual(calls.at(-1),['pull','--base',realpathSync(root)]);await assert.rejects(sync.push(preview.planId),/미리보기/);
+ const empty=workspace(t,{});bindScope(empty.root);await assert.rejects(sync.pull({base:empty.root,envId:''}),/설정 누락/);
+});
+
+
+test('web real CLI pull downloads remote docs and refuses to overwrite local edits',async t=>{
+ const {root,put}=workspace(t,{'.env':env});request(root);
+ const {runSyncCLI}=await import('../dist/web/sync.js');const {pathToFileURL}=await import('node:url');const {resolve}=await import('node:path');
+ const steps=[{path:'/wiki/rest/api/content/123?expand=body.export_view,body.storage,version',body:{id:'123',type:'folder',title:'Patents'}},{path:'/wiki/rest/api/content/123/child/folder?limit=100',body:{results:[]}},{path:'/wiki/rest/api/content/123/child/page?limit=100',body:{results:[{id:'124',title:'Child'}]}},{path:'/wiki/rest/api/content/124?expand=body.export_view,body.storage,version',body:{id:'124',type:'page',title:'Child',version:{number:1},body:{export_view:{value:'<p>Remote body</p>'},storage:{value:'<p>Remote body</p>'}}}},{path:'/wiki/rest/api/content/124/child/folder?limit=100',body:{results:[]}},{path:'/wiki/rest/api/content/124/child/page?limit=100',body:{results:[]}}];
+ const responses=put('responses.json',JSON.stringify(steps)),calls=put('calls.jsonl','');
+ const sync=createWebSync((args,config,log)=>runSyncCLI(args,{...config,NODE_OPTIONS:'--import='+pathToFileURL(resolve('tests/helpers/fetch-preload.mjs')).href,CSYNC_TEST_RESPONSES:responses,CSYNC_TEST_CALLS:calls,CSYNC_TEST_SCOPE_BASE:root},log));
+ await sync.pull({base:root,envId:''});assert.equal((await finished(sync)).state,'succeeded');const path=join(root,'Child.md');assert.match(readFileSync(path,'utf8'),/Remote body/);
+ put('Child.md',readFileSync(path,'utf8').replace('Remote body','Local edit'));const before=readFileSync(path,'utf8');await sync.pull({base:root,envId:''});const failed=await finished(sync);assert.equal(failed.state,'failed');assert.equal(readFileSync(path,'utf8'),before);
+ assert.ok(readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse).every(call=>call.method==='GET'));
+});
+
+
+test('web push refuses partial targets instead of silently changing the workspace scope',async t=>{
+ const {root}=workspace(t,{'.env':env,'a.md':'# A','nested/b.md':'# B'});const calls=[];const sync=createWebSync(async args=>{calls.push(args);return 0;});const input=request(root);
+ await assert.rejects(sync.preview({...input,target:join(root,'a.md')}),/기준 폴더 전체/);await assert.rejects(sync.preview({...input,target:join(root,'nested')}),/기준 폴더 전체/);assert.equal(calls.length,0);
+ await sync.preview(input);assert.equal((await finished(sync)).state,'succeeded');assert.deepEqual(calls[0],['push','--base',realpathSync(root),'--dry-run']);
 });

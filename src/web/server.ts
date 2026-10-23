@@ -50,7 +50,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
       if (req.method === 'GET' && url.pathname.startsWith('/assets/')) {
         const path = resolve(assetsRoot, decodeURIComponent(url.pathname.slice('/assets/'.length)));
         if (!within(assetsRoot, path)) { json(403, { error: '잘못된 파일 경로입니다.' }); return; }
-        const types: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/css', '.ttf': 'font/ttf' };
+        const types: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/css', '.ttf': 'font/ttf', '.png': 'image/png' };
         if (!types[extname(path)]) { json(404, { error: '없는 파일입니다.' }); return; }
         res.setHeader('Content-Type', types[extname(path)]);
         res.end(await readFile(path)); return;
@@ -95,7 +95,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath, 'ko'));
         json(200, { root, entries, skipped }); return;
       }
-      if (req.method !== 'POST' || !['/api/table-format/preview', '/api/table-format/save', '/api/document-preview', '/api/convert', '/api/open', '/api/pick-folder', '/api/sync/config', '/api/sync/scopes', '/api/sync/scope', '/api/sync/preview', '/api/sync/push'].includes(url.pathname)) {
+      if (req.method !== 'POST' || !['/api/table-format/preview', '/api/table-format/save', '/api/document-preview', '/api/convert', '/api/open', '/api/pick-folder', '/api/sync/config', '/api/sync/env/import', '/api/sync/env/save', '/api/sync/scopes', '/api/sync/scope', '/api/sync/preview', '/api/sync/push', '/api/sync/pull'].includes(url.pathname)) {
         json(404, { error: '없는 요청입니다.' }); return;
       }
       if (!req.headers['content-type']?.startsWith('application/json')) { json(415, { error: 'JSON 요청이 필요합니다.' }); return; }
@@ -131,13 +131,20 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         finally { busy = false; }
         return;
       }
-      if (url.pathname === '/api/sync/config') {
-        if (typeof body.base !== 'string' || typeof body.envFile !== 'string') throw new Error('설정 경로를 확인해 주세요.');
-        json(200, await sync.config(body.base, body.envFile)); return;
+      if (url.pathname === '/api/sync/env/import' || url.pathname === '/api/sync/env/save') {
+        if (busy || sync.running()) { json(409, { error: '다른 작업이 진행 중입니다.' }); return; }
+        busy = true;
+        try { json(200, url.pathname.endsWith('/import') ? await sync.importEnv(body) : await sync.saveEnv(body)); }
+        finally { busy = false; }
+        return;
       }
-      if (url.pathname === '/api/sync/preview' || url.pathname === '/api/sync/push') {
+      if (url.pathname === '/api/sync/config') {
+        if (typeof body.base !== 'string' || typeof body.envId !== 'string') throw new Error('설정 경로를 확인해 주세요.');
+        json(200, await sync.config(body.base, body.envId)); return;
+      }
+      if (url.pathname === '/api/sync/preview' || url.pathname === '/api/sync/push' || url.pathname === '/api/sync/pull') {
         if (busy || sync.running()) { json(409, { error: '다른 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.' }); return; }
-        const job = url.pathname.endsWith('/preview') ? await sync.preview(body) : await sync.push(body.planId);
+        const job = url.pathname.endsWith('/preview') ? await sync.preview(body) : url.pathname.endsWith('/pull') ? await sync.pull(body) : await sync.push(body.planId);
         json(202, { job }); return;
       }
       if (url.pathname === '/api/pick-folder') {

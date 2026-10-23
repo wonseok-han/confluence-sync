@@ -257,3 +257,20 @@ test('localhost supports page, assets and same-origin API while rejecting foreig
   });
   assert.equal(badHost,403);
 });
+
+test('web token guide serves only the annotated screenshots bundled with the package', async t => {
+  const { root } = workspace(t, {}), { url } = await app(t, root);
+  const html = await (await fetch(url)).text();
+  assert.match(html, /id="open-token-guide"/);
+  assert.match(html, /id="help-token"/);
+  const images = [...html.matchAll(/<img src="(\/assets\/guide\/[^\"]+)"/g)].map(match => match[1]);
+  assert.equal(images.length, 7);
+  for (const image of images) {
+    const response = await fetch(url + image);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'image/png');
+    const bytes = Buffer.from(await response.arrayBuffer());
+    assert.deepEqual(bytes, readFileSync(new URL('../docs/images/guide/' + image.split('/').at(-1), import.meta.url)));
+  }
+  assert.equal((await fetch(url + '/docs/images/guide/01-account-settings.png')).status, 403);
+});

@@ -1,5 +1,5 @@
 /**
- * `confluence-sync pull <pageId|url> [--out <dir>] [--children]`
+ * `confluence-sync pull <pageId|url> [--out <dir>] (하위 항목 포함)`
  * Confluence 페이지를 읽어 Markdown(.md) 으로 생성한다(역방향).
  * 자식이 있는 페이지는 push 관례를 역으로 적용해 <slug>/README.md 폴더로 펼친다.
  * 첨부는 attachments/<문서명>/ 하위에 내려받고 이미지 링크를 그 경로로 재작성한다.
@@ -43,7 +43,6 @@ const SELF_ANCHOR = /\[([^\]]*)\]\(#([^)\s]+)\)/g;
 const PAGE_ANCHOR = /(\[[^\]]*\]\(<?https?:\/\/[^\s)<>]*?\/pages\/(\d+)[^\s)<>#]*)#([^\s)<>]+?)(>?\))/g;
 
 type Opts = {
-  withChildren: boolean;
   /** Obsidian vault 로 받는다: 내부 링크를 [[wikilink]] 로 쓴다(기본은 어디서나 열리는 상대 .md 링크). */
   obsidian: boolean;
   spaceKey: string;
@@ -103,11 +102,11 @@ const dest = (p: string) => (/\s/.test(p) ? `<${p}>` : p);
 
 /** 페이지 1건을 .md 로 생성(자식 페이지/폴더가 있으면 <slug>/README.md 폴더로). */
 async function pullPage(ctx: Ctx, node: ContentNode, destDir: string): Promise<Counts> {
-  const { client, withChildren } = ctx;
+  const { client } = ctx;
   const { id, title, html, storage } = node;
   // 페이지도 하위 페이지 + 하위 폴더를 모두 가질 수 있다(폴더가 페이지 밑에 올 수 있음).
-  const childFolders = withChildren ? await client.getChildFolders(id) : [];
-  const childPages = withChildren ? await client.getChildPages(id) : [];
+  const childFolders = await client.getChildFolders(id);
+  const childPages = await client.getChildPages(id);
   const hasChildren = childFolders.length + childPages.length > 0;
 
   const rooted = id === ctx.rootId;
@@ -174,7 +173,7 @@ function add(acc: Counts, c: Counts) { acc.pages += c.pages; acc.folders += c.fo
 
 /** 노드(페이지/폴더)를 재귀적으로 가져온다. 폴더는 디렉토리(본문 없음)로 만든다. 노드 하나라도 실패하면 임시 다운로드 전체를 폐기. */
 async function pullNode(ctx: Ctx, id: string, destDir: string): Promise<Counts> {
-  const { client, withChildren } = ctx;
+  const { client } = ctx;
   try {
     await client.assertInScope(id);
     const node = await client.getNode(id);
@@ -186,12 +185,8 @@ async function pullNode(ctx: Ctx, id: string, destDir: string): Promise<Counts> 
       ctx.folderIds.set(dir, id);
       console.log(`  ${cyan('📁 폴더')}  ${dir}  ${dim(`(#${id})`)}`);
       const counts: Counts = { pages: 0, folders: 1 };
-      if (withChildren) {
-        for (const f of await client.getChildFolders(id)) add(counts, await pullNode(ctx, f.id, dir));
-        for (const p of await client.getChildPages(id)) add(counts, await pullNode(ctx, p.id, dir));
-      } else {
-        console.log(dim('     (하위 내용은 --children 으로 가져옵니다)'));
-      }
+      for (const f of await client.getChildFolders(id)) add(counts, await pullNode(ctx, f.id, dir));
+      for (const p of await client.getChildPages(id)) add(counts, await pullNode(ctx, p.id, dir));
       return counts;
     }
 
@@ -432,7 +427,7 @@ export async function runPull(argv: string[]): Promise<void> {
   const stage = mkdtempSync(join(tmpdir(), 'csync-pull-'));
   const stageOut = join(stage, relative(baseDir, outDir));
   const ctx: Ctx = {
-    client, withChildren: wholeSpace || !!rootId || argv.includes('--children'),
+    client,
     obsidian: argv.includes('--obsidian'), spaceKey: env.spaceKey!, written: [], pathById: new Map(), folderIds: new Map(),
     versions: new Map(), assetOwners: new Map(), knownPaths: new Map([...knownById].map(([id, rel]) => [id, resolve(stage, rel)])),
     stageBase: stage, baseDir, workspace, rootId, claimed: new Map(),

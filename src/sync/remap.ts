@@ -78,7 +78,7 @@ export async function runRemap(argv: string[]): Promise<void> {
     if (prior) delete next[prior[0]];
     const entry = { ...(prior?.[1] ?? { pageId: id, title: doc.title }), pendingMove: { parentKey: parentKeyOf(key, folders) } };
     updates.push([key, entry]);
-    console.log(`${prior?.[0] ?? `#${id}`} → ${key} (부모: ${entry.pendingMove.parentKey ?? 'ROOT'})${entry.hash ? '' : ' — 기존 해시 없음: sync 시 본문 갱신 대상'}`);
+    console.log(`${prior?.[0] ?? `#${id}`} → ${key} (부모: ${entry.pendingMove.parentKey ?? 'ROOT'})${entry.hash ? '' : ' — 기존 해시 없음: push 시 본문 갱신 대상'}`);
   }
   for (const [key, entry] of updates) next[key] = entry;
   if (!argv.includes('--dry-run')) saveMapping(output, next);

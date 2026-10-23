@@ -68,7 +68,7 @@ test('different servers and corrupt mappings are rejected; repeated roots are de
 test('CLI repeated reference roots appear only as link inputs in dry-run', t => {
   const {base, refs, root, put} = setup(t, {'second/unpublished.md':'# Unpublished'});
   put('main/a.md','# Start\n\n[[old/문서|Alias]] [[unpublished]] [[missing]]');
-  bindScope(base);const r = spawnSync(process.execPath,['dist/sync.js','--base',base,'--reference-root',refs[0],'--reference-root',join(root,'second'),'--dry-run'],{encoding:'utf8',env:{...process.env,CONFLUENCE_BASE_URL:baseUrl}});
+  bindScope(base);const r = spawnSync(process.execPath,['dist/sync.js','push','--base',base,'--reference-root',refs[0],'--reference-root',join(root,'second'),'--dry-run'],{encoding:'utf8',env:{...process.env,CONFLUENCE_BASE_URL:baseUrl}});
   assert.equal(r.status,0,r.stderr); assert.match(r.stdout,/실제 호출 없음/);
   assert.match(r.stderr,/게시 매핑 없는/); assert.match(r.stderr,/대상 없는/);
   assert.doesNotMatch(r.stdout,/H1 differs|Unpublished/);

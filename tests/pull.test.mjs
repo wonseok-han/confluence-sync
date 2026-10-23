@@ -32,16 +32,18 @@ test('pull mapping uses push hashes, removes moved aliases and preserves unrelat
 
 test('full pull downloads referenced image and writes frontmatter plus matching mapping',async t=>{
  const {root,put}=workspace(t);configure(t);bindScope(root);put('.csync/mapping.json',JSON.stringify({'Proposal.md':{pageId:'123'}}));
- const steps=[{path:'/wiki/rest/api/content/123?expand=body.export_view,body.storage,version',body:{id:'123',title:'Proposal',type:'page',body:{export_view:{value:'<h2>Section</h2><p>Text</p><img src="/download/attachments/123/screen.png"/>'},storage:{value:''}},_links:{base:'https://example.invalid',webui:'/wiki/pages/123'},version:{when:'2026-01-01'}}},{path:'/wiki/rest/api/content/123/child/attachment?limit=100',body:{results:[{title:'screen.png',_links:{download:'/download/screen.png'}},{title:'unused.pdf',_links:{download:'/download/unused.pdf'}}]}},{path:'/wiki/download/screen.png',bytes:new Uint8Array([1,2,3])}];mockFetch(t,steps,scopeResponder(root,steps));
+ const steps=[{path:'/wiki/rest/api/content/123?expand=body.export_view,body.storage,version',body:{id:'123',title:'Proposal',type:'page',body:{export_view:{value:'<h2>Section</h2><p>Text</p><img src="/download/attachments/123/screen.png"/>'},storage:{value:''}},_links:{base:'https://example.invalid',webui:'/wiki/pages/123'},version:{when:'2026-01-01'}}},{path:'/wiki/rest/api/content/123/child/folder?limit=100',body:{results:[]}},{path:'/wiki/rest/api/content/123/child/page?limit=100',body:{results:[]}},{path:'/wiki/rest/api/content/123/child/attachment?limit=100',body:{results:[{title:'screen.png',_links:{download:'/download/screen.png'}},{title:'unused.pdf',_links:{download:'/download/unused.pdf'}}]}},{path:'/wiki/download/screen.png',bytes:new Uint8Array([1,2,3])}];mockFetch(t,steps,scopeResponder(root,steps));
  await runPull(['pull','123','--out',root]);const path=join(root,'Proposal.md');
  assert.match(readFileSync(path,'utf8'),/pageId: 123/);assert.match(readFileSync(path,'utf8'),/attachments\/Proposal\/screen.png/);assert.deepEqual(readFileSync(join(root,'attachments/Proposal/screen.png')),Buffer.from([1,2,3]));
  assert.equal(existsSync(join(root,'attachments/Proposal/unused.pdf')),false);assert.equal(loadMapping(mappingPath(root))['Proposal.md'].pageId,'123');
 });
 
-test('pull scope creates root README and local child links with baseline mapping',async t=>{
- const {root}=workspace(t);configure(t);bindScope(root,{connection:{homepageId:'1'},scope:{id:'1',type:'page'}});
+for (const subtarget of [false,true]) test(`pull ${subtarget ? 'mapped subtarget' : 'scope root'} includes children by default`,async t=>{
+ const {root,put}=workspace(t);configure(t);
+ if (subtarget) { bindScope(root); put('.csync/mapping.json',JSON.stringify({'Parent/README.md':{pageId:'1'}})); }
+ else bindScope(root,{connection:{homepageId:'1'},scope:{id:'1',type:'page'}});
  const steps=[{path:'/wiki/rest/api/content/1?expand=body.export_view,body.storage,version',body:{id:'1',type:'page',title:'Parent',body:{export_view:{value:'<a href="https://example.invalid/wiki/spaces/TEST/pages/2/Child">Child</a>'}}}},{path:'/wiki/rest/api/content/1/child/folder?limit=100',body:{results:[]}},{path:'/wiki/rest/api/content/1/child/page?limit=100',body:{results:[{id:'2',title:'Child'}]}},{path:'/wiki/rest/api/content/2?expand=body.export_view,body.storage,version',body:{id:'2',type:'page',title:'Child',body:{export_view:{value:'<p>Hello</p>'}}}},{path:'/wiki/rest/api/content/2/child/folder?limit=100',body:{results:[]}},{path:'/wiki/rest/api/content/2/child/page?limit=100',body:{results:[]}}];mockFetch(t,steps,scopeResponder(root,steps));
- await runPull(['pull','1','--children','--out',root]);assert.ok(existsSync(join(root,'README.md')));assert.ok(existsSync(join(root,'Child.md')));assert.match(readFileSync(join(root,'README.md'),'utf8'),/\[Child\]\(Child.md\)/);assert.equal(existsSync(mappingPath(root)),true);
+ await runPull(['pull','1','--out',root]);const dest=subtarget ? join(root,'Parent') : root;assert.ok(existsSync(join(dest,'README.md')));assert.ok(existsSync(join(dest,'Child.md')));assert.match(readFileSync(join(dest,'README.md'),'utf8'),/\[Child\]\(Child.md\)/);assert.equal(existsSync(mappingPath(root)),true);
 });
 
 test('whole-space pull starts from homepage and recursively materializes folder nodes',async t=>{

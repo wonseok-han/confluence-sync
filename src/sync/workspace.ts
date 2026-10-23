@@ -9,6 +9,7 @@ export { WORKSPACE_FILE } from './metadata.js';
 export type Workspace = {
   version: 1 | 2;
   scope?: { id: string; type: 'page' | 'folder'; path: string };
+  scopeCheckRequired?: boolean;
   syncPaths?: string[];
   connection?: { baseUrl: string; spaceKey: string; spaceId?: string; homepageId?: string };
   root?: { id: string; type: 'page' | 'folder'; baseUrl: string; spaceKey: string };
@@ -43,6 +44,7 @@ export function loadWorkspace(base: string): Workspace {
     throw new Error(`잘못된 작업공간 설정: ${path}`);
   }
   for (const path of value.syncPaths ?? []) if (scopePath(base, path) !== path) throw new Error(`관리 범위는 정규화된 상대 경로여야 합니다: ${path}`);
+  if (value.scopeCheckRequired !== undefined && typeof value.scopeCheckRequired !== 'boolean') throw new Error('잘못된 스코프 검증 설정입니다.');
   if (value.connection && (typeof value.connection.baseUrl !== 'string' || typeof value.connection.spaceKey !== 'string')) throw new Error('잘못된 연결 설정입니다.');
   if (value.version === 2 && (!value.scope || typeof value.scope.id !== 'string' || !value.scope.id ||
       !['page', 'folder'].includes(value.scope.type) || typeof value.scope.path !== 'string' || !value.scope.path.startsWith('/') ||

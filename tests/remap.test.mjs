@@ -42,7 +42,7 @@ test('remap honors ignore and README parent identity',async t=>{
 
 test('CLI remap needs no credentials and dry-run creates no mapping',t=>{
  const {root}=workspace(t,{'a.md':fm('1')});const env={...process.env};for(const key of Object.keys(env))if(key.startsWith('CONFLUENCE_'))delete env[key];
- bindScope(root);const result=spawnSync(process.execPath,[fileURLToPath(new URL('../dist/sync.js',import.meta.url)),'remap','--base',root,'--dry-run'],{cwd:root,env,encoding:'utf8'});
+ bindScope(root);const result=spawnSync(process.execPath,[fileURLToPath(new URL('../dist/sync.js',import.meta.url)),'remap','--dry-run'],{cwd:root,env,encoding:'utf8'});
  assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/Confluence 호출 없음/);assert.equal(existsSync(mappingPath(root)),false);
 });
 
@@ -59,7 +59,7 @@ test('push creates destination folder then moves existing page without uploading
  const d=readDoc(root,'new/a.md');const hash=docHash(d.title,buildTreeRenderer(root,['new/a.md']).render('new/a.md',d.body,d.title));
  const {writeFileSync}=await import('node:fs');writeFileSync(join(root,'.confluence-sync.json'),JSON.stringify({'old/a.md':{pageId:'1',title:'A',hash,remoteVersion:1}}));
  bindScope(root);const steps=[{path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}},{path:'/wiki/api/v2/pages/1',body:{body:{storage:{value:'Body'}},id:'1',spaceId:'space',parentId:'old',version:{number:1}}},{path:'/wiki/rest/api/content/search?cql='+encodeURIComponent('type = folder AND space = "TEST" AND title = "new"')+'&limit=100',body:{results:[]}},{path:'/wiki/api/v2/folders',method:'POST',body:{id:'folder'}},{path:'/wiki/api/v2/pages/1?body-format=storage',body:{body:{storage:{value:'Body'}},id:'1',spaceId:'space',parentId:'old',version:{number:1}}},{path:'/wiki/rest/api/content/1/move/append/folder',method:'PUT',body:{pageId:'1'}},{path:'/wiki/api/v2/pages/1?body-format=storage',body:{body:{storage:{value:'Body'}},id:'1',spaceId:'space',parentId:'folder',version:{number:2}}}];mockFetch(t,steps,scopeResponder(root,steps));
- bindScope(root);await runRemap(['remap','--base',root]);await runPush(['--base',root]);assert.equal(load(root)['new/a.md'].pendingMove,undefined);assert.equal(load(root)['new/a.md'].hash,hash);
+ bindScope(root);await runPush(['--base',root]);assert.equal(load(root)['new/a.md'].pendingMove,undefined);assert.equal(load(root)['new/a.md'].hash,hash);
 });
 
 test('duplicate source mapping IDs cannot be hidden by import merging',async t=>{
@@ -67,9 +67,9 @@ test('duplicate source mapping IDs cannot be hidden by import merging',async t=>
  bindScope(root);await assert.rejects(runRemap(['remap','--base',root,'--from-mapping',source]),/중복/);assert.equal(existsSync(mappingPath(root)),false);
 });
 
-test('tree changes after remap require a fresh plan before any sync call',async t=>{
+test('sync refreshes an old move plan from the current local tree without writes in dry-run',async t=>{
  mockFetch(t,[]);const {root,put}=workspace(t,{'new/a.md':fm('1')});bindScope(root);await runRemap(['remap','--base',root]);put('new/README.md',fm('2'));
- await assert.rejects(runPush(['--base',root,'--dry-run']),/remap 이후/);
+ const before=readFileSync(mappingPath(root),'utf8');await runPush(['--base',root,'--dry-run']);assert.equal(readFileSync(mappingPath(root),'utf8'),before);
 });
 
 test('remap preserves the selected scope root mapping, hash and remote version',async t=>{

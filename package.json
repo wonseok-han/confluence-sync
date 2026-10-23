@@ -39,10 +39,9 @@
     "web": "npm run build && node dist/sync.js web",
     "test": "npm run build && node --test tests/*.test.mjs",
     "prepublishOnly": "npm run build",
-    "sync": "tsx src/sync.ts",
-    "sync:dry": "tsx src/sync.ts --dry-run",
-    "sync:rebuild": "tsx src/sync.ts --rebuild",
-    "list": "tsx src/sync.ts --list",
+    "sync": "tsx src/sync.ts push",
+    "sync:dry": "tsx src/sync.ts push --dry-run",
+    "list": "tsx src/sync.ts push --list",
     "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include=\"dist/**/*.js\" tests/*.test.mjs"
   },
   "publishConfig": {
