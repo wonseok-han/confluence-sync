@@ -9,6 +9,8 @@ import { promisify } from 'node:util';
 import { collectMarkdown } from '../documents/catalog.js';
 import { webPage } from './views/workspace.js';
 import { createWebSync, type SyncRunner } from './sync.js';
+import { previewDocument } from './preview.js';
+import { createTableFormatting } from './table-format.js';
 
 import { chooseFolder } from './folder-dialog.js';
 import { within, canonical, publishOutput, OverwriteRequired } from './output.js';
@@ -19,6 +21,8 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
   const start = await realpath(resolve(options.start ?? homedir()));
   if (!(await stat(start)).isDirectory()) throw new Error('시작 경로가 폴더가 아닙니다.');
   const token = randomBytes(32).toString('hex');
+  const previewNonce = randomBytes(24).toString('hex');
+  const tableFormatting = createTableFormatting();
   let origin = '';
   const allowedHosts = new Set<string>();
   let busy = false;
@@ -33,7 +37,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
     };
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    res.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self' 'nonce-${previewNonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`);
     if (!req.headers.host || !allowedHosts.has(req.headers.host)
       || (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`)) {
       json(403, { error: '이 웹 화면에서만 요청할 수 있습니다.' }); return;
@@ -91,7 +95,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath, 'ko'));
         json(200, { root, entries, skipped }); return;
       }
-      if (req.method !== 'POST' || !['/api/convert', '/api/open', '/api/pick-folder', '/api/sync/config', '/api/sync/preview', '/api/sync/push'].includes(url.pathname)) {
+      if (req.method !== 'POST' || !['/api/table-format/preview', '/api/table-format/save', '/api/document-preview', '/api/convert', '/api/open', '/api/pick-folder', '/api/sync/config', '/api/sync/scopes', '/api/sync/scope', '/api/sync/preview', '/api/sync/push'].includes(url.pathname)) {
         json(404, { error: '없는 요청입니다.' }); return;
       }
       if (!req.headers['content-type']?.startsWith('application/json')) { json(415, { error: 'JSON 요청이 필요합니다.' }); return; }
@@ -102,6 +106,31 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
       }
       const body = JSON.parse(raw);
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('요청 내용을 확인해 주세요.');
+      if (url.pathname === '/api/document-preview') {
+        if (typeof body.base !== 'string' || typeof body.file !== 'string') throw new Error('문서 경로를 확인해 주세요.');
+        json(200, await previewDocument(body.base, body.file, previewNonce)); return;
+      }
+      if (url.pathname.startsWith('/api/table-format/')) {
+        if (busy || sync.running()) { json(409, { error: '다른 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.' }); return; }
+        if (url.pathname.endsWith('/preview')) {
+          if (typeof body.base !== 'string' || typeof body.file !== 'string' || typeof body.hash !== 'string'
+            || !Number.isInteger(body.index) || !Array.isArray(body.widths)) throw new Error('표 서식 요청을 확인해 주세요.');
+          json(200, await tableFormatting.preview(body.base, body.file, body.hash, body.index, body.widths, body.changes));
+        } else {
+          if (typeof body.planId !== 'string') throw new Error('변경 비교를 먼저 실행해 주세요.');
+          busy = true;
+          try { json(200, await tableFormatting.save(body.planId)); }
+          finally { busy = false; }
+        }
+        return;
+      }
+      if (url.pathname === '/api/sync/scopes' || url.pathname === '/api/sync/scope') {
+        if (busy || sync.running()) { json(409, { error: '다른 작업이 진행 중입니다.' }); return; }
+        busy = true;
+        try { json(200, url.pathname.endsWith('/scopes') ? await sync.scopes(body) : await sync.setScope(body)); }
+        finally { busy = false; }
+        return;
+      }
       if (url.pathname === '/api/sync/config') {
         if (typeof body.base !== 'string' || typeof body.envFile !== 'string') throw new Error('설정 경로를 확인해 주세요.');
         json(200, await sync.config(body.base, body.envFile)); return;

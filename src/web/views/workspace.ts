@@ -16,6 +16,19 @@ export const webPage = (token: string) => `<!doctype html>
       <div id="files" class="files"></div><div class="explorer-footer"><span class="file-type">MD</span>폴더 또는 Markdown을 선택하세요</div>
     </aside>
     <div id="convert-view" class="workspace-content" role="tabpanel" aria-labelledby="tab-convert">
+      <section id="document-preview-panel" class="panel document-preview" aria-label="문서 미리보기">
+        <div class="panel-heading document-preview-heading"><h2><button id="document-preview-toggle" class="preview-disclosure" aria-expanded="false" aria-controls="document-preview-body"><span id="document-preview-chevron" aria-hidden="true">▸</span>문서 미리보기<span id="document-preview-toggle-label" class="preview-disclosure-label">펼치기</span></button></h2><div id="document-preview-actions" class="actions" hidden><button id="table-edit-toggle" class="quiet" aria-pressed="false" disabled>표 서식 편집</button><button id="document-preview-refresh" class="quiet" disabled>새로고침</button></div></div>
+        <div id="document-preview-body" hidden>
+        <p id="document-preview-status" class="document-preview-status" role="status" aria-live="polite">Markdown 파일을 선택하면 본문이 표시됩니다.</p>
+        <div id="table-format-controls" class="table-format-controls" hidden>
+          <p id="table-format-status" role="status" aria-live="polite">미리보기에서 편집할 표를 클릭하세요.</p>
+          <div class="table-format-actions"><label>전체 너비 <input id="table-total-width" type="range" min="320" max="1200" step="1" disabled><output id="table-total-label"></output></label><button id="table-fit" title="셀의 글자 길이에 맞춰 열 너비 자동 배분" disabled>내용에 맞춤</button><button id="table-equal" disabled>균등 배분</button><button id="table-review" class="primary" disabled>변경 비교</button><button id="table-revert" disabled>변경 취소</button></div>
+          <p class="hint">내용에 맞춤으로 자동 배분하거나 열 경계를 드래그하세요. 저장 전 변경은 파일을 바꾸면 취소됩니다.</p>
+        </div>
+        <iframe id="document-preview-frame" class="document-preview-frame" title="선택한 Markdown 문서 미리보기" sandbox="allow-scripts" hidden></iframe>
+        <p class="document-preview-note">로컬 문서 미리보기이며 Confluence의 실제 표시와 다를 수 있습니다.</p>
+        </div>
+      </section>
       <section class="panel settings" aria-label="변환 설정">
         <div class="panel-heading"><h2><span class="section-number">02</span>변환 설정</h2><span class="subtle-label">원본 유지</span></div>
         <div class="settings-body">
@@ -23,7 +36,7 @@ export const webPage = (token: string) => `<!doctype html>
           <p id="convert-output-hint" class="hint"></p><div class="settings-grid"><div class="field"><label for="direction">변환 형식</label><select id="direction"><option value="markdown">Markdown</option><option value="obsidian">Obsidian</option><option value="repair">Confluence 오류 보정만</option></select></div><div class="field output-field"><label for="out-input">출력 폴더 <span>선택 사항</span></label><div class="path-row"><input id="out-input" class="path-input" placeholder="자동으로 새 폴더 생성"><button id="choose-out">폴더 선택…</button></div></div></div>
           <div class="settings-notes"><p id="direction-hint" class="hint">위키링크를 상대 링크로, PDF 페이지 참조를 이미지로 변환합니다.</p><div class="repair-help"><label class="repair-option"><input id="fix" type="checkbox">Confluence 변환 오류 보정</label><button id="repair-help-button" class="info-mark" type="button" aria-label="Confluence 변환 오류 보정 설명" aria-describedby="repair-tooltip">i</button><div id="repair-tooltip" class="help-tooltip" role="tooltip" hidden>옛 Confluence 문서의 CSS 잔해, 중복 제목, 코드블록 언어와 불필요한 이스케이프를 보정합니다. 미리보기에서 변경 내용을 확인하세요.</div></div></div>
         </div>
-        <div class="action-bar"><span class="save-note">선택한 대상과 참조 첨부파일을 저장합니다.</span><div class="actions"><button id="next-document" class="quiet" disabled>다른 문서 선택</button><button id="preview" disabled>미리보기</button><button id="save" class="primary" disabled>변환 후 저장 <span aria-hidden="true">↗</span></button></div></div>
+        <div class="action-bar"><span class="save-note">선택한 대상과 참조 첨부파일을 저장합니다.</span><div class="actions"><button id="next-document" class="quiet" disabled>다른 문서 선택</button><button id="preview" disabled>변환 미리보기</button><button id="save" class="primary" disabled>변환 후 저장 <span aria-hidden="true">↗</span></button></div></div>
         <div class="feedback"><div id="status" class="status" role="status" aria-live="polite"></div><div id="result" class="result" hidden><div><strong>변환 결과 저장 완료</strong><p id="output"></p></div><button id="open">결과 폴더 열기 ↗</button></div><details id="details" hidden><summary>변환 내역</summary><pre id="log"></pre></details></div>
       </section>
       <section class="panel comparison" aria-label="본문 비교">
@@ -36,4 +49,5 @@ export const webPage = (token: string) => `<!doctype html>
   </div>
   <footer><span id="workspace-note"><i></i>변환은 이 컴퓨터에서 처리됩니다.</span><span>Markdown · Confluence</span></footer>
 ${helpDialog}
+<dialog id="table-review-dialog" class="table-review-dialog" aria-labelledby="table-review-title"><div class="panel-heading"><h2 id="table-review-title">표 서식 변경 확인</h2><button id="table-review-close">닫기</button></div><p class="table-review-note">편집한 표들의 너비 변경을 함께 저장합니다. 일반 Markdown 표는 HTML 표로 변환합니다.</p><div id="table-review-diff" class="table-review-diff"></div><p id="table-save-status" role="status" aria-live="polite"></p><div class="table-review-footer"><button id="table-save" class="primary">원본 파일에 저장</button></div></dialog>
 </main><script src="/assets/app.js" type="module"></script></body></html>`;

@@ -10,10 +10,13 @@ export function workspace(t,files={}) {
  return {root,put};
 }
 // Unexpected calls fail instead of reaching any network. All credentials below are synthetic.
-export function mockFetch(t,steps) {
+export function mockFetch(t,steps,responder) {
  const calls=[];
  t.mock.method(globalThis,'fetch',async(url,init={})=>{
-  const step=steps[calls.length];calls.push({url:String(url),...init});
+  const step=steps[calls.length];
+  const extra=responder?.(url,init,step);
+  if(extra!==null && extra!==undefined) return new Response(JSON.stringify(extra),{status:200});
+  calls.push({url:String(url),...init});
   assert.ok(step,`Unexpected request: ${url}`);
   assert.equal(new URL(url).pathname+new URL(url).search,step.path);
   assert.equal(init.method??'GET',step.method??'GET');

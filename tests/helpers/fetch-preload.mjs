@@ -2,8 +2,11 @@
 import {readFileSync,appendFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 const steps=JSON.parse(readFileSync(process.env.CSYNC_TEST_RESPONSES,'utf8'));
+import {scopeResponder} from './scope.mjs';
+const extra=process.env.CSYNC_TEST_SCOPE_BASE?scopeResponder(process.env.CSYNC_TEST_SCOPE_BASE,steps):null;
 let index=0;
 globalThis.fetch=async(url,init={})=>{
+ const response=extra?.(url,init,steps[index]);if(response!==null && response!==undefined)return new Response(JSON.stringify(response),{status:200});
  const step=steps[index++];assert.ok(step,`Unexpected request ${url}`);
  const path=new URL(url).pathname+new URL(url).search;
  assert.equal(path,step.path);assert.equal(init.method??'GET',step.method??'GET');

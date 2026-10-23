@@ -4,7 +4,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { parse } from 'dotenv';
 import { collectMarkdown } from '../documents/catalog.js';
 import { buildIgnorer } from './ignore.js';
-import { MAPPING_FILE, type Mapping } from './mapping.js';
+import { mappingPath } from './metadata.js';
+import { type Mapping } from './mapping.js';
 
 const key = (s: string) => s.normalize('NFC').toLowerCase();
 const slash = (s: string) => s.split('\\').join('/');
@@ -28,7 +29,7 @@ export function buildReferenceLookup(base: string, rels: string[], roots: string
     const configured = existsSync(envPath) ? parse(readFileSync(envPath)).CONFLUENCE_BASE_URL?.replace(/\/$/, '') : undefined;
     if (configured && configured !== server) throw new Error('참조 폴더의 Confluence 서버가 현재 설정과 다릅니다: ' + root);
     let mapping: Mapping = {};
-    const path = join(root, MAPPING_FILE);
+    const path = mappingPath(root);
     if (existsSync(path)) {
       mapping = JSON.parse(readFileSync(path, 'utf8'));
       if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)

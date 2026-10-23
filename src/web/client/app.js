@@ -3,6 +3,8 @@ import * as monaco from 'monaco-editor/editor/editor.api.js';
 import 'monaco-editor/languages/definitions/markdown/register.js';
 import './styles.css';
 import { initSync } from './sync.js';
+import { initDocumentPreview } from './preview.js';
+import { initTableFormatting } from './table-format.js';
 
 self.MonacoEnvironment = { getWorker: () => new Worker('/assets/editor.worker.js', { type: 'module' }) };
 const $ = id => document.getElementById(id);
@@ -15,6 +17,13 @@ let previews = [];
 let convertKind = 'file';
 let expanded = new Set(), treeCache = new Map(), treeLoading = new Set();
 let mode = 'convert';
+const tableFormatting = initTableFormatting({ api, monaco,
+  refresh: () => documentPreview.update(true),
+  setBusy: value => { busy = value; controls(); render(); },
+});
+const documentPreview = initDocumentPreview({
+  api, formatting: tableFormatting, selection: () => ({ base: base || folder, file, folder: mode === 'convert' && convertKind === 'folder' }),
+});
 initHelp(() => mode);
 let restoring = true;
 let workspaces = { convert: {}, sync: {} };
@@ -42,6 +51,7 @@ function loadPreferences() {
 
 function displayMode(next) {
   mode = next;
+  $(next + '-view').prepend($('document-preview-panel'));
   for (const name of ['convert', 'sync']) {
     $('tab-' + name).setAttribute('aria-selected', String(name === mode));
     $('tab-' + name).tabIndex = name === mode ? 0 : -1;
@@ -123,6 +133,7 @@ function reset() {
 }
 const inside = (root, path) => path === root || path.startsWith(root.endsWith('/') ? root : root + '/') || path.startsWith(root.endsWith('\\') ? root : root + '\\');
 function controls() {
+  documentPreview.update();
   for (const id of ['preview', 'save', 'next-document']) $(id).disabled = busy || !file;
   for (const id of [ 'preview-document', 'tab-convert', 'tab-sync', 'choose-base', 'apply-base', 'base-input', 'up', 'choose-out', 'out-input', 'direction', 'fix', 'search']) $(id).disabled = busy;
   if (!busy) $('up').disabled = folder === parent || (base && !inside(base, parent));
