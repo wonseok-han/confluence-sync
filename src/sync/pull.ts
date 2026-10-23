@@ -9,10 +9,11 @@
  */
 import { mkdirSync, writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync, readdirSync, copyFileSync, lstatSync, realpathSync } from 'node:fs';
 import { resolve, join, dirname, basename, relative } from 'node:path';
+import { verifyScope } from './scope.js';
 import { positionalArgs } from '../cli/args.js';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { loadWorkspace, saveWorkspace, findSyncBase, resolveSyncBase, inScope, inNestedWorkspace, within, assertWorkspaceConnection, type Workspace } from './workspace.js';
+import { loadWorkspace, findSyncBase, resolveSyncBase, inScope, inNestedWorkspace, within, assertWorkspaceConnection, requireScope, type Workspace } from './workspace.js';
 import { readEnv, requireEnv } from '../confluence/config.js';
 import { createClient, type ContentNode } from '../confluence/client.js';
 import { htmlToMarkdown, codeLanguagesFromStorage } from '../documents/html-to-markdown.js';
@@ -175,6 +176,7 @@ function add(acc: Counts, c: Counts) { acc.pages += c.pages; acc.folders += c.fo
 async function pullNode(ctx: Ctx, id: string, destDir: string): Promise<Counts> {
   const { client, withChildren } = ctx;
   try {
+    await client.assertInScope(id);
     const node = await client.getNode(id);
 
     if (node.type === 'folder') {
@@ -382,6 +384,7 @@ export function mappingPass(
 }
 
 export async function runPull(argv: string[]): Promise<void> {
+  if (argv.includes('--scope')) throw new Error('먼저 csync init --scope로 스코프를 저장하세요.');
   const wholeSpace = argv.includes('--space');
   const noMapping = argv.includes('--no-mapping');
   const explicitBase = optVal(argv, '--base');
@@ -390,41 +393,24 @@ export async function runPull(argv: string[]): Promise<void> {
   if (!within(baseDir, outDir)) throw new Error(`--out 이 base 밖입니다: ${outDir}`);
   const mappingPath = resolve(optVal(argv, '--mapping') ?? defaultMappingPath(baseDir));
   const workspace = loadWorkspace(baseDir);
+  const scope = requireScope(workspace);
   const oldMapping = loadMapping(mappingPath);
   const env = readEnv(baseDir);
-  requireEnv(env);
-  assertWorkspaceConnection(workspace, env);
-  const client = createClient({ baseUrl: env.baseUrl!, email: env.email!, token: env.token! }, { force: false, verify: false });
-  const args = positionalArgs(argv);
-  const target = args[1];
-  const restricted = !!workspace.syncPaths && !workspace.syncPaths.includes('.');
-  if (wholeSpace && restricted) throw new Error('저장된 관리 범위가 있습니다. pull --space 대신 pull로 해당 범위만 가져오세요.');
-  let rootId: string | undefined;
-  let ids: string[];
-  if (wholeSpace) {
-    rootId = (await client.getSpaceInfo(env.spaceKey!)).homepageId;
-    if (!rootId) throw new Error(`스페이스 '${env.spaceKey}' 의 홈페이지를 찾을 수 없습니다.`);
-    ids = [rootId];
-  } else if (target) {
-    const id = parseContentId(target);
-    if (!id) throw new Error(`콘텐츠 ID를 인식할 수 없습니다: ${target}`);
-    ids = [id];
-    if (argv.includes('--root')) rootId = id;
-  } else if (restricted) {
-    ids = workspace.syncPaths!.map(path => {
-      const key = oldMapping[`${path}/`] ? `${path}/` : /\.md$/i.test(path) ? path : `${path}/README.md`;
-      const id = oldMapping[key]?.pageId;
-      if (!id) throw new Error(`관리 범위 루트의 매핑이 없습니다: ${path}`);
-      return id;
-    });
-  } else if (workspace.root) { rootId = workspace.root.id; ids = [rootId]; }
-  else throw new Error('가져올 페이지/폴더를 지정하세요: csync pull <pageId|url>, 또는 pull --space');
-  if (rootId && env.parentId && env.parentId !== rootId) throw new Error('CONFLUENCE_PARENT_ID가 가져올 작업공간 루트와 다릅니다. 설정을 확인하세요.');
-  if (rootId && baseDir !== outDir) throw new Error('--space/--root는 --base와 --out을 같은 작업공간 루트로 지정하세요.');
-  if (rootId && workspace.root && rootId !== workspace.root.id) throw new Error('이미 다른 원격 루트에 연결된 작업공간입니다.');
-  if (rootId && noMapping) throw new Error('--space/--root는 안전한 왕복을 위해 매핑이 필요합니다.');
-
-  const knownById = new Map(Object.entries(noMapping ? {} : oldMapping).map(([rel, entry]) => [entry.pageId, rel]));
+  requireEnv(env); assertWorkspaceConnection(workspace, env);
+  if (noMapping) throw new Error('스코프 기반 pull은 매핑을 유지해야 합니다.');
+  if (argv.includes('--root')) throw new Error('--root 대신 init --scope로 연결할 원격 스코프를 먼저 설정하세요.');
+  if (wholeSpace && scope.path !== '/') throw new Error('--space는 사용자가 / 스코프를 선택한 작업공간에서만 사용할 수 있습니다.');
+  const client = createClient({ baseUrl: env.baseUrl!, email: env.email!, token: env.token! }, { force: false, verify: false, scope: { id: scope.id, spaceId: workspace.connection!.spaceId! } });
+  await verifyScope(client, workspace);
+  const target = positionalArgs(argv)[1];
+  const targetId = target ? parseContentId(target) : scope.id;
+  if (!targetId) throw new Error('가져올 콘텐츠 ID를 인식할 수 없습니다.');
+  await client.assertInScope(targetId);
+  const rootId = targetId === scope.id ? scope.id : undefined;
+  if (!rootId && !Object.values(oldMapping).some(entry => entry.pageId === targetId)) throw new Error('매핑되지 않은 하위 항목은 먼저 스코프 전체를 pull하여 경로를 확보하세요.');
+  const ids = [targetId];
+  if (rootId && baseDir !== outDir) throw new Error('스코프 루트를 받을 때 --base와 --out은 같아야 합니다. 새 폴더는 init --scope로 먼저 설정하세요.');
+  const knownById = new Map(Object.entries(oldMapping).map(([rel, entry]) => [entry.pageId, rel]));
   if (rootId && knownById.has(rootId) && knownById.get(rootId) !== 'README.md') throw new Error('기존 pull 루트가 하위 경로에 매핑되어 있습니다. 기존 트리를 보존하고 새 --out으로 받거나 실제 문서 루트를 --base로 지정하세요.');
   // Stage everything first. Any download/conversion/scope failure leaves local sources untouched.
   const stamp = (file: string) => existsSync(file) ? createHash('sha256').update(readFileSync(file)).digest('hex') : undefined;
@@ -446,7 +432,7 @@ export async function runPull(argv: string[]): Promise<void> {
   const stage = mkdtempSync(join(tmpdir(), 'csync-pull-'));
   const stageOut = join(stage, relative(baseDir, outDir));
   const ctx: Ctx = {
-    client, withChildren: wholeSpace || !!rootId || restricted || argv.includes('--children'),
+    client, withChildren: wholeSpace || !!rootId || argv.includes('--children'),
     obsidian: argv.includes('--obsidian'), spaceKey: env.spaceKey!, written: [], pathById: new Map(), folderIds: new Map(),
     versions: new Map(), assetOwners: new Map(), knownPaths: new Map([...knownById].map(([id, rel]) => [id, resolve(stage, rel)])),
     stageBase: stage, baseDir, workspace, rootId, claimed: new Map(),
@@ -454,14 +440,10 @@ export async function runPull(argv: string[]): Promise<void> {
   try {
     // Reuse page IDs and local paths even when a remote title has changed.
     if (rootId) ctx.knownPaths.delete(rootId);
-    let rootType: 'page' | 'folder' = 'page';
     const counts: Counts = { pages: 0, folders: 0 };
     for (const id of [...new Set(ids)]) {
-      const rel = knownById.get(id);
-      if (restricted && (!rel || !inScope(rel, workspace))) throw new Error('선택한 원격 대상이 저장된 관리 범위 밖입니다.');
       if (rootId === id && oldMapping['README.md'] && oldMapping['README.md'].pageId !== id) throw new Error('루트 README.md가 다른 페이지에 연결되어 있습니다.');
       add(counts, await pullNode(ctx, id, stageOut));
-      if (ctx.folderIds.get(stageOut) === id) rootType = 'folder';
     }
     const { count: anchors, info } = anchorPass(ctx.written, ctx.pathById);
     const relinked = relinkPass(ctx.written, ctx.pathById, ctx.obsidian, info);
@@ -513,14 +495,7 @@ export async function runPull(argv: string[]): Promise<void> {
     }
     const paths = new Map([...ctx.pathById].map(([id, path]) => [id, join(baseDir, relative(stage, path))]));
     const folders = new Map([...ctx.folderIds].map(([path, id]) => [join(baseDir, relative(stage, path)), id]));
-    const mapped = noMapping ? 0 : mappingPass(baseDir, mappingPath, paths, folders, ctx.versions);
-    if (rootId) {
-      workspace.root = { id: rootId, type: rootType, baseUrl: env.baseUrl!, spaceKey: env.spaceKey! };
-    }
-    if (!noMapping) {
-      workspace.connection = { baseUrl: env.baseUrl!, spaceKey: env.spaceKey! };
-      saveWorkspace(baseDir, workspace);
-    }
+    const mapped = mappingPass(baseDir, mappingPath, paths, folders, ctx.versions);
     console.log(`\n${green('완료')}  페이지 ${counts.pages}개, 폴더 ${counts.folders}개  매핑 ${mapped}건  내부링크 ${relinked}개, 앵커 ${anchors}개`);
     console.log(dim(`  base: ${baseDir}`));
   } finally { rmSync(stage, { recursive: true, force: true }); }

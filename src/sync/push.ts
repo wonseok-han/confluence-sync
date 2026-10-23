@@ -13,10 +13,12 @@ import {
 import { loadMapping, saveMapping, type Mapping } from './mapping.js';
 import { createClient } from '../confluence/client.js';
 import { buildIgnorer } from './ignore.js';
-import { resolveSyncBase, loadWorkspace, saveWorkspace, inScope, inNestedWorkspace, assertWorkspaceConnection } from './workspace.js';
+import { resolveSyncBase, loadWorkspace, inScope, inNestedWorkspace, assertWorkspaceConnection, requireScope } from './workspace.js';
+import { verifyScope } from './scope.js';
 import { bold, dim, red, green, yellow, cyan, gray } from '../shared/colors.js';
 
 export async function runPush(argv: string[]): Promise<void> {
+  if (argv.includes('--scope')) throw new Error('스코프는 csync init --scope로 명시적으로 설정하세요. sync는 저장된 스코프만 사용합니다.');
   const DRY_RUN = argv.includes('--dry-run');
   const LIST = argv.includes('--list');
   const REBUILD = argv.includes('--rebuild');
@@ -53,8 +55,8 @@ export async function runPush(argv: string[]): Promise<void> {
 
   const env = readEnv(BASE_DIR);
   const workspace = loadWorkspace(BASE_DIR);
-  const restricted = !!workspace.syncPaths && !workspace.syncPaths.includes('.');
-  if (REBUILD && (restricted || workspace.root || positionals.length)) throw new Error('--rebuild는 저장된 관리 범위·루트 연결 또는 경로 선택과 함께 사용할 수 없습니다.');
+  const remoteScope = requireScope(workspace);
+  if (REBUILD) throw new Error('--rebuild는 스코프 기반 동기화에서 지원하지 않습니다.');
   if ((!DRY_RUN && !LIST) || (VERIFY && !LIST)) assertWorkspaceConnection(workspace, env);
 
   if (!existsSync(BASE_DIR) || !statSync(BASE_DIR).isDirectory()) {
@@ -82,12 +84,12 @@ export async function runPush(argv: string[]): Promise<void> {
   const files = sortForSync(selected);
   /** 딸려온 상위 README 인가 — 이미 페이지가 있으면 내용은 건드리지 않는다. */
   const isCarriedParent = (rel: string) => !explicit.has(rel);
-  const scope = positionals.length || restricted
+  const scope = positionals.length
     ? `선택 ${explicit.size}/${allRel.length}건` +
       (files.length > explicit.size ? dim(` (+상위 ${files.length - explicit.size})`) : '')
     : `${files.length}건`;
   const ignoredNote = ignoredCount ? dim(`  (제외 ${ignoredCount})`) : '';
-  console.log(`${dim('base:')} ${cyan(BASE_DIR)}\n${dim('대상:')} ${scope}${ignoredNote}`);
+  console.log(`${dim('base:')} ${cyan(BASE_DIR)}\n${dim('스코프:')} ${cyan(`${remoteScope.path} (#${remoteScope.id})`)}\n${dim('대상:')} ${scope}${ignoredNote}`);
 
   // ---- 경로 헬퍼 ----
   const isReadmeFile = (p: string) => /README\.md$/.test(p);
@@ -117,16 +119,9 @@ export async function runPush(argv: string[]): Promise<void> {
   }
 
   const mapping = loadMapping(MAPPING_PATH);
-  const root = workspace.root;
-  if (root?.type === 'page' && mapping['README.md']?.pageId !== root.id) throw new Error('작업공간 루트 README.md의 매핑이 없습니다. pull로 복원하세요.');
-  const rootParent = root?.id ?? mapping['README.md']?.pageId ?? env.parentId;
-  // With a saved scope, ancestors are references only; missing ancestors cannot expand it.
-  if (restricted) for (const rel of files) {
-    for (const dir of ancestorFolderDirs(rel)) {
-      if (!inScope(dir, workspace) && !mapping[`${dir}/`]?.pageId) throw new Error(`관리 범위 밖 상위 폴더 연결이 없습니다: ${dir}/`);
-    }
-    if (isCarriedParent(rel) && !mapping[rel]?.pageId) throw new Error(`관리 범위 밖 상위 페이지 연결이 없습니다: ${rel}`);
-  }
+  const root = remoteScope;
+  if (root.type === 'page' && allRel.includes('README.md') && mapping['README.md']?.pageId !== root.id) throw new Error('루트 README.md는 선택한 원격 페이지의 본문입니다. pull로 기준을 확보하거나 새 하위 문서는 다른 파일명을 사용하세요.');
+  const rootParent = root.id;
   // A remap plan is valid only for the tree it was prepared against.
   for (const rel of files) {
     const entry = mapping[rel];
@@ -144,10 +139,10 @@ export async function runPush(argv: string[]): Promise<void> {
   let client: ReturnType<typeof createClient> | undefined;
   let spaceId = '';
   if (!LIST && (!DRY_RUN || VERIFY)) {
-    client = createClient({ baseUrl: env.baseUrl!, email: env.email!, token: env.token! }, { force: FORCE, verify: VERIFY });
-    spaceId = await client.getSpaceId(env.spaceKey!);
-    if (!REBUILD) for (const rel of files) {
-      if (isCarriedParent(rel) && mapping[rel]?.pageId) continue;
+    client = createClient({ baseUrl: env.baseUrl!, email: env.email!, token: env.token! }, { force: FORCE, verify: VERIFY, scope: { id: root.id, spaceId: workspace.connection!.spaceId! } });
+    spaceId = await verifyScope(client, workspace);
+    for (const rel of files) {
+      if (isCarriedParent(rel) && mapping[rel]?.pageId) { await client.assertInScope(mapping[rel].pageId); continue; }
       const { title, body, fm } = readDoc(BASE_DIR, rel);
       const hash = docHash(title, render(rel, body, title));
       const entry = mapping[rel] ?? (fm.pageId ? { pageId: fm.pageId, title } : undefined);
@@ -193,10 +188,7 @@ export async function runPush(argv: string[]): Promise<void> {
   }
 
   const apiClient = client!;
-  workspace.connection = { baseUrl: env.baseUrl!, spaceKey: env.spaceKey! };
-  saveWorkspace(BASE_DIR, workspace);
-  if (REBUILD) { await apiClient.deleteAll(mapping); saveMapping(MAPPING_PATH, {}); }
-  const work: Mapping = REBUILD ? {} : mapping;
+  const work: Mapping = mapping;
 
   let failed = 0;
   let moved = 0;
@@ -208,7 +200,6 @@ export async function runPush(argv: string[]): Promise<void> {
     const key = `${dir}/`;
     const pcKey = containerKeyOf(parentDirOf(dir), folderIndex);
     const parentId = pcKey ? work[pcKey]?.pageId : rootParent;
-    if (restricted && !inScope(dir, workspace)) return !!work[key]?.pageId;
     if (pcKey && !parentId) {
       console.error(yellow(`  ✗ 폴더 건너뜀  ${dir}/  (부모 '${pcKey}' 가 아직 없음)`));
       return false;
@@ -257,7 +248,7 @@ export async function runPush(argv: string[]): Promise<void> {
     if (r.deadAnchors.length) {
       console.error(yellow(`  ⚠ 대응 헤딩 없는 앵커  ${rel}`) + dim(`  ${r.deadAnchors.slice(0, 3).join(' ')}${r.deadAnchors.length > 3 ? ` 외 ${r.deadAnchors.length - 3}` : ''}`));
     }
-    const parentId = pk ? work[pk]?.pageId : rel === 'README.md' ? env.parentId : rootParent;
+    const parentId = pk ? work[pk]?.pageId : rootParent;
     if (pk && !parentId) {
       failed++;
       console.error(yellow(`  ✗ 건너뜀  ${rel}  (부모 '${pk}' 가 아직 없음)`));

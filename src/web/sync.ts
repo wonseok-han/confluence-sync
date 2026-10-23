@@ -1,5 +1,7 @@
-import { loadWorkspace, inScope, inNestedWorkspace, type Workspace } from '../sync/workspace.js';
+import { loadWorkspace, inScope, inNestedWorkspace, requireScope, type Workspace } from '../sync/workspace.js';
 import { mappingPath as defaultMappingPath, METADATA_DIR } from '../sync/metadata.js';
+import { configureScope, scopeTree } from '../sync/scope.js';
+import type { Env } from '../confluence/config.js';
 import { referenceRoots } from '../sync/references.js';
 /** Web adapter for the existing push CLI. Only preview and incremental push are exposed. */
 import { spawn } from 'node:child_process';
@@ -12,7 +14,7 @@ import { within } from './output.js';
 import { collectMarkdown, resolveSelection } from '../documents/catalog.js';
 import { buildIgnorer } from '../sync/ignore.js';
 
-const keys = ['CONFLUENCE_BASE_URL', 'CONFLUENCE_EMAIL', 'CONFLUENCE_API_TOKEN', 'CONFLUENCE_SPACE_KEY', 'CONFLUENCE_PARENT_ID', 'CONFLUENCE_PARENT_PAGE_ID'] as const;
+const keys = ['CONFLUENCE_BASE_URL', 'CONFLUENCE_EMAIL', 'CONFLUENCE_API_TOKEN', 'CONFLUENCE_SPACE_KEY'] as const;
 type Settings = Record<string, string>;
 type Selection = { base: string; target: string; envFile: string; verify: boolean; referenceRoots: string[] };
 type Prepared = { selection: Selection; env: Settings; config: ReturnType<typeof publicConfig>; fingerprint: string };
@@ -29,13 +31,11 @@ async function settings(base: string, envFile: string) {
   }
   const env: Settings = {};
   for (const key of keys) env[key] = values[key]?.trim() ?? '';
-  env.CONFLUENCE_PARENT_ID ||= env.CONFLUENCE_PARENT_PAGE_ID;
   return { env, source };
 }
 function publicConfig(env: Settings, source: string, workspace?: Workspace) {
   return { source, baseUrl: env.CONFLUENCE_BASE_URL, email: env.CONFLUENCE_EMAIL,
-    spaceKey: env.CONFLUENCE_SPACE_KEY, parentId: workspace?.root?.id ?? env.CONFLUENCE_PARENT_ID,
-    syncPaths: workspace?.syncPaths ?? ['.'],
+    spaceKey: env.CONFLUENCE_SPACE_KEY, scope: workspace?.version === 2 ? workspace.scope ?? null : null,
     hasToken: !!env.CONFLUENCE_API_TOKEN,
     missing: keys.slice(0, 4).filter(key => !env[key]) };
 }
@@ -71,6 +71,7 @@ async function prepare(input: unknown): Promise<Prepared> {
   const ignorer = buildIgnorer(base, []);
   const docs = collectMarkdown(base).map(path => relative(base, path).split('\\').join('/')).filter(path => !ignorer.ignores(path));
   const workspace = loadWorkspace(base);
+  requireScope(workspace);
   const requested = target === base ? docs : resolveSelection(docs, [target], base);
   if (target !== base && requested.some(rel => !inScope(rel, workspace))) throw new Error('선택한 대상이 저장된 관리 범위 밖입니다.');
   const picked = requested.filter(rel => inScope(rel, workspace) && !inNestedWorkspace(base, rel));
@@ -121,6 +122,15 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
   let job: Job | null = null;
   let plan: { id: string; prepared: Prepared } | null = null;
   let locked = false;
+  const scopedSettings = async (input: unknown) => {
+    const body = input as { base?: string; envFile?: string; parentId?: string; scopeId?: string };
+    if (!body || typeof body.base !== 'string' || typeof body.envFile !== 'string') throw new Error('설정 경로를 확인하세요.');
+    const base = await realpath(resolve(body.base));
+    if (!(await stat(base)).isDirectory() || dirname(base) === base) throw new Error('로컬 기준 폴더를 선택하세요.');
+    const { env } = await settings(base, body.envFile);
+    const config: Env = { baseUrl: env.CONFLUENCE_BASE_URL, email: env.CONFLUENCE_EMAIL, token: env.CONFLUENCE_API_TOKEN, spaceKey: env.CONFLUENCE_SPACE_KEY };
+    return { base, config, body };
+  };
   const running = () => locked || job?.state === 'running';
   const launch = (kind: Job['kind'], prepared: Prepared) => {
     const current: Job = { id: randomUUID(), kind, state: 'running', log: '', selection: prepared.selection, config: prepared.config, planId: null, startedAt: new Date().toISOString() };
@@ -156,6 +166,23 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
   };
   return {
     running,
+    scopes: async (input: unknown) => {
+      if (running()) throw new Error('동기화 작업이 진행 중입니다.');
+      const { config, body } = await scopedSettings(input);
+      if (body.parentId !== undefined && (typeof body.parentId !== 'string' || !/^\d+$/.test(body.parentId))) throw new Error('스코프 탐색 ID를 확인하세요.');
+      return scopeTree(config, body.parentId);
+    },
+    setScope: async (input: unknown) => {
+      if (running()) throw new Error('동기화 작업이 진행 중입니다.');
+      locked = true; plan = null;
+      try {
+        const { base, config, body } = await scopedSettings(input);
+        if (typeof body.scopeId !== 'string' || !/^\d+$/.test(body.scopeId)) throw new Error('스코프를 직접 선택하세요.');
+        await configureScope(base, config, `id:${body.scopeId}`);
+        const { env, source } = await settings(base, body.envFile!);
+        return publicConfig(env, source, loadWorkspace(base));
+      } finally { locked = false; }
+    },
     current: () => job,
     config: async (base: string, envFile: string) => {
       const resolved = await realpath(resolve(base));

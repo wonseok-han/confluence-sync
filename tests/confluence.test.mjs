@@ -234,3 +234,9 @@ test('a concurrent remote edit during a move is never adopted as a baseline or o
  await assert.rejects(client().upsertPage(m,'space','a.md','A','local','new','dest'),/이동 도중 원격/);
  assert.equal(m['a.md'].remoteVersion,1);assert.equal(m['a.md'].hash,'same');assert.ok(m['a.md'].pendingMove);
 });
+
+test('attachment uploads are blocked if the target page is outside the selected scope',async t=>{
+ const {root,put}=workspace(t);const abs=put('report.pdf','private bytes');t.mock.method(console,'error',()=>{});
+ mockFetch(t,[{path:'/wiki/rest/api/content/1/child/attachment?filename=report.pdf',body:{results:[]}},{path:'/wiki/rest/api/content/1?expand=ancestors,space,version',body:{id:'1',type:'page',title:'Outside',space:{id:'space'},ancestors:[]}}]);
+ assert.equal(await client({scope:{id:'200',spaceId:'space'}}).uploadAttachments('1',[{filename:'report.pdf',abs}],root),0);
+});

@@ -12,8 +12,7 @@ export type Env = {
   email?: string;
   token?: string;
   spaceKey?: string;
-  /** 루트 앵커. 페이지·폴더 id 모두 가능. CONFLUENCE_PARENT_ID(구: CONFLUENCE_PARENT_PAGE_ID). */
-  parentId?: string;
+
 };
 
 export function readEnv(base?: string): Env {
@@ -25,8 +24,7 @@ export function readEnv(base?: string): Env {
     email: values.CONFLUENCE_EMAIL,
     token: values.CONFLUENCE_API_TOKEN,
     spaceKey: values.CONFLUENCE_SPACE_KEY,
-    // 신규 이름 우선, 없으면 구 이름(CONFLUENCE_PARENT_PAGE_ID) 하위호환
-    parentId: (values.CONFLUENCE_PARENT_ID ?? values.CONFLUENCE_PARENT_PAGE_ID)?.trim() || undefined,
+
   };
 }
 

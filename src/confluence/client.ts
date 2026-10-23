@@ -8,7 +8,7 @@ import type { Mapping } from '../sync/mapping.js';
 import { red, yellow, dim } from '../shared/colors.js';
 
 export type ConfluenceConfig = { baseUrl: string; email: string; token: string };
-export type ClientOpts = { force: boolean; verify: boolean };
+export type ClientOpts = { force: boolean; verify: boolean; scope?: { id: string; spaceId: string } };
 export type UpsertResult = 'created' | 'updated' | 'skipped' | 'moved';
 export type ImageRef = { filename: string; abs: string };
 /** getNode 결과: 본문(HTML/storage) + 출처 메타(frontmatter 용). */
@@ -67,7 +67,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     const data = await api(`/api/v2/spaces?keys=${encodeURIComponent(key)}`);
     const space = data.results?.[0];
     if (!space) throw new Error(`Space key '${key}' 를 찾을 수 없습니다.`);
-    return { id: space.id, homepageId: space.homepageId };
+    return { id: String(space.id), homepageId: space.homepageId ? String(space.homepageId) : undefined };
   }
 
   /** 매핑에 기록된 페이지를 모두 삭제(휴지통). 매핑 파일 영속화는 호출자 책임. */
@@ -105,6 +105,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     // 롤백 오류에만 재시도한다. 매번 첨부를 재조회해 생성/갱신 경로를 다시 결정한다.
     for (let attempt = 0; attempt < 3; attempt++) {
       const attId = await findAttachmentId(pageId, filename);
+      await assertInScope(pageId);
       const path = attId
         ? `/rest/api/content/${pageId}/child/attachment/${attId}/data`
         : `/rest/api/content/${pageId}/child/attachment`;
@@ -141,12 +142,25 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
 
   const uploadImages = uploadAttachments;
 
+  /** Expanded metadata only: scope selection never downloads page bodies. */
+  async function getContentInfo(id: string): Promise<{ id: string; title: string; type: 'page' | 'folder'; spaceId: string; ancestors: { id: string; title: string }[] }> {
+    const data = await getV1(`/rest/api/content/${encodeURIComponent(id)}?expand=ancestors,space,version`);
+    if (String(data.id) !== id || !['page', 'folder'].includes(data.type) || !data.space?.id || !Array.isArray(data.ancestors)) throw new Error(`콘텐츠 위치를 확인할 수 없습니다: ${id}`);
+    return { id: String(data.id), title: data.title, type: data.type, spaceId: String(data.space.id), ancestors: data.ancestors.map((a: any) => ({ id: String(a.id), title: a.title })) };
+  }
+  async function assertInScope(id: string): Promise<void> {
+    if (!opts.scope) return;
+    const info = await getContentInfo(id);
+    if (info.spaceId !== opts.scope.spaceId || (info.id !== opts.scope.id && !info.ancestors.some(a => a.id === opts.scope!.id))) throw new Error(`선택한 원격 스코프 밖입니다: #${id}`);
+  }
+
   /** Read-only preflight. An unknown baseline must never authorize overwriting an existing page. */
   async function checkPage(mapping: Mapping, spaceId: string, key: string, hash: string, forceUpdate = false): Promise<void> {
     const entry = mapping[key];
     if (!entry?.pageId) return;
     const changed = entry.hash !== hash || opts.force || forceUpdate;
-    if (!changed && !opts.verify && !entry.pendingMove) return;
+    if (!changed && !opts.verify && !entry.pendingMove && !opts.scope) return;
+    await assertInScope(entry.pageId);
     const current = await getPageOrNull(entry.pageId);
     assertPageBaseline(entry, current, spaceId, key, changed || !!entry.pendingMove);
   }
@@ -171,7 +185,9 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     if (existing?.pageId) {
       const changed = existing.hash !== hash || opts.force || forceUpdate;
       // 변경 없고 검증(--verify)도 안 하면 호출 없이 스킵
-      if (!changed && !opts.verify && !existing.pendingMove) return 'skipped';
+      if (!changed && !opts.verify && !existing.pendingMove && !opts.scope) return 'skipped';
+      await assertInScope(existing.pageId);
+      if (existing.pendingMove && existing.pageId === opts.scope?.id) throw new Error('스코프 루트는 이동할 수 없습니다.');
       let cur = await getPageOrNull(existing.pageId, !!existing.pendingMove);
       assertPageBaseline(existing, cur, spaceId, key, changed || !!existing.pendingMove);
       if (cur) {
@@ -185,7 +201,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
               // A sibling of the top-level homepage is also top-level.
               const space = await api(`/api/v2/spaces/${spaceId}`);
               targetId = space.homepageId;
-              if (!targetId) throw new Error('최상위 이동 기준 홈페이지가 없습니다. CONFLUENCE_PARENT_ID를 지정하세요.');
+              if (!targetId) throw new Error('최상위 이동 기준 홈페이지가 없습니다. 원격 스코프를 다시 설정하세요.');
               const target = await getPageOrNull(targetId);
               if (!target || target.parentId || String(target.spaceId) !== spaceId) throw new Error('최상위 이동 기준 홈페이지를 확인할 수 없습니다.');
               position = 'after';
@@ -194,6 +210,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
             const priorBody = cur.body?.storage?.value;
             const priorTitle = cur.title;
             if (typeof priorBody !== 'string') throw new Error('이동 전 원격 본문을 확인할 수 없습니다.');
+            if (parentId) await assertInScope(parentId);
             await api(`/rest/api/content/${existing.pageId}/move/${position}/${targetId}`, { method: 'PUT' });
             cur = await getPageOrNull(existing.pageId, true);
             if (cur?.body?.storage?.value !== priorBody || cur?.title !== priorTitle) throw new Error('이동 도중 원격 본문·제목이 변경되었습니다. 본문을 덮어쓰지 않습니다.');
@@ -206,6 +223,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
           if (moved && cur.version?.number) existing.remoteVersion = cur.version.number;
           return moved ? 'moved' : 'skipped';
         }
+        await assertInScope(existing.pageId);
         const nextVersion = (cur.version?.number ?? 1) + 1;
         await api(`/api/v2/pages/${existing.pageId}`, {
           method: 'PUT',
@@ -221,6 +239,8 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
         return 'updated';
       }
     }
+    if (opts.scope && !parentId) throw new Error('스코프 안의 부모가 필요합니다.');
+    if (parentId) await assertInScope(parentId);
     const body: Record<string, unknown> = {
       spaceId, status: 'current', title,
       body: { representation: 'storage', value: storage },
@@ -269,7 +289,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     let path: string | null = `/rest/api/content/${id}/child/${kind}?limit=100`;
     while (path) {
       const data: any = await getV1(path);
-      for (const c of data.results ?? []) out.push({ id: c.id, title: c.title });
+      for (const c of data.results ?? []) out.push({ id: String(c.id), title: c.title });
       const next = data._links?.next;
       path = next ? (next.startsWith('/') ? next : `/${next}`) : null;
     }
@@ -354,6 +374,8 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
 
   /** 폴더 생성(write:folder 필요). parentId 없으면 공간 최상위. 생성된 folder id 반환. */
   async function createFolder(spaceId: string, title: string, parentId?: string): Promise<string> {
+    if (opts.scope && !parentId) throw new Error('스코프 안의 부모가 필요합니다.');
+    if (parentId) await assertInScope(parentId);
     const body: Record<string, unknown> = { spaceId, title };
     if (parentId) body.parentId = parentId;
     const created = await api(`/api/v2/folders`, { method: 'POST', body: JSON.stringify(body) });
@@ -365,6 +387,8 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     spaceId: string, spaceKey: string, title: string, parentId?: string, mappedId?: string,
   ): Promise<{ id: string; created: boolean }> {
     parentId = parentId?.trim() || undefined;
+    if (parentId) await assertInScope(parentId);
+    if (mappedId) { await assertInScope(mappedId); }
     if (mappedId) {
       let folder: any;
       try {
@@ -404,7 +428,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   }
 
   return {
-    api, getPageOrNull, getSpaceId, getSpaceInfo, deleteAll, uploadImages, uploadAttachments, upsertPage, checkPage,
+    api, getContentInfo, assertInScope, getPageOrNull, getSpaceId, getSpaceInfo, deleteAll, uploadImages, uploadAttachments, upsertPage, checkPage,
     getNode, getChildPages, getChildFolders, listAttachments, downloadAttachment,
     getContentOrNull, findFolder, createFolder, upsertFolder, deleteFolder,
   };

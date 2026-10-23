@@ -6,9 +6,11 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { loadWorkspace, saveWorkspace, scopePath, resolveSyncBase, inNestedWorkspace } from '../sync/workspace.js';
+import { loadWorkspace, saveWorkspace, resolveSyncBase } from '../sync/workspace.js';
 import { migrateMetadata, mappingPath } from '../sync/metadata.js';
 import { loadMapping } from '../sync/mapping.js';
+import { configureScope } from '../sync/scope.js';
+import { readEnv } from '../confluence/config.js';
 import { bold, cyan, dim, green, red, yellow } from '../shared/colors.js';
 
 type Field = {
@@ -85,18 +87,12 @@ export async function runInit(argv: string[]): Promise<void> {
   }
   if (argv.includes('--scope')) {
     const baseArg = argv.indexOf('--base');
-    const base = resolveSyncBase(baseArg >= 0 ? argv[baseArg + 1] : undefined) ?? process.cwd();
-    const paths: string[] = [];
-    for (let i = 0; i < argv.length; i++) if (argv[i] === '--scope') {
-      const value = argv[++i];
-      if (!value || value.startsWith('--')) throw new Error('--scope <상대 경로>가 필요합니다.');
-      paths.push(scopePath(base, value));
-    }
-    for (const path of paths) if (inNestedWorkspace(base, /\.md$/i.test(path) ? path : `${path}/.boundary`)) throw new Error(`독립된 하위 작업공간입니다: ${path}. 해당 폴더를 --base로 사용하세요. 중첩 매핑은 자동 병합하지 않습니다.`);
-    const workspace = loadWorkspace(base);
-    workspace.syncPaths = [...new Set(paths)];
-    saveWorkspace(base, workspace);
-    console.log(`관리 범위 저장: ${base} → ${workspace.syncPaths.join(', ')}. Confluence 호출 없음.`);
+    if (baseArg >= 0 && (!argv[baseArg + 1] || argv[baseArg + 1].startsWith('--'))) throw new Error('--base 경로가 필요합니다.');
+    const base = baseArg >= 0 ? resolve(argv[baseArg + 1]) : process.cwd();
+    const choices = argv.flatMap((arg, i) => arg === '--scope' ? [argv[i + 1]] : []);
+    if (choices.length !== 1 || !choices[0] || choices[0].startsWith('--')) throw new Error('--scope <스페이스 내 경로|id:ID>를 하나 지정하세요. 전체는 / 입니다.');
+    const workspace = await configureScope(base, readEnv(base), choices[0]);
+    console.log(`스코프 저장: ${workspace.scope!.path} (#${workspace.scope!.id}) ↔ ${base}. 원격 메타데이터 조회만 수행했습니다.`);
     return;
   }
   const target = resolve(process.cwd(), '.env');
@@ -107,7 +103,6 @@ export async function runInit(argv: string[]): Promise<void> {
     { key: 'CONFLUENCE_EMAIL', hint: 'Atlassian 계정 이메일' },
     { key: 'CONFLUENCE_API_TOKEN', hint: 'Scoped API 토큰 (id.atlassian.com → Create API token with scopes). 입력은 가려집니다', secret: true },
     { key: 'CONFLUENCE_SPACE_KEY', hint: 'URL .../wiki/spaces/<KEY>/... 의 KEY' },
-    { key: 'CONFLUENCE_PARENT_ID', hint: '루트 앵커(페이지 또는 폴더 id). 비우면 공간 최상위', optional: true },
     { key: 'CONFLUENCE_SYNC_BASE', hint: `동기화 루트 디렉토리 (기본: ${process.cwd()})`, optional: true, def: process.cwd() },
   ];
 
@@ -160,5 +155,5 @@ export async function runInit(argv: string[]): Promise<void> {
 
   writeFileSync(target, renderEnv(values));
   console.log(green(`\n✓ .env 생성 완료: ${target}`));
-  console.log(`  다음으로:  ${cyan('confluence-sync --dry-run')}  ${dim('(대상·상태 미리보기)')}`);
+  console.log(`  다음으로:  ${cyan('csync init --scope <스페이스 내 경로>')}  ${dim('(필수 스코프 설정)')}`);
 }

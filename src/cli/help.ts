@@ -24,7 +24,7 @@ ${h('사용법:')}
   ${o('confluence-sync')} [옵션] [경로...]      문서를 동기화(md → Confluence)
   ${o('confluence-sync web')}                   문서 변환·Confluence 동기화 웹 화면(로컬 전용)
   ${o('confluence-sync init')}                  대화형으로 .env 설정 파일 생성
-  ${o('confluence-sync pull <pageId|url>')}     Confluence 페이지/폴더를 .md 로 가져오기(역방향)
+  ${o('confluence-sync pull [pageId|url]')}     Confluence 페이지/폴더를 .md 로 가져오기(역방향)
   ${o('confluence-sync convert --to <형식>')}   이미 받은 .md 의 링크 표기를 바꾸기(로컬 전용)
   ${o('confluence-sync --help | --version')}
 
@@ -43,8 +43,9 @@ ${h('메타데이터 이전(로컬 전용):')}
   기존 이름도 계속 읽습니다. 기존·새 파일의 내용이 다르면 중단합니다.
 
 ${h('관리 범위 설정(로컬 전용):')}
-  ${o('csync init --base <dir> --scope <path>')}  저장된 관리 범위 설정(.env 유지)
-  ${o('--scope <path>')}는 base 상대 경로이며 반복 가능. ${o('--scope .')}로 전체 범위 복원.
+  ${o('csync init --base <dir> --scope <원격경로|id:ID>')}  필수 원격 스코프 직접 설정(.env 유지, 메타데이터 조회만)
+  ${o('--base')}는 로컬 루트, ${o('--scope')}는 스페이스 기준 원격 경로 하나. 기본값 없음.
+  전체도 ${o('--scope /')}로 직접 선택합니다. 기존 부모 환경변수·로컬 범위는 자동 전환하지 않습니다.
   sync·pull·remap·웹이 같은 범위를 적용하며, 독립된 하위 매핑은 자동 병합하지 않습니다.
 
 ${h('web 옵션:')}
@@ -62,7 +63,7 @@ ${h('동기화 옵션:')}
   ${o('--list')}            인식된 문서·제목·계층만 출력 (Confluence 호출·인증 없음)
   ${o('--force')}           로컬 해시가 같아도 갱신 (원격 충돌 검사는 유지)
   ${o('--verify')}          변경 없는 문서도 원격 버전·존재 확인. --dry-run과 함께 읽기 전용 검사
-  ${o('--rebuild')}         매핑된 페이지 전부 삭제 후 재생성
+  ${o('--rebuild')}         v2 스코프 기반 동기화에서는 거부
   ${o('--no-color')}        컬러 출력 끄기
   ${o('-h, --help')}        이 도움말
   ${o('-v, --version')}     버전 출력
@@ -76,20 +77,20 @@ ${h('경로 인자:')}
 
 ${h('pull(역방향) 옵션:')}
   ${o('--out <dir>')}         .md 를 생성할 디렉토리(기본: 현재 폴더)
-  ${o('--root')}              지정한 페이지/폴더를 --out 자체에 연결(페이지 본문은 README.md)
   ${o('--children')}          하위 페이지까지 재귀적으로 가져와 폴더 트리로 복원
-  ${o('--space')}             홈페이지 하위 트리를 --out 자체에 연결(같은 이름의 바깥 폴더를 만들지 않음)
+  ${o('--space')}             / 스코프를 직접 선택한 경우에만 사용 가능
   ${o('--obsidian')}          내부 링크를 [[wikilink]] 로 출력(기본: 어디서나 열리는 상대 .md 링크)
   ${o('--base <dir>')}        매핑 키의 기준(기본: --out 에서 위로 올라가며 .csync/ 또는 기존 매핑을 찾음)
   ${o('--mapping <path>')}    매핑 파일 위치 (기본: <base>/.csync/mapping.json)
-  ${o('--no-mapping')}        매핑을 기록하지 않음
   (이미지는 항상 attachments/<문서명>/ 하위에 저장됨)
-  대상을 생략하면 저장된 관리 범위 또는 연결된 루트를 가져옵니다.
+  대상을 생략하면 저장된 원격 스코프를 재귀적으로 가져옵니다. 미설정 시 중단합니다.
+  --root·--no-mapping은 지원하지 않습니다. 하위 ID는 스코프 안의 기존 매핑만 사용합니다.
   로컬 변경·이동 대기 문서는 덮어쓰지 않으며, 전체 다운로드 후 충돌 검사합니다.
   받아온 문서는 원격 버전·pageId 와 ${dim('변경 해시')}가 매핑에 기록되어, ${bold('pull 직후 push 하면 "변경없음"')} 입니다
   ${dim('(기록하지 않으면 방금 받아온 내용을 그대로 되올려 보내게 됩니다).')}
   예)  ${o('confluence-sync pull https://.../pages/12345/Title --out ./docs --children')}
-       ${o('confluence-sync pull --space --out ./docs')}
+       ${o('confluence-sync init --base ./docs --scope /')}
+       ${o('confluence-sync pull --base ./docs')}
 
 ${h('convert(이미 받아둔 .md 손보기) 옵션:')} ${dim('Confluence 호출·인증 없음')}
   ${o('--to obsidian')}    상대 .md 링크 → [[wikilink]]
@@ -129,6 +130,7 @@ ${h('설정(.env):')}
   작업공간의 .env(없으면 실행 위치 .env)를 읽으며 셸 환경변수가 우선합니다.
   이전 매핑에 원격 버전이 없으면 변경 push를 차단합니다. 로컬 변경을 보관한 후 pull로 기준을 확보하세요.
   필수: CONFLUENCE_BASE_URL, CONFLUENCE_EMAIL, CONFLUENCE_API_TOKEN, CONFLUENCE_SPACE_KEY
-  선택: CONFLUENCE_PARENT_ID(페이지/폴더 id), CONFLUENCE_SYNC_BASE
+  선택: CONFLUENCE_SYNC_BASE. 부모 ID 환경변수는 사용하지 않습니다.
+  원격 스코프는 init --scope로 직접 선택해야 합니다.
   ${o("'confluence-sync init'")} 으로 대화형 생성 가능.`);
 }

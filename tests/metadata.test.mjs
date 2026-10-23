@@ -1,3 +1,4 @@
+import {bindScope,scopeFixture} from './helpers/scope.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, mkdirSync, symlinkSync, utimesSync, statSync } from 'node:fs';
@@ -107,23 +108,17 @@ test('reference links use mappings in .csync without modifying the reference wor
  assert.equal(existsSync(join(refs, '.confluence-sync.json')), false);
 });
 
-test('pull from an env-only directory stores all new state under .csync and reuses that root', async t => {
- configure(t); const { root } = workspace(t, { '.env': env });
- mockFetch(t, [{ path: '/wiki/api/v2/spaces?keys=TEST', body: { results: [{ id: 'space', homepageId: '1' }] } },
-  { path: '/wiki/rest/api/content/1?expand=body.export_view,body.storage,version', body: { id: '1', title: 'Home', type: 'page', body: { export_view: { value: '<p>Home</p>' } }, version: { number: 4 } } },
-  { path: '/wiki/rest/api/content/1/child/folder?limit=100', body: { results: [] } },
-  { path: '/wiki/rest/api/content/1/child/page?limit=100', body: { results: [] } }]);
- await runPull(['pull', '--space', '--out', root]);
- assert.ok(existsSync(join(root, '.csync/mapping.json'))); assert.ok(existsSync(join(root, '.csync/workspace.json')));
- assert.equal(loadMapping(mappingPath(root))['README.md'].remoteVersion, 4); assert.equal(readFileSync(join(root, '.env'), 'utf8'), env);
- assert.equal(loadWorkspace(root).root.id, '1'); assert.equal(existsSync(join(root, '.confluence-sync.json')), false);
+test('pull from an env-only directory refuses to infer a scope and writes no state', async t => {
+ configure(t);const {root}=workspace(t,{'.env':env});mockFetch(t,[]);
+ await assert.rejects(runPull(['pull','--space','--out',root]),/스코프가 설정되지/);
+ assert.equal(existsSync(join(root,'.csync')),false);assert.equal(readFileSync(join(root,'.env'),'utf8'),env);
 });
 
 for (const path of ['.csync/mapping.json', '.csync/workspace.json', '.csync/ignore']) test(`web preview includes new metadata content in its fingerprint: ${path}`, async t => {
  const { root, put } = workspace(t, { '.env': env, 'doc.md': '# Doc', '.csync/mapping.json': '{}', '.csync/workspace.json': '{"version":1,"syncPaths":["."]}', '.csync/ignore': 'a.md\n' });
- const sync = createWebSync(async () => 0); await sync.preview(request(root)); const preview = await finished(sync); assert.equal(preview.state, 'succeeded');
+ bindScope(root);const sync = createWebSync(async () => 0); await sync.preview(request(root)); const preview = await finished(sync); assert.equal(preview.state, 'succeeded');
  const file = join(root, path), before = statSync(file);
- const content = path.endsWith('mapping.json') ? '{"doc.md":{"pageId":"123"}}' : path.endsWith('workspace.json') ? '{"version":1,"syncPaths":["doc.md"]}' : 'b.md\n';
+ const content = path.endsWith('mapping.json') ? '{"doc.md":{"pageId":"123"}}' : path.endsWith('workspace.json') ? JSON.stringify({...scopeFixture(),scope:{id:'home',type:'folder',path:'/Changed'}}) : 'b.md\n';
  put(path, content); utimesSync(file, before.atime, before.mtime);
  await assert.rejects(sync.push(preview.planId), /변경/); assert.equal(sync.current().kind, 'preview');
 });

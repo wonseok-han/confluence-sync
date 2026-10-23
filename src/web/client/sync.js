@@ -2,7 +2,7 @@ import { renderSyncLog } from './sync-log.js';
 
 export function initSync({ api, context, setBusy, showSync }) {
   const $ = id => document.getElementById(id);
-  let busy = false, planId = null, preparedKey = '', loadedKey = '', timer;
+  let busy = false, planId = null, preparedKey = '', loadedKey = '', timer, configured = false, scopeKey = '', scopeItems = [], scopeParent = null;
   const status = (text, error = false) => { $('sync-status').textContent = text; $('sync-status').classList.toggle('error', error); };
   function selection() {
     const ctx = context(), scope = $('sync-scope').value;
@@ -15,21 +15,28 @@ export function initSync({ api, context, setBusy, showSync }) {
     busy = isBusy;
     if (!transient && preparedKey && preparedKey !== key()) { planId = null; preparedKey = ''; status('대상이나 옵션이 바뀌었습니다. 다시 미리보기해 주세요.'); }
     if (!transient && loadedKey && loadedKey !== configKey()) {
-      loadedKey = ''; $('sync-config').replaceChildren(); $('sync-config-status').textContent = '설정 확인 또는 미리보기를 실행하면 업로드 위치를 불러옵니다.';
+      loadedKey = ''; configured = false; $('sync-config').replaceChildren(); $('sync-config-status').textContent = '설정 확인 또는 미리보기를 실행하면 업로드 위치를 불러옵니다.';
     }
-    for (const id of ['sync-scope', 'sync-env', 'sync-load', 'sync-verify', 'sync-references', 'sync-add-reference']) $(id).disabled = busy;
+    if (scopeKey && scopeKey !== configKey()) { scopeKey = ''; scopeItems = []; scopeParent = null; $('sync-remote-scope').replaceChildren(new Option('스코프를 선택하세요', '')); }
+    for (const id of ['sync-scope-browse', 'sync-remote-scope', 'sync-scope-up', 'sync-scope-open', 'sync-scope-save', 'sync-scope', 'sync-env', 'sync-load', 'sync-verify', 'sync-references', 'sync-add-reference']) $(id).disabled = busy;
     $('sync-load').disabled = busy || !context().base;
-    $('sync-preview').disabled = busy || !hasTarget();
+    $('sync-preview').disabled = busy || !hasTarget() || !configured;
+    $('sync-scope-browse').disabled = busy || !context().base;
+    const selected = !!$('sync-remote-scope').value;
+    $('sync-remote-scope').disabled = busy || !scopeItems.length;
+    $('sync-scope-up').disabled = busy || !scopeParent?.parentId;
+    $('sync-scope-open').disabled = busy || !selected;
+    $('sync-scope-save').disabled = busy || !selected;
     $('sync-push').disabled = busy || !planId;
     const request = selection();
     $('sync-target').textContent = hasTarget() ? `대상 · ${request.target || request.base}` : '왼쪽에서 문서를 선택하세요.';
   }
   function renderConfig(config) {
-    loadedKey = configKey(); $('sync-config').replaceChildren();
-    for (const [name, value] of [['설정 출처', config.source], ['서버', config.baseUrl || '미설정'], ['계정', config.email || '미설정'], ['스페이스', config.spaceKey || '미설정'], ['상위 페이지 / 폴더', config.parentId || '스페이스 최상위'], ['관리 범위', config.syncPaths?.join(', ') || '.'], ['API 토큰', config.hasToken ? '설정됨' : '미설정']]) {
+    loadedKey = configKey(); configured = !!config.scope; $('sync-config').replaceChildren();
+    for (const [name, value] of [['설정 출처', config.source], ['서버', config.baseUrl || '미설정'], ['계정', config.email || '미설정'], ['스페이스', config.spaceKey || '미설정'], ['원격 스코프', config.scope ? `${config.scope.path} (#${config.scope.id})` : '미설정 — 직접 선택 필요'], ['API 토큰', config.hasToken ? '설정됨' : '미설정']]) {
       const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = name; dd.textContent = value; $('sync-config').append(dt, dd);
     }
-    $('sync-config-status').textContent = config.missing.length ? `설정 필요: ${config.missing.join(', ')}. 미리보기는 인증 없이 사용할 수 있습니다.` : '접속 설정을 불러왔습니다. 실제 연결·권한 확인은 동기화 시 수행합니다.';
+    $('sync-config-status').textContent = config.missing.length ? `설정 필요: ${config.missing.join(', ')}. 미리보기는 인증 없이 사용할 수 있습니다.` : configured ? '접속 설정과 저장된 스코프를 불러왔습니다.' : '원격 스코프를 직접 선택하고 저장하세요.';
   }
   function renderJob(job) {
     $('sync-job-summary').hidden = false;
@@ -61,7 +68,7 @@ export function initSync({ api, context, setBusy, showSync }) {
     }
   }
   async function start(kind) {
-    if (busy) return;
+    if (busy || !configured) return;
     const request = selection(), id = planId;
     if (kind === 'push' && !id) return;
     preparedKey = key(); planId = null; setBusy(true);
@@ -90,6 +97,35 @@ export function initSync({ api, context, setBusy, showSync }) {
         $('sync-references').value = [...new Set([...paths, result.path])].join('\n');
         $('sync-references').dispatchEvent(new Event('input', { bubbles: true }));
       }
+    } catch (error) { status(error.message, true); }
+    finally { setBusy(false); }
+  };
+  const scopeRequest = () => ({ base: context().base, envFile: $('sync-env').value.trim() });
+  async function browseScope(parentId) {
+    if (busy) return;
+    const identity = configKey();
+    setBusy(true);
+    try {
+      const result = await api('/api/sync/scopes', { ...scopeRequest(), ...(parentId ? { parentId } : {}) });
+      if (identity !== configKey()) return;
+      scopeKey = identity; scopeParent = result.parent; scopeItems = [result.parent, ...result.children];
+      $('sync-scope-location').textContent = `탐색 위치 · ${result.parent.path}`;
+      $('sync-remote-scope').replaceChildren(new Option('스코프를 선택하세요', ''), ...scopeItems.map(item => new Option(`${item.path} (${item.type === 'folder' ? '폴더' : '페이지'})`, item.id)));
+      status('관리할 위치를 직접 선택하세요. 아직 스코프는 변경되지 않았습니다.');
+    } catch (error) { status(error.message, true); }
+    finally { setBusy(false); }
+  }
+  $('sync-scope-browse').onclick = () => browseScope();
+  $('sync-scope-open').onclick = () => browseScope($('sync-remote-scope').value);
+  $('sync-scope-up').onclick = () => browseScope(scopeParent?.parentId);
+  $('sync-remote-scope').onchange = () => update(busy, true);
+  $('sync-scope-save').onclick = async () => {
+    if (busy || !scopeItems.some(item => item.id === $('sync-remote-scope').value)) return;
+    const identity = configKey(), request = { ...scopeRequest(), scopeId: $('sync-remote-scope').value };
+    setBusy(true); planId = null; preparedKey = '';
+    try {
+      const config = await api('/api/sync/scope', request);
+      if (identity === configKey()) { renderConfig(config); status('선택한 스코프를 저장했습니다. 동기화 대상을 미리보기하세요.'); }
     } catch (error) { status(error.message, true); }
     finally { setBusy(false); }
   };

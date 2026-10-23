@@ -5,8 +5,15 @@ export const syncPanel = `
     <div class="settings-body sync-settings">
       <p class="sync-intro">로컬 문서를 Confluence에 올립니다. 신규·변경 문서를 먼저 확인하세요.</p>
       <div class="settings-grid">
-        <div class="field"><label for="sync-scope">동기화 범위</label><select id="sync-scope"><option value="file">선택 문서</option><option value="folder">현재 폴더</option><option value="all">기준 폴더 전체</option></select></div>
+        <div class="field"><label for="sync-scope">이번에 처리할 로컬 대상</label><select id="sync-scope"><option value="file">선택 문서</option><option value="folder">현재 폴더</option><option value="all">기준 폴더 전체</option></select></div>
         <div class="field"><label for="sync-env">설정 파일 <span>선택 사항</span></label><div class="path-row"><input id="sync-env" class="path-input" placeholder="기준 폴더의 .env 자동 사용"><button id="sync-load">설정 확인</button></div></div>
+      </div>
+      <div class="field"><label for="sync-remote-scope">원격 스코프 <span>필수 · 기본 선택 없음</span></label>
+        <div class="path-row"><button id="sync-scope-browse" type="button">스페이스 트리 조회</button><button id="sync-scope-up" type="button" disabled>상위</button></div>
+        <p id="sync-scope-location" class="hint">스페이스 안에서 관리할 위치를 직접 선택하세요.</p>
+        <select id="sync-remote-scope" disabled><option value="">스코프를 선택하세요</option></select>
+        <div class="path-row"><button id="sync-scope-open" type="button" disabled>선택 항목의 하위 열기</button><button id="sync-scope-save" type="button" disabled>선택 스코프 저장</button></div>
+        <p class="hint">전체도 / 항목을 직접 선택해야 합니다. 선택한 원격 위치가 로컬 기준 폴더 자체에 대응합니다. 트리 조회·설정은 본문을 다운로드하거나 업로드하지 않습니다.</p>
       </div>
       <div class="field"><label for="sync-references">참조 문서 폴더 <span>선택 사항 · 한 줄에 한 경로</span></label><textarea id="sync-references" class="path-input" rows="3" placeholder="다른 동기화 폴더 경로"></textarea><button id="sync-add-reference" type="button">참조 폴더 추가…</button><p class="hint">참조 폴더의 게시 매핑으로 링크를 연결합니다. 같은 Confluence 서버의 폴더를 지정하세요. 참조 문서는 업로드하지 않습니다.</p></div>
       <p id="sync-target" class="sync-target">왼쪽에서 문서를 선택하세요.</p>

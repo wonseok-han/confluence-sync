@@ -95,7 +95,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath, 'ko'));
         json(200, { root, entries, skipped }); return;
       }
-      if (req.method !== 'POST' || !['/api/table-format/preview', '/api/table-format/save', '/api/document-preview', '/api/convert', '/api/open', '/api/pick-folder', '/api/sync/config', '/api/sync/preview', '/api/sync/push'].includes(url.pathname)) {
+      if (req.method !== 'POST' || !['/api/table-format/preview', '/api/table-format/save', '/api/document-preview', '/api/convert', '/api/open', '/api/pick-folder', '/api/sync/config', '/api/sync/scopes', '/api/sync/scope', '/api/sync/preview', '/api/sync/push'].includes(url.pathname)) {
         json(404, { error: '없는 요청입니다.' }); return;
       }
       if (!req.headers['content-type']?.startsWith('application/json')) { json(415, { error: 'JSON 요청이 필요합니다.' }); return; }
@@ -122,6 +122,13 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
           try { json(200, await tableFormatting.save(body.planId)); }
           finally { busy = false; }
         }
+        return;
+      }
+      if (url.pathname === '/api/sync/scopes' || url.pathname === '/api/sync/scope') {
+        if (busy || sync.running()) { json(409, { error: '다른 작업이 진행 중입니다.' }); return; }
+        busy = true;
+        try { json(200, url.pathname.endsWith('/scopes') ? await sync.scopes(body) : await sync.setScope(body)); }
+        finally { busy = false; }
         return;
       }
       if (url.pathname === '/api/sync/config') {
