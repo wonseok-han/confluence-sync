@@ -4,6 +4,8 @@
  * storage/export_view 는 무손실 역변환이 아니므로 근사 결과다.
  */
 import TurndownService from 'turndown';
+import MarkdownIt from 'markdown-it';
+import { applyTableWidths, hasWidths, tableWidths, restoreTableWidths } from './tables.js';
 
 export type Html2MdOpts = {
   /** 본문에서 참조된 로컬 첨부 파일명을 통지(다운로드 대상 수집용) */
@@ -15,6 +17,8 @@ export type Html2MdOpts = {
    * export_view 의 `brush:` 는 언어 미지정 시 Confluence 가 java 를 기본으로 넣어 신뢰할 수 없다.
    */
   codeLangs?: string[];
+  /** Original storage supplies widths that export_view may omit. */
+  storage?: string;
 };
 
 /** storage(XHTML)의 code 매크로들에서 language 파라미터를 문서 순서대로 추출(미지정은 ''). */
@@ -63,6 +67,8 @@ export function relaxEscapes(md: string): string {
 }
 
 export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
+  html = restoreTableWidths(html, opts.storage);
+  const cellRenderer = new MarkdownIt({ html: true });
   const td = new TurndownService({
     headingStyle: 'atx',
     codeBlockStyle: 'fenced',
@@ -142,6 +148,30 @@ export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
   td.addRule('confTable', {
     filter: 'table',
     replacement: (_content, node) => {
+      const table = node as unknown as HTMLElement;
+      const widths = tableWidths(table);
+      if (hasWidths(widths) || table.querySelector('th[colspan], td[colspan], th[rowspan], td[rowspan]')) {
+        // Reuse conversion rules for links/images, then encode the cells as HTML.
+        // Markdown inside a raw HTML block is not portable.
+        const copy = table.cloneNode(true) as HTMLElement;
+        for (const anchor of Array.from(copy.querySelectorAll('a[href]'))) {
+          const href = anchor.getAttribute('href')!;
+          if (!/\/download\/attachments\//.test(href)) continue;
+          const name = anchor.getAttribute('data-linked-resource-default-alias')
+            || decodeURIComponent(href.split('?')[0].split('#')[0].split('/').pop() || '');
+          if (!name) continue;
+          opts.onImage?.(name);
+          anchor.setAttribute('href', opts.assetPrefix ? `${opts.assetPrefix}/${name}` : name);
+        }
+        for (const cell of Array.from(copy.querySelectorAll('th, td'))) {
+          cell.innerHTML = cellRenderer.render(td.turndown(cell.innerHTML));
+        }
+        applyTableWidths(copy, widths);
+        copy.removeAttribute('data-table-width');
+        copy.removeAttribute('data-layout');
+        copy.removeAttribute('ac:local-id');
+        return `\n\n${copy.outerHTML}\n\n`;
+      }
       const cell = (c: Element) =>
         td.turndown((c as HTMLElement).innerHTML || '').replace(/\n+/g, ' ').replace(/\|/g, '\\|').trim();
       const trs = Array.from((node as unknown as HTMLElement).querySelectorAll('tr'));

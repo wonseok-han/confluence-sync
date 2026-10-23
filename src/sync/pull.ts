@@ -17,6 +17,7 @@ import { collectHeadings, matchConfluenceAnchor, type Heading } from '../documen
 import { collectMarkdown } from '../documents/catalog.js';
 import { buildTreeRenderer } from './render.js';
 import { docHash } from '../documents/markdown.js';
+import { rewriteTableLinks } from '../documents/tables.js';
 import { buildIgnorer } from './ignore.js';
 import { loadMapping, saveMapping, MAPPING_FILE } from './mapping.js';
 import { cyan, dim, green, red, yellow } from '../shared/colors.js';
@@ -99,6 +100,7 @@ async function pullPage(ctx: Ctx, node: ContentNode, destDir: string): Promise<C
     onImage: (f) => referenced.add(f),
     assetPrefix,
     codeLangs: codeLanguagesFromStorage(storage), // 코드블록 언어는 storage 가 진짜
+    storage,
   });
 
   if (referenced.size) {
@@ -229,6 +231,17 @@ export function anchorPass(
       return `${head}#${slug}${tail}`;
     });
 
+    after = rewriteTableLinks(after, href => {
+      const match = href.match(/^(https?:\/\/[^\s]*?\/pages\/(\d+)[^#]*)#(.+)$/);
+      const target = match ? pathById.get(match[2]) : undefined;
+      const targetInfo = href.startsWith('#') ? self : target ? info.get(target) : undefined;
+      const fragment = href.startsWith('#') ? href.slice(1) : match?.[3];
+      const slug = targetInfo && fragment ? toSlug(fragment, targetInfo) : null;
+      if (!slug) return href;
+      count++;
+      return href.startsWith('#') ? `#${slug}` : `${match![1]}#${slug}`;
+    });
+
     if (after !== before) writeFileSync(file, after);
   }
   return { count, info };
@@ -269,6 +282,15 @@ export function relinkPass(
       }
       const rel = relative(dirname(file), target).split('\\').join('/');
       return `[${label}](${dest(rel + (slug ? `#${slug}` : ''))})`;
+    });
+
+    // HTML cells retain HTML links even with --obsidian (wikilinks do not render there).
+    after = rewriteTableLinks(after, href => {
+      const match = href.match(/^https?:\/\/[^\s]*?\/pages\/(\d+)[^#]*(#.*)?$/);
+      const target = match ? pathById.get(match[1]) : undefined;
+      if (!target || target === file) return href;
+      count++;
+      return relative(dirname(file), target).split('\\').join('/') + (match![2] ?? '');
     });
 
     // 같은 문서 섹션도 vault 표기로: [§4](#슬러그) → [[#헤딩 텍스트|§4]]

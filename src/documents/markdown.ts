@@ -8,7 +8,10 @@
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { resolve, relative, dirname, basename, extname } from 'node:path';
 import { createHash } from 'node:crypto';
-import MarkdownIt from 'markdown-it';
+import { htmlTableMarkdown } from './html-tables.js';
+import Token from 'markdown-it/lib/token.mjs';
+import { createDocument } from '@mixmark-io/domino';
+import { applyTableWidths, hasWidths, tableWidths } from './tables.js';
 import { resolveWikilinks, type LinkResolver } from './obsidian.js';
 import { decodeAnchor, anchorMacro } from './anchors.js';
 import { mermaidMacro } from './mermaid.js';
@@ -44,7 +47,7 @@ type RenderCtx = {
   linkedTitles: Set<string>; // 이 문서가 내부 링크로 가리키는 대상 제목들
 };
 
-const md = new MarkdownIt({ html: true, linkify: true, breaks: false });
+const md = htmlTableMarkdown();
 
 const emptyCtx = (): RenderCtx => ({
   fileDir: '', titleIndex: {}, anchorIndex: {}, selfRel: '', selfTitle: '',
@@ -192,6 +195,37 @@ md.renderer.rules.image = (tokens, idx) => {
   const filename = addAttachment(abs);
   ctx.images.push({ filename, abs });
   return `<ac:image${widthAttr}><ri:attachment ri:filename="${escapeXml(filename)}" /></ac:image>`;
+};
+
+// Raw HTML tables share the normal link/image rules (including attachment collection).
+md.renderer.rules.html_block = (tokens, idx) => {
+  const html = tokens[idx].content;
+  if (!/<table[\s>]/i.test(html)) return html;
+  const doc = createDocument(html);
+  for (const table of Array.from(doc.querySelectorAll('table'))) {
+    const widths = tableWidths(table);
+    if (hasWidths(widths)) applyTableWidths(table, widths, true);
+  }
+  let output = doc.body.innerHTML;
+  for (const anchor of Array.from(doc.querySelectorAll('table a[href]'))) {
+    const token = new Token('link_open', 'a', 1);
+    token.attrs = Array.from(anchor.attributes).map(a => [a.name, a.value]);
+    const open = md.renderer.rules.link_open!([token], 0, md.options, {}, md.renderer);
+    const close = md.renderer.rules.link_close!([new Token('link_close', 'a', -1)], 0, md.options, {}, md.renderer);
+    output = output.replace(anchor.outerHTML, open + anchor.innerHTML + close);
+  }
+  for (const image of Array.from(doc.querySelectorAll('table img[src]'))) {
+    const token = new Token('image', 'img', 0);
+    token.attrs = Array.from(image.attributes).map(a => [a.name, a.value]);
+    const width = image.getAttribute('width') ?? image.getAttribute('style')?.match(/(?:^|;)\s*width:\s*(\d+(?:\.\d+)?)px/i)?.[1];
+    if (width && /^\d+$/.test(width)) token.attrSet('title', `width=${width}`);
+    output = output.replace(image.outerHTML, md.renderer.rules.image!([token], 0, md.options, {}, md.renderer));
+  }
+  // Storage is XHTML; HTML's void elements need a closing slash.
+  for (const element of Array.from(doc.querySelectorAll('col, br, hr, img, input, wbr'))) {
+    output = output.split(element.outerHTML).join(element.outerHTML.slice(0, -1) + ' />');
+  }
+  return output + '\n';
 };
 
 /** 첫 H1(`# 제목`)을 제목으로 추출하고 본문에서 제거 */

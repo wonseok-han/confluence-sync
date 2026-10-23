@@ -1,6 +1,6 @@
 {
   "name": "@wonseok-han/confluence-sync",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "type": "module",
   "description": "Confluence Cloud ↔ Markdown 양방향 동기화 CLI — 마크다운을 Confluence 페이지로 발행(push)하고, Confluence 페이지·폴더·스페이스를 마크다운으로 가져옵니다(pull).",
   "keywords": [
@@ -55,7 +55,8 @@
     "markdown-it": "^14.1.0",
     "markdown-it-footnote": "^4.0.0",
     "pdfjs-dist": "^6.3.289",
-    "turndown": "^7.2.4"
+    "turndown": "^7.2.4",
+    "@mixmark-io/domino": "^2.2.0"
   },
   "devDependencies": {
     "@types/markdown-it": "^14.1.2",
