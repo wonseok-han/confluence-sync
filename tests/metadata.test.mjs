@@ -118,7 +118,7 @@ for (const path of ['.csync/mapping.json', '.csync/workspace.json', '.csync/igno
  const { root, put } = workspace(t, { '.env': env, 'doc.md': '# Doc', '.csync/mapping.json': '{}', '.csync/workspace.json': '{"version":1,"syncPaths":["."]}', '.csync/ignore': 'a.md\n' });
  bindScope(root);const sync = createWebSync(async () => 0); await sync.preview(request(root)); const preview = await finished(sync); assert.equal(preview.state, 'succeeded');
  const file = join(root, path), before = statSync(file);
- const content = path.endsWith('mapping.json') ? '{"doc.md":{"pageId":"123"}}' : path.endsWith('workspace.json') ? JSON.stringify({...scopeFixture(),scope:{id:'home',type:'folder',path:'/Changed'}}) : 'b.md\n';
+ const content = path.endsWith('mapping.json') ? '{"doc.md":{"pageId":"123"}}' : path.endsWith('workspace.json') ? JSON.stringify({...scopeFixture(),scope:{type:'file',path:'doc.md'}}) : 'b.md\n';
  put(path, content); utimesSync(file, before.atime, before.mtime);
  await assert.rejects(sync.push(preview.planId), /변경/); assert.equal(sync.current().kind, 'preview');
 });

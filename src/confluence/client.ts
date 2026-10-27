@@ -8,7 +8,7 @@ import type { Mapping } from '../sync/mapping.js';
 import { red, yellow, dim } from '../shared/colors.js';
 
 export type ConfluenceConfig = { baseUrl: string; email: string; token: string };
-export type ClientOpts = { force: boolean; verify: boolean; scope?: { id: string; spaceId: string } };
+export type ClientOpts = { force: boolean; verify: boolean; requestTimeoutMs?: number; scope?: { id: string; spaceId: string } };
 export type UpsertResult = 'created' | 'updated' | 'skipped' | 'moved';
 export type ImageRef = { filename: string; abs: string };
 /** getNode 결과: 본문(HTML/storage) + 출처 메타(frontmatter 용). */
@@ -29,23 +29,29 @@ class ConfluenceApiError extends Error {
   }
 }
 
+/** Distinguishes missing binary content from authorization and transport failures. */
+export class ConfluenceDownloadError extends Error {
+  constructor(readonly status: number, statusText: string, path: string) { super(`download ${status} ${statusText}\n${path}`); }
+}
+
 export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   const authHeader = () => 'Basic ' + Buffer.from(`${cfg.email}:${cfg.token}`).toString('base64');
 
   async function api(path: string, init?: RequestInit): Promise<any> {
-    const res = await fetch(`${cfg.baseUrl}${path}`, {
-      ...init,
-      headers: {
-        Authorization: authHeader(),
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        ...(init?.headers ?? {}),
-      },
-    });
-    if (!res.ok) {
-      throw new ConfluenceApiError(res.status, path, await res.text(), res.statusText);
+    const signal = opts.requestTimeoutMs ? AbortSignal.timeout(opts.requestTimeoutMs) : undefined;
+    try {
+      const res = await fetch(`${cfg.baseUrl}${path}`, {
+        ...init, ...(signal ? { signal } : {}),
+        headers: {
+          Authorization: authHeader(), 'Content-Type': 'application/json', Accept: 'application/json', ...(init?.headers ?? {}),
+        },
+      });
+      if (!res.ok) throw new ConfluenceApiError(res.status, path, await res.text(), res.statusText);
+      return res.status === 204 ? null : await res.json();
+    } catch (error) {
+      if (signal?.aborted) throw new Error(`Confluence 메타데이터 응답 대기 시간이 초과되었습니다 (${opts.requestTimeoutMs! / 1000}초). 잠시 후 다시 시도하세요. 요청: ${path}`);
+      throw error;
     }
-    return res.status === 204 ? null : res.json();
   }
 
   /** 페이지 조회. 삭제(휴지통)·부재면 404 → null 반환(그 외 오류는 throw) */
@@ -238,11 +244,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
 
   /** v1 GET. api() 와 달리 /rest/api 계열 + 임의 expand 응답을 그대로 돌려준다. */
   async function getV1(path: string): Promise<any> {
-    const res = await fetch(`${cfg.baseUrl}${path}`, {
-      headers: { Authorization: authHeader(), Accept: 'application/json' },
-    });
-    if (!res.ok) throw new ConfluenceApiError(res.status, path, await res.text(), res.statusText);
-    return res.json();
+    return api(path);
   }
 
   /**
@@ -301,7 +303,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   async function downloadAttachment(downloadPath: string): Promise<Buffer> {
     const url = downloadPath.startsWith('http') ? downloadPath : `${cfg.baseUrl}${downloadPath}`;
     const res = await fetch(url, { headers: { Authorization: authHeader() } });
-    if (!res.ok) throw new Error(`download ${res.status} ${res.statusText}\n${downloadPath}`);
+    if (!res.ok) throw new ConfluenceDownloadError(res.status, res.statusText, downloadPath);
     return Buffer.from(await res.arrayBuffer());
   }
 

@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { workspace, mockFetch, configure } from './helpers/fixtures.mjs';
 import { bindScope, scopeResponder } from './helpers/scope.mjs';
-import { configureScope, scopeTree } from '../dist/sync/scope.js';
+import { configureScope } from '../dist/sync/scope.js';
 import { loadWorkspace, requireScope } from '../dist/sync/workspace.js';
 import { mappingPath, workspacePath } from '../dist/sync/metadata.js';
 import { loadMapping, saveMapping } from '../dist/sync/mapping.js';
@@ -49,33 +49,13 @@ test('legacy local scopes and parent settings never become a remote scope automa
  assert.equal(loadWorkspace(root).version,1);
 });
 
-test('explicit remote path selection resolves from the space homepage using metadata only',async t=>{
- const {root}=workspace(t);const calls=mockFetch(t,[space,...children('100',[{id:'200',title:'지식자산'}]),...children('200',[],[{id:'300',title:'특허출원'}]),info('300','특허출원','folder',[{id:'100',title:'Home'},{id:'200',title:'지식자산'}])]);
- const config=await configureScope(root,env,'지식자산/특허출원');
- assert.deepEqual(config.scope,{id:'300',type:'folder',path:'/지식자산/특허출원'});assert.equal(config.connection.spaceId,'space');
- assert.ok(calls.every(call=>(call.method??'GET')==='GET'&&!call.url.includes('body.')));assert.equal(existsSync(mappingPath(root)),false);
+test('initial scope connects only to the space root and selects an existing local folder',async t=>{
+ const {root}=workspace(t,{'지식자산/특허출원/doc.md':'# Doc'});const calls=mockFetch(t,[space]);
+ const config=await configureScope(root,env,'지식자산/특허출원');assert.deepEqual(config.scope,{path:'지식자산/특허출원',type:'folder'});assert.equal(config.remoteRoot.id,'100');assert.equal(calls.length,1);assert.equal(existsSync(mappingPath(root)),false);
 });
 
-test('whole-space scope is selected explicitly with / and empty or dot input is refused',async t=>{
- const {root}=workspace(t);mockFetch(t,[space,info('100')]);
- await assert.rejects(configureScope(root,env,''),/명시적으로/);await assert.rejects(configureScope(root,env,'.'),/명시적으로/);
- const config=await configureScope(root,env,'/');assert.equal(requireScope(config).id,'100');assert.equal(config.scope.path,'/');
-});
-
-test('scope IDs outside the configured space tree are rejected without writing configuration',async t=>{
- const {root}=workspace(t);mockFetch(t,[space,info('999','Outside','page',[])]);
- await assert.rejects(configureScope(root,env,'id:999'),/하위 트리 밖/);assert.equal(existsSync(workspacePath(root)),false);
-});
-
-test('ambiguous remote titles require an explicit ID and never select the first result',async t=>{
- const {root}=workspace(t);mockFetch(t,[space,...children('100',[{id:'201',title:'Same'}],[{id:'202',title:'Same'}])]);
- await assert.rejects(configureScope(root,env,'Same'),/유일하게/);assert.equal(existsSync(workspacePath(root)),false);
-});
-
-test('existing mappings cannot be silently rebound to a different remote scope',async t=>{
- const {root}=workspace(t);selected(root);saveMapping(mappingPath(root),{'doc.md':{pageId:'101'}});
- const before=readFileSync(workspacePath(root),'utf8');mockFetch(t,[space,info('200','Patents','folder',[{id:'100',title:'Home'}]),info('101','Doc','page',[{id:'100',title:'Home'}])]);
- await assert.rejects(configureScope(root,env,'id:200'),/영향 확인/);assert.equal(readFileSync(workspacePath(root),'utf8'),before);
+test('whole-space work range is explicit and missing local paths are refused',async t=>{
+ const {root}=workspace(t);mockFetch(t,[space]);await assert.rejects(configureScope(root,env,''),/직접/);await assert.rejects(configureScope(root,env,'missing'),/존재/);const config=await configureScope(root,env,'/');assert.equal(requireScope(config).id,'100');assert.equal(config.scope.path,'.');
 });
 
 test('manually composed documents can be pushed without any pull after explicit scope selection',t=>{
@@ -94,12 +74,6 @@ test('an existing mapped page outside the selected remote scope cannot be update
  configure(t);const {root}=workspace(t,{'doc.md':'# Doc'});selected(root,{id:'200',type:'folder',path:'/Patents'});baseline(root,{'doc.md':'999'});
  mockFetch(t,[space,info('200','Patents','folder',[{id:'100',title:'Home'}]),info('999','Outside','page',[{id:'100',title:'Home'}])]);
  await assert.rejects(runPush(['--base',root]),/원격 스코프 밖/);assert.equal(loadMapping(mappingPath(root))['doc.md'].remoteVersion,1);
-});
-
-test('scope browse is metadata only and foreign parent IDs cannot escape the space',async t=>{
- const calls=mockFetch(t,[space,info('100'),...children('100',[{id:'200',title:'Patents'}]),space,info('999','Other','folder',[])]);
- const tree=await scopeTree(env);assert.equal(tree.parent.path,'/');assert.equal(tree.children[0].path,'/Patents');
- await assert.rejects(scopeTree(env,'999'),/하위 트리 밖/);assert.ok(calls.every(call=>(call.method??'GET')==='GET'));
 });
 
 test('outer synchronization excludes a separately configured nested workspace',t=>{
@@ -147,7 +121,7 @@ test('pull path collisions are rejected before applying a new root README',async
 });
 
 test('pull cannot expand a subtree into whole-space mode or drop mapping protections',async t=>{
- configure(t);const {root}=workspace(t);selected(root,{id:'200',type:'folder',path:'/Patents'});mockFetch(t,[]);
+ configure(t);const {root}=workspace(t);bindScope(root,{connection:{homepageId:'100'},scope:{id:'100',type:'page',path:'/'},localScope:{path:'Patents',type:'folder'}});mockFetch(t,[]);
  await assert.rejects(runPull(['pull','--space','--base',root]),/사용자가 \/ 스코프/);
  await assert.rejects(runPull(['pull','--no-mapping','--base',root]),/매핑을 유지/);
  await assert.rejects(runPull(['pull','--root','--base',root]),/init --scope/);
@@ -165,11 +139,11 @@ test('existing site bindings prevent using the same page IDs against a different
  const result=offline(root,put,['push','--base',root],[]);assert.equal(result.status,1);assert.match(result.stderr,/사이트·스페이스/);
 });
 
-test('CLI init requires an explicit remote scope and preserves the existing env file',t=>{
- const original='CONFLUENCE_PARENT_ID=old-setting\n';const {root,put}=workspace(t,{'.env':original});
+test('CLI init requires an explicit local scope and preserves the existing env file',t=>{
+ const original='CONFLUENCE_PARENT_ID=old-setting\n';const {root,put}=workspace(t,{'.env':original,'Patents/doc.md':'# Doc'});
  let result=offline(root,put,['init','--base',root,'--scope'],[]);assert.equal(result.status,1);assert.equal(existsSync(workspacePath(root)),false);
- result=offline(root,put,['init','--base',root,'--scope','id:200'],[space,info('200','Patents','folder',[{id:'100',title:'Home'}])]);
- assert.equal(result.status,0,result.stderr);assert.equal(loadWorkspace(root).scope.id,'200');assert.equal(readFileSync(join(root,'.env'),'utf8'),original);assert.ok(result.calls.every(call=>call.method==='GET'));
+ result=offline(root,put,['init','--base',root,'--scope','Patents'],[space]);
+ assert.equal(result.status,0,result.stderr);assert.deepEqual(loadWorkspace(root).scope,{path:'Patents',type:'folder'});assert.equal(loadWorkspace(root).remoteRoot.id,'100');assert.equal(readFileSync(join(root,'.env'),'utf8'),original);assert.ok(result.calls.every(call=>call.method==='GET'));
 });
 
 test('a mapped remote node outside the scope cannot be pulled even when its ID is supplied explicitly',async t=>{

@@ -128,3 +128,22 @@ test('different files sharing an attachment name receive distinct stable upload 
  const r=render();assert.equal(r.attachments.length,2);assert.notEqual(r.attachments[0].filename,r.attachments[1].filename);assert.deepEqual(r.attachments,render().attachments);
  assert.match(r.storage,new RegExp(r.attachments[1].filename.replaceAll('.', '\\.')));
 });
+
+test('Confluence loading indicators are omitted while real wait.gif attachments and external images remain', () => {
+ const referenced=[];
+ const html='<p>Body</p><img class="waiting-image" alt="잠시 기다려주십시오." src="/wiki/s/hash/_/images/icons/wait.gif">'
+  +'<img class="waiting-image" src="https://site.invalid/wiki/s/hash/_/images/icons/wait.gif?version=1">'
+  +'<img src="/download/attachments/1/wait.gif" data-linked-resource-type="attachment">'
+  +'<img src="https://example.invalid/wait.gif" alt="External">';
+ const md=htmlToMarkdown(html,{onImage:name=>referenced.push(name),assetPrefix:'attachments/doc'});
+ assert.deepEqual(referenced,['wait.gif']);
+ assert.doesNotMatch(md,/잠시 기다려|images\/icons/);
+ assert.match(md,/attachments\/doc\/wait.gif/);assert.match(md,/https:\/\/example.invalid\/wait.gif/);
+});
+
+test('missing attachment destinations preserve remote references in images and merged HTML tables',()=>{
+ const source='https://example.invalid/wiki/download/attachments/1/missing.png';
+ const html=`<img src="${source}" alt="Original"><table><tr><td colspan="2"><img src="${source}"><a href="/download/attachments/1/missing.pdf">PDF</a></td></tr></table>`;
+ const md=htmlToMarkdown(html,{assetPrefix:'attachments/doc',attachmentDestination:(_name,url)=>url});
+ assert.match(md,/https:\/\/example.invalid\/wiki\/download\/attachments\/1\/missing.png/);assert.match(md,/href="\/download\/attachments\/1\/missing.pdf"/);assert.doesNotMatch(md,/attachments\/doc/);
+});

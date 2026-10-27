@@ -1,5 +1,5 @@
 /** Selection-driven preview; stale reads must never replace the current document. */
-export function initDocumentPreview({ api, selection, formatting }) {
+export function initDocumentPreview({ api, selection, formatting, notify = () => {} }) {
   const frame = document.getElementById('document-preview-frame');
   const note = document.getElementById('document-preview-status');
   const refresh = document.getElementById('document-preview-refresh');
@@ -36,6 +36,7 @@ export function initDocumentPreview({ api, selection, formatting }) {
     } catch (error) {
       if (current !== version || error.name === 'AbortError') return;
       note.textContent = '문서를 표시하지 못했습니다: ' + error.message;
+      notify(note.textContent, 'error');
     } finally {
       if (current === version) pending = false;
     }

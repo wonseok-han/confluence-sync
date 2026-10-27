@@ -9,7 +9,7 @@ import { stdin as input, stdout as output } from 'node:process';
 import { loadWorkspace, saveWorkspace, resolveSyncBase } from '../sync/workspace.js';
 import { migrateMetadata, mappingPath } from '../sync/metadata.js';
 import { loadMapping } from '../sync/mapping.js';
-import { configureScope, previewScope, ScopeReviewRequired, type ScopeReview } from '../sync/scope.js';
+import { configureScope } from '../sync/scope.js';
 import { readEnv } from '../confluence/config.js';
 import { bold, cyan, dim, green, red, yellow } from '../shared/colors.js';
 
@@ -92,31 +92,9 @@ export async function runInit(argv: string[]): Promise<void> {
     const base = baseArg >= 0 ? resolve(argv[baseArg + 1]) : process.cwd();
     const choices = argv.flatMap((arg, i) => arg === '--scope' ? [argv[i + 1]] : []);
     if (choices.length !== 1 || !choices[0] || choices[0].startsWith('--')) throw new Error('--scope <스페이스 내 경로|id:ID>를 하나 지정하세요. 전체는 / 입니다.');
-    const describe = (review: ScopeReview) => {
-      console.log(`스코프 변경 확인: ${review.previous?.path ?? '미설정'} → ${review.next.path} (#${review.next.id}) ↔ ${base}`);
-      console.log(`기존 매핑 ${review.summary.total}개: 일치 ${review.summary.aligned}, 범위 밖 ${review.summary.outside}, 루트 충돌 ${review.summary.rootConflict}, 페이지 위치 변경 ${review.summary.pageMove}, 폴더 위치 충돌 ${review.summary.folderConflict}`);
-      const labels = { outside: '스코프 밖 — Push 차단', rootConflict: '루트 매핑 충돌 — Push 차단', pageMove: 'Push 시 위치 변경 검토', folderConflict: '폴더 구조 불일치 — Push 차단', aligned: '일치' };
-      for (const entry of review.entries) if (entry.status !== 'aligned') console.log(`  ${entry.path} (#${entry.pageId}): ${labels[entry.status]} (현재 ${entry.remotePath})`);
-      console.log('스코프 저장은 연결 설정만 변경합니다. 원격 문서·로컬 파일·기존 매핑을 변경하지 않습니다. 새 문서는 새 스코프 아래에 업로드됩니다.');
-    };
-    const config = readEnv(base);
-    if (argv.includes('--dry-run')) { const review = await previewScope(base, config, choices[0]); describe(review); console.log(`확인 토큰: ${review.token}`); return; }
-    const confirmationIndex = argv.indexOf('--confirm-scope');
-    const confirmation = confirmationIndex < 0 ? undefined : argv[confirmationIndex + 1];
-    if (confirmationIndex >= 0 && !/^[a-f0-9]{64}$/.test(confirmation ?? '')) throw new Error('--confirm-scope에는 미리보기에서 확인한 토큰이 필요합니다.');
-    let workspace;
-    try { workspace = await configureScope(base, config, choices[0], confirmation); }
-    catch (error) {
-      if (!(error instanceof ScopeReviewRequired)) throw error;
-      describe(error.review);
-      if (!input.isTTY || !output.isTTY) throw new Error(`영향을 확인한 뒤 같은 명령에 --confirm-scope ${error.review.token} 을 추가하세요. 먼저 --dry-run으로 확인할 수도 있습니다.`);
-      const rl = createInterface({ input, output });
-      let answer;
-      try { answer = await rl.question('위 영향을 확인하고 스코프 연결을 변경할까요? [y/N] '); } finally { rl.close(); }
-      if (!/^y(es)?$/i.test(answer.trim())) { console.log('스코프 변경을 취소했습니다.'); return; }
-      workspace = await configureScope(base, config, choices[0], error.review.token);
-    }
-    console.log(`스코프 저장: ${workspace.scope!.path} (#${workspace.scope!.id}) ↔ ${base}. 원격 메타데이터 조회만 수행했습니다.`);
+    if (argv.includes('--dry-run') || argv.includes('--confirm-scope')) throw new Error('스코프는 로컬 작업 범위입니다. init --scope <파일·폴더>로 저장하세요. 원격 변경 확인은 필요하지 않습니다.');
+    const workspace = await configureScope(base, readEnv(base), choices[0]);
+    console.log(`로컬 스코프 저장: ${workspace.scope!.path === '.' ? '/' : workspace.scope!.path} (${workspace.scope!.type}) — 스페이스 연결·매핑·원격 위치는 유지됩니다.`);
     return;
   }
   const target = resolve(process.cwd(), '.env');

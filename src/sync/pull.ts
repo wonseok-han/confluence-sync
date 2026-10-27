@@ -15,12 +15,12 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { loadWorkspace, findSyncBase, resolveSyncBase, inScope, inNestedWorkspace, within, assertWorkspaceConnection, requireScope, type Workspace } from './workspace.js';
 import { readEnv, requireEnv } from '../confluence/config.js';
-import { createClient, type ContentNode } from '../confluence/client.js';
+import { createClient, ConfluenceDownloadError, type ContentNode } from '../confluence/client.js';
 import { htmlToMarkdown, codeLanguagesFromStorage } from '../documents/html-to-markdown.js';
 import { buildFrontmatter, splitFrontmatter } from '../documents/obsidian.js';
 import { collectHeadings, matchConfluenceAnchor, type Heading } from '../documents/anchors.js';
 import { collectMarkdown } from '../documents/catalog.js';
-import { buildTreeRenderer } from './render.js';
+import { preparePushTree } from './prepare.js';
 import { docHash } from '../documents/markdown.js';
 import { rewriteTableLinks } from '../documents/tables.js';
 import { buildIgnorer } from './ignore.js';
@@ -29,6 +29,7 @@ import { loadMapping, saveMapping } from './mapping.js';
 import { cyan, dim, green } from '../shared/colors.js';
 
 type Client = ReturnType<typeof createClient>;
+class PullError extends Error {}
 
 // 첨부 이미지는 항상 <md위치>/attachments/<문서명>/ 하위에 저장한다.
 const ASSETS_DIR = 'attachments';
@@ -50,6 +51,8 @@ type Opts = {
 
 type Ctx = Opts & {
   client: Client;
+  remoteBaseUrl: string;
+  missingAttachments: number;
   /** 이번 실행에서 만든 .md 절대경로 (링크 재작성 대상) */
   written: string[];
   /** pageId → .md 절대경로 (내부 링크를 상대경로로 바꾸는 데 쓴다) */
@@ -64,6 +67,7 @@ type Ctx = Opts & {
   workspace: Workspace;
   rootId?: string;
   claimed: Map<string, string>;
+  visited: Set<string>;
 };
 
 function claim(ctx: Ctx, path: string, id: string, directory = false): void {
@@ -122,7 +126,7 @@ async function pullPage(ctx: Ctx, node: ContentNode, destDir: string): Promise<C
   const assetPrefix = `${ASSETS_DIR}/${mdBase}`;
 
   const referenced = new Set<string>();
-  const body = htmlToMarkdown(html, {
+  let body = htmlToMarkdown(html, {
     onImage: (f) => referenced.add(f),
     assetPrefix,
     codeLangs: codeLanguagesFromStorage(storage), // 코드블록 언어는 storage 가 진짜
@@ -132,16 +136,37 @@ async function pullPage(ctx: Ctx, node: ContentNode, destDir: string): Promise<C
   if (referenced.size) {
     const attachments = await client.listAttachments(id);
     const byName = new Map(attachments.map((a) => [a.filename, a.downloadPath]));
-    const saveDir = join(dirname(filePath), assetPrefix);
+    const saveDir = join(dirname(filePath), assetPrefix), unavailable = new Set<string>();
+    const missing = (name: string, reason: string) => {
+      unavailable.add(name); ctx.missingAttachments++;
+      console.log(`[경고] 원격 첨부 누락 #${id}: ${name} (${reason}). 원격 참조를 유지하고 계속합니다.`);
+    };
     for (const name of referenced) {
-      const dp = byName.get(name);
-      if (!dp) throw new Error(`원격 첨부를 찾을 수 없습니다: ${name}`);
       if (basename(name) !== name || name === '.' || name === '..' || name.includes('\\')) throw new Error(`잘못된 첨부 파일명: ${name}`);
+      const dp = byName.get(name);
+      if (!dp) { missing(name, '이 페이지 첨부 목록에 없음'); continue; }
+      let bytes: Buffer;
+      try { bytes = await client.downloadAttachment(dp); }
+      catch (error) {
+        if (error instanceof ConfluenceDownloadError && error.status === 404) { missing(name, '다운로드 404'); continue; }
+        throw error;
+      }
       mkdirSync(saveDir, { recursive: true });
       const assetPath = join(saveDir, name);
       ctx.assetOwners.set(assetPath, id);
-      writeFileSync(assetPath, await client.downloadAttachment(dp));
+      writeFileSync(assetPath, bytes);
     }
+    if (unavailable.size) body = htmlToMarkdown(html, {
+      assetPrefix, codeLangs: codeLanguagesFromStorage(storage), storage,
+      attachmentDestination: (name, source) => {
+        if (!unavailable.has(name)) return `${assetPrefix}/${name}`;
+        if (/^https?:\/\//i.test(source)) return source;
+        const base = ctx.remoteBaseUrl.replace(/\/$/, '');
+        if (source.startsWith('/wiki/')) return base.replace(/\/wiki$/, '') + source;
+        if (source.startsWith('/')) return base + source;
+        return `${base}/download/attachments/${id}/${encodeURIComponent(name)}`;
+      },
+    });
   }
 
   // frontmatter 의 pageId 는 push 왕복의 앵커다(매핑 파일이 없어도 원본 페이지를 찾아간다).
@@ -161,9 +186,10 @@ async function pullPage(ctx: Ctx, node: ContentNode, destDir: string): Promise<C
   ctx.pathById.set(id, filePath);
 
   const imgNote = referenced.size ? `, 이미지 ${referenced.size}` : '';
-  console.log(`  ${green('＋ 생성')}  ${filePath}  ${dim(`(#${id}${imgNote})`)}`);
+  console.log(`  ${cyan('↓ 다운로드 준비')}  ${join(ctx.baseDir, relative(ctx.stageBase, filePath))}  ${dim(`(#${id}${imgNote}, 검증 후 저장)`)}`);
 
   const counts: Counts = { pages: 1, folders: 0 };
+  if (ctx.workspace.scope?.type === 'file') return counts;
   for (const f of childFolders) add(counts, await pullNode(ctx, f.id, folder));
   for (const c of childPages) add(counts, await pullNode(ctx, c.id, folder));
   return counts;
@@ -174,6 +200,10 @@ function add(acc: Counts, c: Counts) { acc.pages += c.pages; acc.folders += c.fo
 /** 노드(페이지/폴더)를 재귀적으로 가져온다. 폴더는 디렉토리(본문 없음)로 만든다. 노드 하나라도 실패하면 임시 다운로드 전체를 폐기. */
 async function pullNode(ctx: Ctx, id: string, destDir: string): Promise<Counts> {
   const { client } = ctx;
+  if (ctx.visited.has(id)) return {pages:0,folders:0};
+  const known = ctx.knownPaths.get(id);
+  if (known && !inScope(relative(ctx.stageBase,known).split('\\').join('/'),ctx.workspace)) return {pages:0,folders:0};
+  ctx.visited.add(id);
   try {
     await client.assertInScope(id);
     const node = await client.getNode(id);
@@ -183,7 +213,7 @@ async function pullNode(ctx: Ctx, id: string, destDir: string): Promise<Counts> 
       claim(ctx, dir, id, true);
       mkdirSync(dir, { recursive: true });
       ctx.folderIds.set(dir, id);
-      console.log(`  ${cyan('📁 폴더')}  ${dir}  ${dim(`(#${id})`)}`);
+      console.log(`  ${cyan('📁 폴더 준비')}  ${join(ctx.baseDir, relative(ctx.stageBase, dir))}  ${dim(`(#${id}, 검증 후 저장)`)}`);
       const counts: Counts = { pages: 0, folders: 1 };
       for (const f of await client.getChildFolders(id)) add(counts, await pullNode(ctx, f.id, dir));
       for (const p of await client.getChildPages(id)) add(counts, await pullNode(ctx, p.id, dir));
@@ -193,7 +223,8 @@ async function pullNode(ctx: Ctx, id: string, destDir: string): Promise<Counts> 
     // page: getNode 결과(html + storage) 그대로 사용
     return await pullPage(ctx, node, destDir);
   } catch (e) {
-    throw new Error(`pull 실패 #${id}: ${(e as Error).message}`);
+    if (e instanceof PullError) throw e;
+    throw new PullError(`pull 실패 #${id}: ${(e as Error).message}`);
   }
 }
 
@@ -340,42 +371,45 @@ export function relinkPass(
  *
  * 반환값은 기록한 항목 수.
  */
-export function mappingPass(
+export async function mappingPass(
   baseDir: string,
   mappingPath: string,
   pathById: Map<string, string>,
   folderIds: Map<string, string>,
   versions: Map<string, number> = new Map(),
-): number {
+): Promise<number> {
   const posix = (p: string) => p.split('\\').join('/');
   const ignorer = buildIgnorer(baseDir, []);
   const rels = collectMarkdown(baseDir)
     .map((f) => posix(relative(baseDir, f)))
     .filter((r) => !ignorer.ignores(r));
-  const { docs, render } = buildTreeRenderer(baseDir, rels);
+  const prepared = await preparePushTree(baseDir, rels, [...pathById.values()].map(path => posix(relative(baseDir, path))).filter(rel => rels.includes(rel)));
+  try {
+    const { docs, render } = prepared;
 
-  const m = loadMapping(mappingPath);
-  // 같은 페이지가 다른 키에 남아 있으면(문서가 옮겨졌으면) 중복 항목이 된다 → 옛 키를 걷어낸다
-  const ids = new Set([...pathById.keys(), ...folderIds.values()]);
-  for (const [k, v] of Object.entries(m)) if (ids.has(v.pageId)) delete m[k];
+    const m = loadMapping(mappingPath);
+    // 같은 페이지가 다른 키에 남아 있으면(문서가 옮겨졌으면) 중복 항목이 된다 → 옛 키를 걷어낸다
+    const ids = new Set([...pathById.keys(), ...folderIds.values()]);
+    for (const [k, v] of Object.entries(m)) if (ids.has(v.pageId)) delete m[k];
 
-  let n = 0;
-  for (const [id, abs] of pathById) {
-    const rel = posix(relative(baseDir, abs));
-    const doc = rel.startsWith('..') ? undefined : docs[rel];
-    if (!doc) continue; // base 밖으로 받았거나 제외 규칙에 걸린 문서는 기록하지 않는다
-    m[rel] = { pageId: id, title: doc.title, hash: docHash(doc.title, render(rel, doc.body, doc.title)), ...(versions.has(id) ? { remoteVersion: versions.get(id) } : {}) };
-    n++;
-  }
-  for (const [dir, id] of folderIds) {
-    const rel = posix(relative(baseDir, dir));
-    if (!rel || rel.startsWith('..')) continue;
-    m[`${rel}/`] = { pageId: id, title: basename(dir), type: 'folder' };
-    n++;
-  }
+    let n = 0;
+    for (const [id, abs] of pathById) {
+      const rel = posix(relative(baseDir, abs));
+      const doc = rel.startsWith('..') ? undefined : docs[rel];
+      if (!doc) continue; // base 밖으로 받았거나 제외 규칙에 걸린 문서는 기록하지 않는다
+      m[rel] = { pageId: id, title: doc.title, hash: docHash(doc.title, render(rel, doc.body, doc.title)), ...(versions.has(id) ? { remoteVersion: versions.get(id) } : {}) };
+      n++;
+    }
+    for (const [dir, id] of folderIds) {
+      const rel = posix(relative(baseDir, dir));
+      if (!rel || rel.startsWith('..')) continue;
+      m[`${rel}/`] = { pageId: id, title: basename(dir), type: 'folder' };
+      n++;
+    }
 
-  saveMapping(mappingPath, m);
-  return n;
+    saveMapping(mappingPath, m);
+    return n;
+  } finally { prepared.dispose(); }
 }
 
 export async function runPull(argv: string[]): Promise<void> {
@@ -394,19 +428,26 @@ export async function runPull(argv: string[]): Promise<void> {
   requireEnv(env); assertWorkspaceConnection(workspace, env);
   if (noMapping) throw new Error('스코프 기반 pull은 매핑을 유지해야 합니다.');
   if (argv.includes('--root')) throw new Error('--root 대신 init --scope로 연결할 원격 스코프를 먼저 설정하세요.');
-  if (wholeSpace && scope.path !== '/') throw new Error('--space는 사용자가 / 스코프를 선택한 작업공간에서만 사용할 수 있습니다.');
+  if (wholeSpace && workspace.scope!.path !== '.') throw new Error('--space는 사용자가 / 스코프를 선택한 작업공간에서만 사용할 수 있습니다.');
   const client = createClient({ baseUrl: env.baseUrl!, email: env.email!, token: env.token! }, { force: false, verify: false, scope: { id: scope.id, spaceId: workspace.connection!.spaceId! } });
   await verifyScope(client, workspace);
   const target = positionalArgs(argv)[1];
-  const targetId = target ? parseContentId(target) : scope.id;
-  if (!targetId) throw new Error('가져올 콘텐츠 ID를 인식할 수 없습니다.');
-  await client.assertInScope(targetId);
-  const rootId = targetId === scope.id ? scope.id : undefined;
-  if (!rootId && !Object.values(oldMapping).some(entry => entry.pageId === targetId)) throw new Error('매핑되지 않은 하위 항목은 먼저 스코프 전체를 pull하여 경로를 확보하세요.');
-  const ids = [targetId];
-  if (rootId && baseDir !== outDir) throw new Error('스코프 루트를 받을 때 --base와 --out은 같아야 합니다. 새 폴더는 init --scope로 먼저 설정하세요.');
   const knownById = new Map(Object.entries(oldMapping).map(([rel, entry]) => [entry.pageId, rel]));
-  if (rootId && knownById.has(rootId) && knownById.get(rootId) !== 'README.md') throw new Error('기존 pull 루트가 하위 경로에 매핑되어 있습니다. 기존 트리를 보존하고 새 --out으로 받거나 실제 문서 루트를 --base로 지정하세요.');
+  let ids: string[];
+  if (target) {
+    const id = parseContentId(target);
+    if (!id || !((id === scope.id && workspace.scope!.path === '.') || (knownById.has(id) && inScope(knownById.get(id)!.replace(/\/$/, ''), workspace)))) throw new Error('가져올 페이지가 저장된 로컬 스코프 밖이거나 매핑되지 않았습니다.');
+    ids = [id];
+  } else if (workspace.scope!.path === '.') ids = [scope.id];
+  else {
+    const candidates = Object.entries(oldMapping).filter(([path]) => inScope(path.replace(/\/$/, ''),workspace));
+    const containers = candidates.filter(([path,entry])=>entry.type==='folder'||/(?:^|\/)README\.md$/.test(path));
+    ids = candidates.filter(([path])=>!containers.some(([parent])=>parent!==path && path.startsWith(parent.endsWith('/')?parent:parent.replace(/README\.md$/, '')))).map(([,entry])=>entry.pageId);
+    if (!ids.length) throw new Error('선택한 로컬 스코프의 원격 매핑이 없습니다. 처음 가져올 때는 / 스코프에서 Pull하여 전체 매핑을 확보하세요.');
+  }
+  const rootId = ids.includes(scope.id) ? scope.id : undefined;
+  if (baseDir !== outDir) throw new Error('Pull은 기준 폴더 안의 원래 경로에 저장합니다. --base와 --out은 같아야 합니다.');
+  if (rootId && knownById.has(rootId) && knownById.get(rootId) !== 'README.md') throw new Error('스페이스 루트 매핑은 README.md여야 합니다. 기존 매핑을 확인하세요.');
   // Stage everything first. Any download/conversion/scope failure leaves local sources untouched.
   const stamp = (file: string) => existsSync(file) ? createHash('sha256').update(readFileSync(file)).digest('hex') : undefined;
   const originals = new Map<string, string | undefined>();
@@ -422,15 +463,18 @@ export async function runPull(argv: string[]): Promise<void> {
   for (const path of [mappingPath, join(baseDir, '.env'), ...metadataFiles(baseDir)]) originals.set(path, stamp(path));
   const ignore = buildIgnorer(baseDir, []);
   const rels = (existsSync(baseDir) ? collectMarkdown(baseDir) : []).map(file => relative(baseDir, file).split('\\').join('/')).filter(rel => !inNestedWorkspace(baseDir, rel) && !ignore.ignores(rel));
-  const tree = existsSync(baseDir) ? buildTreeRenderer(baseDir, rels) : undefined;
-  const localHashes = new Map(rels.map(rel => { const doc = tree!.docs[rel]; return [rel, docHash(doc.title, tree!.render(rel, doc.body, doc.title))]; }));
+  const scoped = rels.filter(rel => inScope(rel, workspace));
+  const tree = await preparePushTree(baseDir, rels, scoped);
+  let localHashes: Map<string, string>;
+  try { localHashes = new Map(scoped.map(rel => { const doc = tree.docs[rel]; return [rel, docHash(doc.title, tree.render(rel, doc.body, doc.title))]; })); }
+  finally { tree.dispose(); }
   const stage = mkdtempSync(join(tmpdir(), 'csync-pull-'));
   const stageOut = join(stage, relative(baseDir, outDir));
   const ctx: Ctx = {
-    client,
+    client, remoteBaseUrl: env.baseUrl!, missingAttachments: 0,
     obsidian: argv.includes('--obsidian'), spaceKey: env.spaceKey!, written: [], pathById: new Map(), folderIds: new Map(),
     versions: new Map(), assetOwners: new Map(), knownPaths: new Map([...knownById].map(([id, rel]) => [id, resolve(stage, rel)])),
-    stageBase: stage, baseDir, workspace, rootId, claimed: new Map(),
+    stageBase: stage, baseDir, workspace, rootId, claimed: new Map(), visited: new Set(),
   };
   try {
     // Reuse page IDs and local paths even when a remote title has changed.
@@ -490,8 +534,9 @@ export async function runPull(argv: string[]): Promise<void> {
     }
     const paths = new Map([...ctx.pathById].map(([id, path]) => [id, join(baseDir, relative(stage, path))]));
     const folders = new Map([...ctx.folderIds].map(([path, id]) => [join(baseDir, relative(stage, path)), id]));
-    const mapped = mappingPass(baseDir, mappingPath, paths, folders, ctx.versions);
+    const mapped = await mappingPass(baseDir, mappingPath, paths, folders, ctx.versions);
     console.log(`\n${green('완료')}  페이지 ${counts.pages}개, 폴더 ${counts.folders}개  매핑 ${mapped}건  내부링크 ${relinked}개, 앵커 ${anchors}개`);
     console.log(dim(`  base: ${baseDir}`));
+    if (ctx.missingAttachments) console.log(`[경고 요약] 원격 첨부 ${ctx.missingAttachments}개를 로컬로 저장하지 못했습니다. 문서는 저장했으며 원격 참조를 유지했습니다.`);
   } finally { rmSync(stage, { recursive: true, force: true }); }
 }

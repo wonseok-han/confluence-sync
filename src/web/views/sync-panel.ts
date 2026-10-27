@@ -4,7 +4,7 @@ export const syncPanel = `
     <div class="panel-heading"><h2><span class="section-number">02</span>Confluence</h2><span class="count" id="sync-direction-label">로컬 → Confluence</span></div>
     <div class="settings-body sync-settings">
       <div class="sync-direction" role="group" aria-label="Confluence 작업 방향"><button id="sync-direction-push" type="button" aria-pressed="true">↑ 업로드 (Push)</button><button id="sync-direction-pull" type="button" aria-pressed="false">↓ 가져오기 (Pull)</button></div>
-      <p id="sync-direction-note" class="sync-intro">01의 기준 폴더 전체 → 저장된 원격 스코프. 문서 선택은 미리보기·편집에만 사용합니다.</p>
+      <p id="sync-direction-note" class="sync-intro">01의 기준 폴더는 스페이스 루트에 대응합니다. 실제 Push·Pull 대상은 저장된 작업 스코프입니다.</p>
       <section class="env-settings" aria-labelledby="sync-env-heading">
         <div class="env-settings-heading"><h3 id="sync-env-heading">.env 연결 설정</h3><button id="sync-load" type="button">설정 확인</button></div>
         <p class="hint">API 토큰이 없나요? <button id="open-token-guide" class="quiet" type="button" aria-haspopup="dialog" aria-controls="help-dialog">API 토큰 발급 가이드</button></p>
@@ -23,49 +23,30 @@ export const syncPanel = `
       <p id="sync-config-status" class="hint" role="status"></p>
         </div>
       </section>
-      <section class="scope-picker" aria-labelledby="sync-scope-heading">
-        <div class="scope-picker-heading">
-          <div><h3 id="sync-scope-heading">원격 스코프</h3><p>이 로컬 폴더와 연결할 Confluence 위치를 선택하세요.</p></div>
-          <span class="scope-required">필수 설정</span>
-        </div>
-        <div class="scope-picker-body">
-          <aside id="sync-scope-warning" class="scope-warning" aria-label="루트 스코프 설정 주의">
-            <strong>주의: 루트(<code>/</code>)는 작업 범위가 넓습니다.</strong>
-            <p>스페이스 홈과 하위 트리 전체가 작업 범위가 됩니다. 로컬 기준 폴더를 잘못 연결하면 Push 시 의도하지 않은 페이지가 생성되거나 기존 페이지의 내용·위치가 변경될 수 있습니다.</p>
-            <p>가능하면 관리할 하위 스코프를 선택하세요. 루트가 필요하다면 01의 기준 폴더와 업로드 미리보기를 반드시 확인하세요.</p>
-          </aside>
-          <div class="scope-navigation">
-            <div class="scope-step-label">Confluence 트리</div>
-            <button id="sync-scope-browse" type="button">트리 불러오기</button>
-          </div>
-          <p class="hint">화살표로 하위 항목을 펼치고, 이름을 눌러 관리할 위치를 선택하세요.</p>
-          <nav id="sync-scope-tree" class="scope-tree" aria-label="원격 스코프 탐색" aria-describedby="sync-scope-warning sync-scope-help"><p class="scope-tree-empty">트리를 불러오면 페이지와 폴더를 탐색할 수 있습니다.</p></nav>
-          <div class="scope-summary">
-            <div><span>저장된 스코프</span><p id="sync-scope-saved">설정 확인으로 불러오세요.</p></div>
-            <div><span>선택 중인 위치</span><p id="sync-scope-candidate" aria-live="polite">아직 선택하지 않았습니다.</p></div>
-          </div>
-          <div class="scope-picker-actions"><span class="hint">저장해야 스코프에 반영됩니다.</span><button id="sync-scope-save" type="button" class="primary" disabled>이 위치를 스코프로 저장</button></div>
-        </div>
-        <div class="scope-picker-note" id="sync-scope-help"><p>선택한 원격 위치가 로컬 기준 폴더 자체에 대응합니다. 전체를 관리하려면 <code>/</code>를 직접 선택하세요.</p><p>트리 조회와 스코프 저장은 문서 본문을 다운로드하거나 업로드하지 않습니다.</p></div>
-      </section>
       <div id="sync-push-options" class="sync-push-options">
-      <div class="field"><label for="sync-references">참조 문서 폴더 <span>선택 사항 · 한 줄에 한 경로</span></label><textarea id="sync-references" class="path-input" rows="3" placeholder="다른 동기화 폴더 경로"></textarea><button id="sync-add-reference" type="button">참조 폴더 추가…</button><p class="hint">참조 폴더의 게시 매핑으로 링크를 연결합니다. 같은 Confluence 서버의 폴더를 지정하세요. 참조 문서는 업로드하지 않습니다.</p></div>
-      <p id="sync-target" class="sync-target">01에서 기준 폴더를 선택하세요.</p>
-      <label class="repair-option"><input id="sync-verify" type="checkbox">미리보기에서 원격 버전·페이지 존재 확인</label>
-      <p class="hint">저장된 관리 범위와 제외 규칙을 적용합니다. 원격 확인을 선택하면 미리보기에서도 Confluence를 조회하며, 파일이나 원격 내용을 변경하지 않습니다.</p>
+        <section class="sync-option-section" aria-labelledby="sync-range-heading">
+          <h3 id="sync-range-heading">업로드할 범위</h3>
+          <p class="hint">01에 저장한 스코프와 제외 규칙을 적용합니다. 범위를 바꾸려면 01에서 다시 저장하세요.</p>
+          <p id="sync-target" class="sync-target">01에서 기준 폴더를 선택하세요.</p>
+        </section>
+        <section class="sync-option-section" aria-labelledby="sync-reference-heading">
+          <h3 id="sync-reference-heading">참조 문서 연결 <span class="subtle-label">선택 사항</span></h3>
+          <p id="sync-references-help" class="hint">다른 동기화 폴더의 게시 매핑을 이용해 문서 링크를 연결합니다. 같은 Confluence 서버의 폴더를 지정하세요. 참조 문서는 업로드하지 않습니다.</p>
+          <div class="field"><label for="sync-references">참조 문서 폴더 <span>한 줄에 한 경로</span></label><textarea id="sync-references" class="path-input" rows="3" placeholder="다른 동기화 폴더 경로" aria-describedby="sync-references-help"></textarea></div>
+          <button id="sync-add-reference" type="button">참조 폴더 추가…</button>
+        </section>
+        <section class="sync-option-section" aria-labelledby="sync-verify-heading">
+          <h3 id="sync-verify-heading">미리보기 확인 옵션</h3>
+          <label class="repair-option sync-verify-option"><input id="sync-verify" type="checkbox" aria-describedby="sync-verify-help">Confluence의 원격 버전과 페이지 존재 여부도 확인</label>
+          <p id="sync-verify-help" class="hint">선택하면 미리보기 중 Confluence를 조회하므로 시간이 더 걸릴 수 있습니다. 파일과 원격 내용은 변경하지 않습니다.</p>
+        </section>
       </div>
-      <p id="sync-pull-note" class="sync-target" hidden>저장된 원격 스코프 전체를 01의 기준 폴더로 가져옵니다. 로컬 변경·이동 대기가 있으면 중단합니다. 자동 병합하지 않습니다.</p>
+      <p id="sync-pull-note" class="sync-target" hidden>저장된 로컬 작업 스코프의 문서를 원래 경로로 가져옵니다. 로컬 변경·이동 대기가 있으면 중단합니다. 자동 병합하지 않습니다.</p>
     </div>
-    <div class="action-bar"><span class="save-note">작업 방향과 원격 스코프를 확인하세요.</span><div class="actions"><button id="sync-preview" disabled>업로드 미리보기</button><button id="sync-push" class="primary" disabled>Confluence에 업로드</button><button id="sync-pull" class="primary" disabled hidden>Confluence에서 가져오기</button></div></div>
+    <div class="action-bar"><span class="save-note">작업 방향과 로컬 작업 스코프를 확인하세요.</span><div class="actions"><button id="sync-preview" disabled>업로드 미리보기</button><button id="sync-push" class="primary" disabled>Confluence에 업로드</button><button id="sync-pull" class="primary" disabled hidden>Confluence에서 가져오기</button></div></div>
     <div class="feedback"><p id="sync-status" class="status" role="status" aria-live="polite">작업 방향을 선택하고 연결 설정과 스코프를 확인하세요.</p><button id="sync-reconnect" hidden>진행 상태 다시 확인</button></div>
   </section>
-  <dialog id="scope-review-dialog" class="env-confirm-dialog scope-review-dialog" aria-labelledby="scope-review-title">
-    <h3 id="scope-review-title">스코프 연결 변경 확인</h3>
-    <p id="scope-review-transition"></p><p id="scope-review-counts"></p>
-    <ul id="scope-review-items" class="scope-review-items"></ul>
-    <p class="scope-warning">저장은 연결 설정만 바꿉니다. 문서·매핑·원격 내용은 유지됩니다. 범위 밖 문서나 루트·폴더 충돌이 남아 있으면 Push는 차단됩니다. 페이지 위치 변경은 이후 Push에서 원격 버전과 범위를 검증한 뒤 반영합니다.</p>
-    <div class="actions"><button id="scope-review-cancel" type="button">취소</button><button id="scope-review-confirm" type="button" class="primary">영향 확인 후 스코프 저장</button></div>
-  </dialog>
+
   <dialog id="sync-env-confirm" class="env-confirm-dialog" aria-labelledby="sync-env-confirm-title">
     <h3 id="sync-env-confirm-title">기존 .env의 연결 설정을 바꿀까요?</h3>
     <p id="sync-env-confirm-path" class="hint"></p>

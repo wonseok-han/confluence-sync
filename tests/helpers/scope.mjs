@@ -5,14 +5,15 @@ import { mappingPath, workspacePath } from '../../dist/sync/metadata.js';
 
 export const scopeFixture = (overrides = {}) => ({ version: 2,
  connection: { baseUrl: 'https://example.invalid/wiki', spaceKey: 'TEST', spaceId: 'space', homepageId: 'home', ...overrides.connection },
- scope: { id: 'home', type: 'folder', path: '/', ...overrides.scope },
+ remoteRoot: { id: 'home', type: 'folder', path: '/', ...overrides.scope },
+ scope: overrides.localScope ?? {path:'.',type:'folder'},
 });
 export function bindScope(root, overrides = {}) {
  const value = scopeFixture(overrides), path = workspacePath(root);
  mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, JSON.stringify(value)); return value;
 }
 export function scopeResponder(root, steps, config = JSON.parse(readFileSync(workspacePath(root), 'utf8'))) {
- const known = new Set([config.scope.id, config.connection.homepageId]);
+ const known = new Set([config.remoteRoot.id, config.connection.homepageId]);
  for (const step of steps) {
   const id = step.path.match(/\/(?:pages|content)\/([^/?]+)/)?.[1]; if (id && id !== 'search') known.add(id);
   if (step.body?.id) known.add(String(step.body.id));
@@ -26,9 +27,9 @@ export function scopeResponder(root, steps, config = JSON.parse(readFileSync(wor
   for (const entry of Object.values(mapping)) known.add(entry.pageId);
   const match = path.match(/^\/wiki\/rest\/api\/content\/([^/?]+)\?expand=ancestors,space,version$/);
   if (match && known.has(match[1])) {
-   const id = match[1], isRoot = id === config.scope.id;
-   return { id, title: isRoot ? 'Scope' : id, type: isRoot ? config.scope.type : 'page', space: { id: config.connection.spaceId },
-    ancestors: id === config.connection.homepageId ? [] : [{ id: config.connection.homepageId, title: 'Home' }, ...(!isRoot ? [{ id: config.scope.id, title: 'Scope' }] : [])] };
+   const id = match[1], isRoot = id === config.remoteRoot.id;
+   return { id, title: isRoot ? 'Scope' : id, type: isRoot ? config.remoteRoot.type : 'page', space: { id: config.connection.spaceId },
+    ancestors: id === config.connection.homepageId ? [] : [{ id: config.connection.homepageId, title: 'Home' }, ...(!isRoot ? [{ id: config.remoteRoot.id, title: 'Scope' }] : [])] };
   }
   if (path === '/wiki/api/v2/spaces?keys=TEST') return { results: [{ id: config.connection.spaceId, homepageId: config.connection.homepageId }] };
   const page = path.match(/^\/wiki\/api\/v2\/pages\/([^/?]+)$/);

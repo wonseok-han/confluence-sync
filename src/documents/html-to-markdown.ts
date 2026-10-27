@@ -12,6 +12,8 @@ export type Html2MdOpts = {
   onImage?: (filename: string) => void;
   /** 로컬 첨부 이미지 링크에 붙일 상대 경로 접두사(예: 'attachments/문서명'). 없으면 파일명만 */
   assetPrefix?: string;
+  /** Override an attachment destination, e.g. keep the remote reference when unavailable locally. */
+  attachmentDestination?: (filename: string, source: string) => string;
   /**
    * storage 에서 뽑은 코드블록 언어 목록(문서 순서, 미지정은 '').
    * export_view 의 `brush:` 는 언어 미지정 시 Confluence 가 java 를 기본으로 넣어 신뢰할 수 없다.
@@ -133,13 +135,16 @@ export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
       const isAttachment =
         el.getAttribute('data-linked-resource-type') === 'attachment' ||
         /\/download\/(attachments|thumbnails)\//.test(src);
+      // export_view may include a Confluence macro loading indicator, not a page attachment.
+      if (!isAttachment && /(?:^|\s)waiting-image(?:\s|$)/.test(el.getAttribute('class') || '')
+        && /\/images\/icons\/wait\.gif(?:[?#]|$)/i.test(src)) return '';
       if (!isAttachment && /^https?:\/\//i.test(src)) {
         return `![${alt}](${linkDest(src)})`;
       }
       const alias = el.getAttribute('data-linked-resource-default-alias') || '';
       const name = alias || decodeURIComponent((src.split('?')[0].split('/').pop() || '').trim());
       if (name) opts.onImage?.(name);
-      const dest = opts.assetPrefix ? `${opts.assetPrefix}/${name}` : name;
+      const dest = opts.attachmentDestination?.(name, src) ?? (opts.assetPrefix ? `${opts.assetPrefix}/${name}` : name);
       return `![${alt || name}](${linkDest(dest)})`;
     },
   });
@@ -161,7 +166,7 @@ export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
             || decodeURIComponent(href.split('?')[0].split('#')[0].split('/').pop() || '');
           if (!name) continue;
           opts.onImage?.(name);
-          anchor.setAttribute('href', opts.assetPrefix ? `${opts.assetPrefix}/${name}` : name);
+          anchor.setAttribute('href', opts.attachmentDestination?.(name, href) ?? (opts.assetPrefix ? `${opts.assetPrefix}/${name}` : name));
         }
         for (const cell of Array.from(copy.querySelectorAll('th, td'))) {
           cell.innerHTML = cellRenderer.render(td.turndown(cell.innerHTML));

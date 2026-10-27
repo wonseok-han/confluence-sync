@@ -1,7 +1,7 @@
 import { connectionKeys, importConnection, mergeConnection } from '../confluence/env-file.js';
 import { loadWorkspace, inScope, inNestedWorkspace, requireScope, type Workspace } from '../sync/workspace.js';
 import { mappingPath as defaultMappingPath, METADATA_DIR } from '../sync/metadata.js';
-import { configureScope, scopeTree, ScopeReviewRequired } from '../sync/scope.js';
+import { configureScope } from '../sync/scope.js';
 import type { Env } from '../confluence/config.js';
 import { referenceRoots } from '../sync/references.js';
 /** Web adapter for the existing push CLI. Only preview and incremental push are exposed. */
@@ -22,7 +22,7 @@ type Settings = Record<string, string>;
 type Selection = { base: string; target: string; envId: string; verify: boolean; referenceRoots: string[] };
 type Prepared = { selection: Selection; env: Settings; config: ReturnType<typeof publicConfig>; fingerprint: string };
 export type SyncRunner = (args: string[], env: Settings, log: (text: string) => void) => Promise<number>;
-type Job = { id: string; kind: 'preview' | 'push' | 'pull'; state: 'running' | 'succeeded' | 'failed'; log: string; selection: Selection; config: ReturnType<typeof publicConfig>; planId: string | null; startedAt: string; finishedAt?: string };
+type Job = { warningCount?: number; id: string; kind: 'preview' | 'push' | 'pull'; state: 'running' | 'succeeded' | 'failed'; log: string; selection: Selection; config: ReturnType<typeof publicConfig>; planId: string | null; startedAt: string; finishedAt?: string };
 
 async function settings(base: string, envId: string, imports: Imports) {
   if (envId) {
@@ -41,8 +41,8 @@ async function settings(base: string, envId: string, imports: Imports) {
 
 function publicConfig(env: Settings, source: string, workspace?: Workspace) {
   return { source, baseUrl: env.CONFLUENCE_BASE_URL, email: env.CONFLUENCE_EMAIL,
-    spaceKey: env.CONFLUENCE_SPACE_KEY, scope: workspace?.version === 2 ? workspace.scope ?? null : null,
-    hasToken: !!env.CONFLUENCE_API_TOKEN, scopeCheckRequired: !!workspace?.scopeCheckRequired,
+    spaceKey: env.CONFLUENCE_SPACE_KEY, scope: workspace?.version === 2 && workspace.scope ? {...workspace.scope, path:workspace.scope.path==='.'?'/':workspace.scope.path} : null,
+    hasToken: !!env.CONFLUENCE_API_TOKEN, scopeCheckRequired: false,
     missing: keys.slice(0, 4).filter(key => !env[key]) };
 }
 // The preview is invalidated if documents, attachments, mapping, ignore rules or credentials change.
@@ -164,6 +164,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
           if (updated.fingerprint !== prepared.fingerprint) throw new Error('미리보기 중 문서나 설정이 바뀌었습니다. 다시 미리보기해 주세요.');
           plan = { id: randomUUID(), prepared }; current.planId = plan.id;
         }
+        current.warningCount = Number(current.log.match(/(?:^|\n)\[경고 요약\] 원격 첨부 (\d+)개/)?.[1] ?? 0);
         current.state = succeeded ? 'succeeded' : 'failed';
       } catch (error) { current.state = 'failed'; log((error instanceof Error ? error.message : String(error)) + '\n'); }
       finally { current.finishedAt = new Date().toISOString(); }
@@ -213,23 +214,16 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
         return { saved: true, config: publicConfig(env, source, loadWorkspace(base)) };
       } finally { if (temp) await unlink(temp).catch(() => {}); locked = false; }
     },
-    scopes: async (input: unknown) => {
-      if (running()) throw new Error('다른 Confluence 작업이 진행 중입니다.');
-      const { config, body } = await scopedSettings(input);
-      if (body.parentId !== undefined && (typeof body.parentId !== 'string' || !/^\d+$/.test(body.parentId))) throw new Error('스코프 탐색 ID를 확인하세요.');
-      return scopeTree(config, body.parentId);
-    },
     setScope: async (input: unknown) => {
       if (running()) throw new Error('다른 Confluence 작업이 진행 중입니다.');
       locked = true; plan = null;
       try {
         const { base, config, body } = await scopedSettings(input);
-        if (typeof body.scopeId !== 'string' || !/^\d+$/.test(body.scopeId)) throw new Error('스코프를 직접 선택하세요.');
-        if (body.confirmation !== undefined && (typeof body.confirmation !== 'string' || !/^[a-f0-9]{64}$/.test(body.confirmation))) throw new Error('변경 영향을 다시 확인하세요.');
-        try { await configureScope(base, config, `id:${body.scopeId}`, body.confirmation); }
-        catch (error) { if (error instanceof ScopeReviewRequired) return { confirmationRequired: true as const, review: error.review }; throw error; }
-        const { env, source } = await settings(base, body.envId!, imports);
-        return publicConfig(env, source, loadWorkspace(base));
+        const path = (body as {scopePath?:unknown}).scopePath;
+        if (typeof path !== 'string') throw new Error('기준 폴더 안의 파일·폴더를 스코프로 직접 선택하세요.');
+        await configureScope(base,config,path);
+        const {env,source} = await settings(base,body.envId!,imports);
+        return publicConfig(env,source,loadWorkspace(base));
       } finally { locked = false; }
     },
     current: () => job,

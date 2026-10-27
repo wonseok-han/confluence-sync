@@ -25,11 +25,17 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
   const tableFormatting = createTableFormatting();
   let origin = '';
   const allowedHosts = new Set<string>();
-  let busy = false;
+  let busy: string | null = null;
   let picking = false;
   const assetsRoot = fileURLToPath(new URL('../../dist/web/assets/', import.meta.url));
   const results = new Set<string>();
   const sync = createWebSync(options.syncRunner);
+  const conflictMessage = () => {
+    if (busy) return `${busy} 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.`;
+    const job = sync.current();
+    const name = job?.state === 'running' ? { pull: '가져오기(Pull)', push: '업로드(Push)', preview: '업로드 미리보기' }[job.kind] : 'Confluence 요청 처리';
+    return `${name} 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.`;
+  };
   const server = createServer(async (req, res) => {
     const json = (status: number, value: unknown) => {
       res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -50,7 +56,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
       if (req.method === 'GET' && url.pathname.startsWith('/assets/')) {
         const path = resolve(assetsRoot, decodeURIComponent(url.pathname.slice('/assets/'.length)));
         if (!within(assetsRoot, path)) { json(403, { error: '잘못된 파일 경로입니다.' }); return; }
-        const types: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/css', '.ttf': 'font/ttf', '.png': 'image/png' };
+        const types: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/css', '.ttf': 'font/ttf', '.png': 'image/png', '.svg': 'image/svg+xml' };
         if (!types[extname(path)]) { json(404, { error: '없는 파일입니다.' }); return; }
         res.setHeader('Content-Type', types[extname(path)]);
         res.end(await readFile(path)); return;
@@ -60,7 +66,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
       if (req.method === 'GET' && url.pathname === '/api/browse') {
         const path = await realpath(url.searchParams.get('path') || start);
         const entries = (await readdir(path, { withFileTypes: true }))
-          .filter(e => !e.name.startsWith('.') && e.name !== 'node_modules' && (e.isDirectory() || (e.isFile() && /\.md$/i.test(e.name))))
+          .filter(e => !e.name.startsWith('.') && e.name !== 'node_modules' && !(e.isDirectory() && e.name.toLowerCase() === 'attachments') && (e.isDirectory() || (e.isFile() && /\.md$/i.test(e.name))))
           .map(e => ({ name: e.name, path: join(path, e.name), directory: e.isDirectory() }))
           .sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name, 'ko'));
         json(200, { path, parent: dirname(path), home: homedir(), entries }); return;
@@ -82,7 +88,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
             skipped++; continue;
           }
           for (const entry of children) {
-            if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+            if (entry.name.startsWith('.') || entry.name === 'node_modules' || (entry.isDirectory() && entry.name.toLowerCase() === 'attachments')) continue;
             const path = join(dir, entry.name);
             // Do not follow symlinks: avoid cycles and paths outside the selected tree.
             if (entry.isDirectory()) pending.push(path);
@@ -111,31 +117,31 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         json(200, await previewDocument(body.base, body.file, previewNonce)); return;
       }
       if (url.pathname.startsWith('/api/table-format/')) {
-        if (busy || sync.running()) { json(409, { error: '다른 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.' }); return; }
+        if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }
         if (url.pathname.endsWith('/preview')) {
           if (typeof body.base !== 'string' || typeof body.file !== 'string' || typeof body.hash !== 'string'
             || !Number.isInteger(body.index) || !Array.isArray(body.widths)) throw new Error('표 서식 요청을 확인해 주세요.');
           json(200, await tableFormatting.preview(body.base, body.file, body.hash, body.index, body.widths, body.changes));
         } else {
           if (typeof body.planId !== 'string') throw new Error('변경 비교를 먼저 실행해 주세요.');
-          busy = true;
+          busy = '표 서식 저장';
           try { json(200, await tableFormatting.save(body.planId)); }
-          finally { busy = false; }
+          finally { busy = null; }
         }
         return;
       }
-      if (url.pathname === '/api/sync/scopes' || url.pathname === '/api/sync/scope') {
-        if (busy || sync.running()) { json(409, { error: '다른 작업이 진행 중입니다.' }); return; }
-        busy = true;
-        try { json(200, url.pathname.endsWith('/scopes') ? await sync.scopes(body) : await sync.setScope(body)); }
-        finally { busy = false; }
+      if (url.pathname === '/api/sync/scope') {
+        if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }
+        busy = '로컬 스코프 저장';
+        try { json(200, await sync.setScope(body)); }
+        finally { busy = null; }
         return;
       }
       if (url.pathname === '/api/sync/env/import' || url.pathname === '/api/sync/env/save') {
-        if (busy || sync.running()) { json(409, { error: '다른 작업이 진행 중입니다.' }); return; }
-        busy = true;
+        if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }
+        busy = url.pathname.endsWith('/import') ? '.env 가져오기' : '.env 저장';
         try { json(200, url.pathname.endsWith('/import') ? await sync.importEnv(body) : await sync.saveEnv(body)); }
-        finally { busy = false; }
+        finally { busy = null; }
         return;
       }
       if (url.pathname === '/api/sync/config') {
@@ -143,7 +149,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         json(200, await sync.config(body.base, body.envId)); return;
       }
       if (url.pathname === '/api/sync/preview' || url.pathname === '/api/sync/push' || url.pathname === '/api/sync/pull') {
-        if (busy || sync.running()) { json(409, { error: '다른 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.' }); return; }
+        if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }
         const job = url.pathname.endsWith('/preview') ? await sync.preview(body) : url.pathname.endsWith('/pull') ? await sync.pull(body) : await sync.push(body.planId);
         json(202, { job }); return;
       }
@@ -170,7 +176,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         await execute(command, [body.path], { timeout: 10_000 });
         json(200, { ok: true }); return;
       }
-      if (busy || sync.running()) { json(409, { error: '다른 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.' }); return; }
+      if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }
       if (typeof body.base !== 'string' || typeof body.file !== 'string'
         || !['markdown', 'obsidian', 'repair'].includes(body.to)
         || typeof body.fix !== 'boolean' || typeof body.preview !== 'boolean') throw new Error('변환 옵션을 확인해 주세요.');
@@ -200,8 +206,8 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         throw new Error('출력 폴더는 기준 폴더와 겹치지 않는 별도 경로로 지정해 주세요.');
       }
       // Validation above awaits filesystem reads; another request may have acquired the slot.
-      if (busy || sync.running()) { json(409, { error: '다른 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.' }); return; }
-      busy = true;
+      if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }
+      busy = '문서 변환';
       let out: string | undefined;
       let destination: string | null = null;
       let generatedDestination = false;
@@ -244,7 +250,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         }
       } finally {
         try { if (out) await rm(out, { recursive: true, force: true }); }
-        finally { busy = false; }
+        finally { busy = null; }
       }
       json(responseStatus, response);
     } catch (error) {

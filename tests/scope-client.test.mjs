@@ -3,61 +3,50 @@ import assert from 'node:assert/strict';
 import { initSync } from '../src/web/client/sync.js';
 
 function setup(t, api) {
- const ids=['scope-review-dialog','scope-review-transition','scope-review-counts','scope-review-items','scope-review-cancel','scope-review-confirm','sync-log-empty','sync-direction-push','sync-direction-pull','sync-push-options','sync-pull','sync-pull-note','sync-direction-label','sync-direction-note','sync-status','sync-env-base-mode','sync-env-import-mode','sync-env-import-controls','sync-env-file','sync-env-file-name','sync-env-source-note','sync-env-choose','sync-env-save','sync-env-confirm','sync-env-confirm-save','sync-env-confirm-cancel','sync-verify','sync-references','sync-config','sync-config-status','sync-scope-browse','sync-scope-tree','sync-scope-save','sync-scope-saved','sync-scope-candidate','sync-load','sync-add-reference','sync-preview','sync-push','sync-target','sync-reconnect'];
+ const ids=['sync-job-summary','sync-log','sync-job-state','sync-log-empty','sync-direction-push','sync-direction-pull','sync-push-options','sync-pull','sync-pull-note','sync-direction-label','sync-direction-note','sync-status','sync-env-base-mode','sync-env-import-mode','sync-env-import-controls','sync-env-file','sync-env-file-name','sync-env-source-note','sync-env-choose','sync-env-save','sync-env-confirm','sync-env-confirm-save','sync-env-confirm-cancel','sync-verify','sync-references','sync-config','sync-config-status','sync-scope-save','sync-scope-saved','sync-scope-candidate','sync-load','sync-add-reference','sync-preview','sync-push','sync-target','sync-reconnect'];
  const node=()=>({disabled:false,hidden:false,open:false,showModal(){this.open=true},close(){this.open=false},value:'',checked:false,textContent:'',children:[],attributes:{},setAttribute(key,value){this.attributes[key]=value},classList:{toggle(){}},addEventListener(){},append(...items){this.children.push(...items)},replaceChildren(...items){this.children=items;this.value=items[0]?.value??''}});
  const nodes=new Map(ids.map(id=>[id,node()]));nodes.get('sync-env-base-mode').checked=true;
  const oldDocument=globalThis.document,oldOption=globalThis.Option;
- globalThis.document={getElementById:id=>nodes.get(id),createElement:node};globalThis.Option=function(text,value){this.textContent=text;this.value=value;};
+ globalThis.document={getElementById:id=>nodes.get(id),createElement:node,createDocumentFragment:node};globalThis.Option=function(text,value){this.textContent=text;this.value=value;};
  t.after(()=>{if(oldDocument===undefined)delete globalThis.document;else globalThis.document=oldDocument;if(oldOption===undefined)delete globalThis.Option;else globalThis.Option=oldOption;});
  const context={base:'/docs',file:'/docs/doc.md',folder:'/docs'};
+ const notifications=[];
  let controller;const busy=value=>controller.update(value);
- controller=initSync({api,context:()=>context,setBusy:busy,showSync:async()=>{}});controller.update(false);
- return {nodes,context,controller};
+ controller=initSync({api,notify:(text,kind)=>notifications.push({text,kind}),context:()=>context,setBusy:busy,showSync:async()=>{}});controller.update(false);
+ return {nodes,context,controller,notifications};
 }
-const tree={parent:{id:'100',path:'/',type:'page',title:'Home',parentId:null},children:[{id:'200',path:'/Patents',type:'folder',title:'Patents'}]};
-const config={source:'.env',baseUrl:'https://example.invalid/wiki',email:'demo',spaceKey:'TEST',hasToken:true,missing:[],scope:{id:'200',path:'/Patents',type:'folder'}};
+const config={source:'.env',baseUrl:'https://example.invalid/wiki',email:'demo',spaceKey:'TEST',hasToken:true,missing:[],scope:{path:'doc.md',type:'file'}};
 
-
-function all(node) { return [node,...node.children.flatMap(all)]; }
-function button(nodes, text) { return all(nodes.get('sync-scope-tree')).find(node=>node.children?.some(child=>child.textContent===text)); }
-function toggle(nodes, name) { return all(nodes.get('sync-scope-tree')).find(node=>node.attributes?.['aria-label']===name); }
-
-test('web tree has no default selection and requires explicit save before preview',async t=>{
- const calls=[];const {nodes}=setup(t,async(path,body)=>{calls.push({path,body});return path.endsWith('/scopes')?tree:config;});
- assert.equal(nodes.get('sync-preview').disabled,true);assert.equal(nodes.get('sync-scope-save').disabled,true);
- await nodes.get('sync-scope-browse').onclick();
- assert.equal(nodes.get('sync-scope-candidate').textContent,'아직 선택하지 않았습니다.');assert.equal(nodes.get('sync-scope-save').disabled,true);
- button(nodes,'Patents').onclick();assert.equal(nodes.get('sync-scope-save').disabled,false);assert.equal(nodes.get('sync-preview').disabled,true);
- await nodes.get('sync-scope-save').onclick();assert.equal(nodes.get('sync-preview').disabled,false);
- assert.deepEqual(calls.at(-1),{path:'/api/sync/scope',body:{base:'/docs',envId:'',scopeId:'200'}});
- assert.match(nodes.get('sync-scope-saved').textContent,/Patents/);
+test('explorer selection becomes a scope only after explicit save; file, folder and root are supported',async t=>{
+ const calls=[];const {nodes,context,controller}=setup(t,async(path,body)=>{calls.push({path,body});return {...config,scope:{path:body.scopePath,type:context.directory?'folder':'file'}};});
+ context.file='';controller.update(false);assert.equal(nodes.get('sync-scope-save').disabled,true);
+ context.file='/docs/doc.md';controller.update(false);assert.equal(calls.length,0);assert.match(nodes.get('sync-scope-candidate').textContent,/doc.md.*파일 하나/);
+ await nodes.get('sync-scope-save').onclick();assert.deepEqual(calls.at(-1).body,{base:'/docs',envId:'',scopePath:'doc.md'});
+ assert.match(nodes.get('sync-scope-saved').textContent,/doc.md/);
+ context.file='/docs/nested';context.directory=true;controller.update(false);
+ assert.equal(calls.length,1);assert.match(nodes.get('sync-scope-candidate').textContent,/nested.*폴더와 하위 문서/);assert.match(nodes.get('sync-scope-saved').textContent,/doc.md/);
+ await nodes.get('sync-scope-save').onclick();assert.equal(calls.at(-1).body.scopePath,'nested');
+ context.file='/docs';controller.update(false);await nodes.get('sync-scope-save').onclick();assert.equal(calls.at(-1).body.scopePath,'/');
+ context.base='/other';controller.update(false);assert.equal(nodes.get('sync-scope-save').disabled,true);assert.doesNotMatch(nodes.get('sync-scope-saved').textContent,/nested/);
 });
 
-test('expanding lazily preserves candidate; collapse and reopening use cached children',async t=>{
- const calls=[];const {nodes,context,controller}=setup(t,async(path,body)=>{
-  calls.push({path,body});return path.endsWith('/scopes')?(body.parentId?{parent:tree.children[0],children:[{id:'300',path:'/Patents/Idea',title:'Idea',type:'page'}]}:tree):config;
- });
- await nodes.get('sync-scope-browse').onclick();button(nodes,'Patents').onclick();
- await toggle(nodes,'Patents 펼치기').onclick();assert.match(nodes.get('sync-scope-candidate').textContent,/Patents/);assert.ok(button(nodes,'Idea'));
- await toggle(nodes,'Patents 접기').onclick();assert.equal(button(nodes,'Idea'),undefined);
- await toggle(nodes,'Patents 펼치기').onclick();assert.ok(button(nodes,'Idea'));assert.equal(calls.length,2);
- await nodes.get('sync-scope-save').onclick();assert.equal(nodes.get('sync-preview').disabled,false);
- context.base='/other';controller.update(false);assert.equal(nodes.get('sync-preview').disabled,true);assert.equal(nodes.get('sync-scope-save').disabled,true);assert.equal(button(nodes,'Patents'),undefined);
+test('explorer scopes normalize Windows paths without accepting sibling folders',async t=>{
+ const calls=[];const {nodes,context,controller}=setup(t,async(path,body)=>{calls.push(body);return config;});
+ context.base='C:\\docs';context.file='C:\\docs\\nested\\doc.md';controller.update(false);
+ await nodes.get('sync-scope-save').onclick();assert.equal(calls.at(-1).scopePath,'nested/doc.md');
+ context.file='C:\\docs_backup\\doc.md';controller.update(false);assert.equal(nodes.get('sync-scope-save').disabled,true);
 });
 
-test('stale tree responses do not populate a different local workspace',async t=>{
- let finish;const {nodes,context,controller}=setup(t,()=>new Promise(resolve=>{finish=resolve;}));
- const request=nodes.get('sync-scope-browse').onclick();context.base='/other';controller.update(true);finish(tree);await request;
- assert.equal(nodes.get('sync-scope-save').disabled,true);assert.equal(button(nodes,'Patents'),undefined);
+test('late scope save responses cannot configure a different base',async t=>{
+ let finish;const {nodes,context,controller}=setup(t,()=>new Promise(resolve=>{finish=resolve}));
+ const pending=nodes.get('sync-scope-save').onclick();context.base='/other';context.file='';controller.update(true);finish(config);await pending;
+ assert.equal(nodes.get('sync-preview').disabled,true);assert.doesNotMatch(nodes.get('sync-scope-saved').textContent,/doc.md/);
 });
 
-test('failed lazy expansion is retryable without losing the selected candidate',async t=>{
- let fail=true;const {nodes}=setup(t,async(path,body)=>{
-  if(body.parentId){if(fail)throw Error('조회 실패');return {parent:tree.children[0],children:[]};}return tree;
- });
- await nodes.get('sync-scope-browse').onclick();button(nodes,'Patents').onclick();await toggle(nodes,'Patents 펼치기').onclick();
- assert.match(nodes.get('sync-status').textContent,/조회 실패/);assert.match(nodes.get('sync-scope-candidate').textContent,/Patents/);
- fail=false;await toggle(nodes,'Patents 펼치기').onclick();assert.equal(toggle(nodes,'Patents 하위 항목 없음').disabled,true);
+test('scope save errors preserve the saved range and allow retry',async t=>{
+ let fail=false;const {nodes,context,controller,notifications}=setup(t,async()=>{if(fail)throw Error('denied');return config;});
+ await nodes.get('sync-load').onclick();fail=true;context.file='/docs/nested';context.directory=true;controller.update(false);
+ await nodes.get('sync-scope-save').onclick();assert.match(notifications.at(-1).text,/denied/);assert.match(nodes.get('sync-scope-saved').textContent,/doc.md/);assert.equal(nodes.get('sync-scope-save').disabled,false);
 });
 
 test('web direction controls separate upload and pull and allow pull without selecting a local document',async t=>{
@@ -77,17 +66,63 @@ test('web upload always sends the base workspace, independent of explorer file a
  }
 });
 
-test('scope change review can be cancelled and only confirmation saves the new binding',async t=>{
- const calls=[],token='a'.repeat(64),review={token,previous:{path:'/'},next:{id:'200',path:'/Patents'},summary:{total:1,aligned:0,outside:1,rootConflict:0,pageMove:0,folderConflict:0},entries:[{path:'old.md',pageId:'1',status:'outside',remotePath:'/Old'}]};
- const {nodes}=setup(t,async(path,body)=>{calls.push({path,body});if(path.endsWith('/scopes'))return tree;return body.confirmation?{...config,scopeCheckRequired:true}:{confirmationRequired:true,review};});
- await nodes.get('sync-scope-browse').onclick();button(nodes,'Patents').onclick();await nodes.get('sync-scope-save').onclick();
- assert.equal(nodes.get('scope-review-dialog').open,true);assert.equal(nodes.get('sync-preview').disabled,true);assert.match(nodes.get('scope-review-items').children[0].textContent,/old.md.*스코프 밖/);
- nodes.get('scope-review-cancel').onclick();assert.equal(nodes.get('scope-review-dialog').open,false);assert.equal(calls.length,2);
- await nodes.get('sync-scope-save').onclick();await nodes.get('scope-review-confirm').onclick();assert.equal(calls.at(-1).body.confirmation,token);assert.equal(nodes.get('scope-review-dialog').open,false);assert.equal(nodes.get('sync-preview').disabled,false);assert.equal(nodes.get('sync-verify').checked,true);
+for (const [kind,state,tone] of [['pull','succeeded','success'],['push','succeeded','success'],['preview','succeeded','warning'],['pull','failed','error']]) test(`${kind} ${state} notifies once per job and allows a new job result`,async t=>{
+ let job={id:'one',kind,state,log:'',selection:{base:'/docs'},config:{...config,missing:kind==='preview'?['TOKEN']:[]}};
+ const s=setup(t,async()=>({job}));
+ await s.controller.resume();await s.controller.resume();
+ assert.equal(s.notifications.length,1);assert.equal(s.notifications[0].kind,tone);
+ job={...job,id:'two'};await s.controller.resume();assert.equal(s.notifications.length,2);
 });
 
-test('scope review cannot apply to a different base after the dialog was opened',async t=>{
- const calls=[];const {nodes,context,controller}=setup(t,async(path,body)=>{calls.push({path,body});return path.endsWith('/scopes')?tree:{confirmationRequired:true,review:{token:'a'.repeat(64),previous:{path:'/'},next:{id:'200',path:'/Patents'},summary:{total:0,aligned:0,outside:0,rootConflict:0,pageMove:0,folderConflict:0},entries:[]}};});
- await nodes.get('sync-scope-browse').onclick();button(nodes,'Patents').onclick();await nodes.get('sync-scope-save').onclick();assert.equal(nodes.get('scope-review-dialog').open,true);
- context.base='/other';controller.update(false);assert.equal(nodes.get('scope-review-dialog').open,false);await nodes.get('scope-review-confirm').onclick();assert.equal(calls.length,2);
+test('Pull with missing remote attachments shows a warning instead of an ordinary success',async t=>{
+ const job={id:'warning-job',kind:'pull',state:'succeeded',warningCount:2,log:'',selection:{base:'/docs'},config};
+ const s=setup(t,async()=>({job}));await s.controller.resume();
+ assert.equal(s.nodes.get('sync-job-state').textContent,'완료 (경고)');assert.equal(s.notifications[0].kind,'warning');assert.match(s.notifications[0].text,/첨부 2개/);
+});
+
+function previewApi({state='succeeded',missing=[],rejectPush=false}={}) {
+ let job, pushes=0;
+ return {get pushes(){return pushes},api:async(path,body)=>{
+  if(path.endsWith('/config'))return config;
+  if(path.endsWith('/preview'))return {job:job={id:'preview-job',kind:'preview',state,log:'',planId:state==='succeeded'?'approved':null,config:{...config,missing},selection:{base:'/docs'}}};
+  if(path.endsWith('/job'))return {job};
+  if(path.endsWith('/push')){pushes++;if(rejectPush)throw Error('consumed');return {job:job={...job,id:'push-job',kind:'push',planId:null,state:'succeeded'}};}
+  if(path.endsWith('/scope'))return {...config,scope:{path:body.scopePath,type:'file'}};
+  throw Error(path);
+ }};
+}
+
+test('upload requires successful preview in this session and becomes disabled after upload',async t=>{
+ const mock=previewApi(),{nodes}=setup(t,mock.api);
+ assert.equal(nodes.get('sync-push').disabled,true);
+ await nodes.get('sync-load').onclick();assert.equal(nodes.get('sync-push').disabled,true);
+ await nodes.get('sync-push').onclick();assert.equal(mock.pushes,0);
+ await nodes.get('sync-preview').onclick();assert.equal(nodes.get('sync-push').disabled,false);
+ await nodes.get('sync-push').onclick();assert.equal(mock.pushes,1);assert.equal(nodes.get('sync-push').disabled,true);
+ await nodes.get('sync-push').onclick();assert.equal(mock.pushes,1);
+});
+
+for(const options of [{state:'failed'},{missing:['TOKEN']}])test(`failed or incomplete preview never enables upload: ${JSON.stringify(options)}`,async t=>{
+ const mock=previewApi(options),{nodes}=setup(t,mock.api);await nodes.get('sync-load').onclick();await nodes.get('sync-preview').onclick();
+ assert.equal(nodes.get('sync-push').disabled,true);await nodes.get('sync-push').onclick();assert.equal(mock.pushes,0);
+});
+
+test('options, scope save, configuration reload and direction changes each require another preview',async t=>{
+ const mock=previewApi(),{nodes,controller}=setup(t,mock.api);await nodes.get('sync-load').onclick();
+ for(const change of [async()=>{nodes.get('sync-verify').checked=!nodes.get('sync-verify').checked;controller.update(false)},async()=>{await nodes.get('sync-scope-save').onclick()},async()=>{await nodes.get('sync-load').onclick()},async()=>{nodes.get('sync-direction-pull').onclick();nodes.get('sync-direction-push').onclick()}]){
+  await nodes.get('sync-preview').onclick();assert.equal(nodes.get('sync-push').disabled,false);
+  await change();assert.equal(nodes.get('sync-push').disabled,true);
+  await controller.resume();controller.update(false);assert.equal(nodes.get('sync-push').disabled,true);
+ }
+});
+
+test('failed upload cannot revive a consumed preview through a stale job response',async t=>{
+ const mock=previewApi({rejectPush:true}),{nodes,controller}=setup(t,mock.api);await nodes.get('sync-load').onclick();await nodes.get('sync-preview').onclick();
+ await nodes.get('sync-push').onclick();await controller.resume();controller.update(false);
+ assert.equal(nodes.get('sync-push').disabled,true);await nodes.get('sync-push').onclick();assert.equal(mock.pushes,1);
+});
+
+test('resuming a previous preview does not enable upload before a new preview',async t=>{
+ const mock=previewApi(),s=setup(t,mock.api);await mock.api('/api/sync/preview');await s.nodes.get('sync-load').onclick();await s.controller.resume();s.controller.update(false);
+ assert.equal(s.nodes.get('sync-push').disabled,true);
 });

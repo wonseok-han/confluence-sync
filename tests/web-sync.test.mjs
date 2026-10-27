@@ -119,7 +119,7 @@ test('sync HTTP endpoints require local token and serialize with conversion', as
   assert.equal((await fetch(url + '/api/sync/job')).status, 403);
   assert.equal((await post('/api/sync/push', { planId: 'invalid' })).status, 400);
   const response = await post('/api/sync/preview', request(root)); assert.equal(response.status, 202);
-  assert.equal((await post('/api/convert', {})).status, 409);
+  const conflict = await post('/api/convert', {}); assert.equal(conflict.status, 409); assert.match((await conflict.json()).error, /업로드 미리보기/);
   assert.equal((await post('/api/sync/preview', request(root))).status, 409);
   const job = await (await fetch(url + '/api/sync/job', { headers })).json(); assert.equal(job.job.state, 'running');
   release();
@@ -173,7 +173,7 @@ test('remote scope metadata changes invalidate web preview and verify is shared 
  const calls=[];const sync=createWebSync(async args=>{calls.push(args);return 0;});
  const input=request(root);await sync.preview({...input,verify:true});const preview=await finished(sync);
  assert.ok(calls[0].includes('--verify'));assert.ok(calls[0].includes('--dry-run'));
- const config=JSON.parse(readFileSync(join(root,'.csync/workspace.json'),'utf8'));config.scope.path='/Changed';
+ const config=JSON.parse(readFileSync(join(root,'.csync/workspace.json'),'utf8'));config.scope.path='a.md';
  put('.csync/workspace.json',JSON.stringify(config));
  await assert.rejects(sync.push(preview.planId),/변경/);
 });
@@ -195,19 +195,12 @@ test('scope HTTP endpoints require the local token before accepting any remote t
  }
 });
 
-test('web scope selection uses the same metadata-only configuration and invalidates an approved preview',async t=>{
- const {root}=workspace(t,{'.env':env,'doc.md':'# Doc'});const sync=createWebSync(async()=>0);
- const space={path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space',homepageId:'100'}]}};
- const rootInfo={path:'/wiki/rest/api/content/100?expand=ancestors,space,version',body:{id:'100',title:'Home',type:'page',space:{id:'space'},ancestors:[]}};
- const selectedInfo={path:'/wiki/rest/api/content/200?expand=ancestors,space,version',body:{id:'200',title:'Patents',type:'folder',space:{id:'space'},ancestors:[{id:'100',title:'Home'}]}};
- const calls=mockFetch(t,[space,rootInfo,{path:'/wiki/rest/api/content/100/child/folder?limit=100',body:{results:[{id:'200',title:'Patents'}]}},{path:'/wiki/rest/api/content/100/child/page?limit=100',body:{results:[]}},space,selectedInfo,space,selectedInfo]);
- const tree=await sync.scopes({base:root,envId:''});assert.equal(tree.children[0].id,'200');assert.equal((await sync.config(root,'')).scope,null);
- const config=await sync.setScope({base:root,envId:'',scopeId:'200'});assert.equal(config.scope.id,'200');
+test('web local scope saves preserve all mappings, avoid remote rescans and invalidate approval',async t=>{
+ const {root}=workspace(t,{'.env':env,'doc.md':'# Doc','other.md':'# Other'});request(root);const sync=createWebSync(async()=>0);mockFetch(t,[]);
+ const before=readFileSync(workspacePath(root),'utf8');const config=await sync.setScope({base:root,envId:'',scopePath:'doc.md'});assert.deepEqual(config.scope,{path:'doc.md',type:'file'});
  const input={base:root,target:'',envId:'',verify:false};await sync.preview(input);const preview=await finished(sync);assert.ok(preview.planId);
- await sync.setScope({base:root,envId:'',scopeId:'200'});await assert.rejects(sync.push(preview.planId),/미리보기/);
- assert.ok(calls.every(call=>(call.method??'GET')==='GET'));assert.equal(existsSync(mappingPath(root)),false);
+ await sync.setScope({base:root,envId:'',scopePath:'other.md'});await assert.rejects(sync.push(preview.planId),/미리보기/);assert.equal(existsSync(mappingPath(root)),false);
 });
-
 
 test('workspace web settings never fall back to server credentials',async t=>{
  const {root}=workspace(t,{'a.md':'# A'});const before=process.env.CONFLUENCE_API_TOKEN;process.env.CONFLUENCE_API_TOKEN='server-secret';
@@ -275,4 +268,34 @@ test('web push refuses partial targets instead of silently changing the workspac
  const {root}=workspace(t,{'.env':env,'a.md':'# A','nested/b.md':'# B'});const calls=[];const sync=createWebSync(async args=>{calls.push(args);return 0;});const input=request(root);
  await assert.rejects(sync.preview({...input,target:join(root,'a.md')}),/기준 폴더 전체/);await assert.rejects(sync.preview({...input,target:join(root,'nested')}),/기준 폴더 전체/);assert.equal(calls.length,0);
  await sync.preview(input);assert.equal((await finished(sync)).state,'succeeded');assert.deepEqual(calls[0],['push','--base',realpathSync(root),'--dry-run']);
+});
+
+test('Pull missing attachments completes with a warning count rather than a failed job',async t=>{
+ const {root}=workspace(t,{'.env':env});bindScope(root);
+ const sync=createWebSync(async(_args,_env,log)=>{log('[경고] 원격 첨부 누락 #1: missing.png\n');log('[경고 요약] 원격 첨부 2개를 로컬로 저장하지 못했습니다.\n');return 0;});
+ await sync.pull({base:root,envId:''});const job=await finished(sync);
+ assert.equal(job.state,'succeeded');assert.equal(job.warningCount,2);
+});
+
+test('scope save identifies pending mapping inspection even when no Pull/Push job exists, then releases its lock',async t=>{
+ const {root}=workspace(t,{'.env':env});
+ let release,entered;const gate=new Promise(resolve=>{release=resolve}),started=new Promise(resolve=>{entered=resolve});
+ const nativeFetch=globalThis.fetch;
+ t.mock.method(globalThis,'fetch',async(input,init)=>{
+  const remote=new URL(input);
+  if(remote.hostname!=='example.invalid')return nativeFetch(input,init);
+  entered();await gate;
+  const body=remote.pathname.includes('/spaces')?{results:[{id:'space',homepageId:'100'}]}:{id:'100',type:'page',title:'Home',space:{id:'space'},ancestors:[]};
+  return new Response(JSON.stringify(body),{headers:{'Content-Type':'application/json'}});
+ });
+ const {server,url}=await startWeb({start:root,port:0});t.after(()=>{release();return new Promise(resolve=>{server.close(resolve);server.closeAllConnections();})});
+ const html=await(await fetch(url)).text(),headers={'Content-Type':'application/json','X-Csync-Token':html.match(/name="csync-token" content="([^"]+)"/)[1]};
+ const body={base:root,envId:'',scopePath:'/'};
+ const post=()=>fetch(url+'/api/sync/scope',{method:'POST',headers,body:JSON.stringify(body)});
+ const first=post();await started;
+ try {
+  const conflict=await post();assert.equal(conflict.status,409);assert.match((await conflict.json()).error,/로컬 스코프 저장/);
+  assert.equal((await(await fetch(url+'/api/sync/job',{headers})).json()).job,null);
+ }finally{release();}
+ assert.equal((await first).status,200);assert.equal((await post()).status,200);
 });

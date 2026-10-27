@@ -26,8 +26,8 @@ test('real CLI: PDF in footnotes -> one PNG -> original PDF references and edite
  const source='# 문서\n\n첫째[^law] 다시[^law].\n\n[^law]: 설명 [원문](<refs/원본 공고.pdf#page=3>)\n\n같은 쪽 [[refs/원본 공고.pdf#page=3|추가 근거]]\n';
  writeFileSync(join(input,'doc.md'),source);const out=join(root,'markdown');convert(input,out);
  let md=readFileSync(join(out,'doc.md'),'utf8');
- assert.equal(readdirSync(join(out,'attachments/pdf-pages')).length,1);
- assert.equal(readdirSync(join(out,'attachments/files')).length,1);
+ assert.equal(readdirSync(join(out,'attachments/doc')).filter(name=>name.startsWith('pdfjs-')).length,1);
+ assert.equal(readdirSync(join(out,'attachments/doc')).filter(name=>!name.startsWith('pdfjs-')).length,1);
  assert.equal(existsSync(join(out,'refs')),false);
  assert.equal(readFileSync(join(input,'doc.md'),'utf8'),source);
  assert.match(md,/csync-pdf:v1/);assert.doesNotMatch(md,/\[\^law\]/);
@@ -37,11 +37,11 @@ test('real CLI: PDF in footnotes -> one PNG -> original PDF references and edite
  const back=join(root,'obsidian');convert(out,back,'obsidian');
  const restored=readFileSync(join(back,'doc.md'),'utf8');
  assert.equal((restored.match(/\[\^law\]/g)||[]).length,3);
- assert.match(restored,/\[\^law\]: 수정한 설명 \[\[attachments\/files\/[^\]]+원본 공고.pdf#page=3\|원문\]\]/);
- assert.match(restored,/\[\[attachments\/files\/[^\]]+원본 공고.pdf#page=3\|추가 근거\]\]/);
- assert.doesNotMatch(restored,/csync-|pdf-pages/);assert.equal(readdirSync(join(back,'attachments/files')).length,1);
+ assert.match(restored,/\[\^law\]: 수정한 설명 \[\[attachments\/doc\/[^\]]*원본 공고.pdf#page=3\|원문\]\]/);
+ assert.match(restored,/\[\[attachments\/doc\/[^\]]*원본 공고.pdf#page=3\|추가 근거\]\]/);
+ assert.doesNotMatch(restored,/csync-|pdf-pages/);assert.equal(readdirSync(join(back,'attachments/doc')).filter(name=>!name.startsWith('pdfjs-')).length,1);
  assert.equal(existsSync(join(back,'refs')),false);
- const again=join(root,'again');convert(back,again);assert.equal(readdirSync(join(again,'attachments/pdf-pages')).length,1);
+ const again=join(root,'again');convert(back,again);assert.equal(readdirSync(join(again,'attachments/doc')).filter(name=>name.startsWith('pdfjs-')).length,1);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 
@@ -64,11 +64,11 @@ test('footnote restoration preserves edited multiline body and fenced examples',
 test('PDF embed keeps its page and returns to an Obsidian embed; code references stay literal',()=>{
  const {root,input}=setup();try{
  writeFileSync(join(input,'a.md'),'# Embed\n\n![[refs/원본 공고.pdf#page=2|두 번째 쪽]]\n\n`[code](<refs/원본 공고.pdf#page=99>)`\n\n```md\n[[missing.pdf#page=99]]\n```\n');
- const out=join(root,'out');convert(input,out);assert.equal(readdirSync(join(out,'attachments/pdf-pages')).length,1);
+ const out=join(root,'out');convert(input,out);assert.equal(readdirSync(join(out,'attachments/a')).filter(name=>name.startsWith('pdfjs-')).length,1);
  const back=join(root,'back');convert(out,back,'obsidian');const text=readFileSync(join(back,'a.md'),'utf8');
- assert.match(text,/!\[\[attachments\/files\/[^\]]+원본 공고.pdf#page=2\|두 번째 쪽\]\]/);
+ assert.match(text,/!\[\[attachments\/a\/[^\]]*원본 공고.pdf#page=2\|두 번째 쪽\]\]/);
  assert.match(text,/`\[code\]\(<refs\/원본 공고.pdf#page=99>\)`/);
- const copy=join(root,'copy');convert(out,copy);assert.equal(readdirSync(join(copy,'attachments/files')).length,1);
+ const copy=join(root,'copy');convert(out,copy);assert.equal(readdirSync(join(copy,'attachments/a')).filter(name=>!name.startsWith('pdfjs-')).length,1);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 
@@ -85,19 +85,19 @@ test('external absolute and parent-relative attachments remain portable in both 
  const out=join(root,'out');convert(input,out,'markdown',true);assert.equal(existsSync(out),false);
  convert(input,out);const md=readFileSync(join(out,'doc.md'),'utf8');
  assert.match(md,/\[Self\]\(#document\)/);assert.match(md,/https:\/\/example.com\/manual.pdf#page=3/);
- assert.equal(readdirSync(join(out,'attachments/files')).length,3);
+ assert.equal(readdirSync(join(out,'attachments/doc')).filter(name=>!name.startsWith('pdfjs-')).length,3);
  const tree=buildTreeRenderer(out,['doc.md']),doc=tree.docs['doc.md'];
  assert.deepEqual(tree.render('doc.md',doc.body,doc.title).deadAnchors,[]);
  const direct=join(root,'direct');convert(input,direct,'obsidian');
- const obsidian=readFileSync(join(direct,'doc.md'),'utf8');assert.match(obsidian,/\[\[attachments\/files\/[^\]]+source.pdf#page=3\|Source\]\]/);
- assert.equal(readdirSync(join(direct,'attachments/files')).length,3);
+ const obsidian=readFileSync(join(direct,'doc.md'),'utf8');assert.match(obsidian,/\[\[attachments\/doc\/[^\]]*source.pdf#page=3\|Source\]\]/);
+ assert.equal(readdirSync(join(direct,'attachments/doc')).filter(name=>!name.startsWith('pdfjs-')).length,3);
  assert.equal(readFileSync(join(input,'doc.md'),'utf8'),original);
  rmSync(outside,{recursive:true});
  const back=join(root,'back');convert(out,back,'obsidian');
- assert.match(readFileSync(join(back,'doc.md'),'utf8'),/\[\^pdf\]: \[\[attachments\/files\/[^\]]+source.pdf#page=3\|Source\]\]/);
+ assert.match(readFileSync(join(back,'doc.md'),'utf8'),/\[\^pdf\]: \[\[attachments\/doc\/[^\]]*source.pdf#page=3\|Source\]\]/);
  const again=join(root,'again');convert(back,again);
- assert.equal(readdirSync(join(again,'attachments/pdf-pages')).length,1);
- assert.equal(readdirSync(join(again,'attachments/files')).length,3);
+ assert.equal(readdirSync(join(again,'attachments/doc')).filter(name=>name.startsWith('pdfjs-')).length,1);
+ assert.equal(readdirSync(join(again,'attachments/doc')).filter(name=>!name.startsWith('pdfjs-')).length,3);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 
@@ -106,9 +106,9 @@ test('absolute Obsidian embeds and subfolder documents use copied relative attac
  const pdf=join(root,'outside.pdf');makePdf(pdf);mkdirSync(join(input,'notes'));
  writeFileSync(join(input,'notes','doc.md'),`# Nested\n\n![[${pdf}#page=2|Page two]]`);
  const out=join(root,'out');convert(input,out);
- const md=readFileSync(join(out,'notes','doc.md'),'utf8');assert.match(md,/\.\.\/attachments\/pdf-pages/);
+ const md=readFileSync(join(out,'notes','doc.md'),'utf8');assert.match(md,/attachments\/doc\/pdfjs-/);
  rmSync(pdf);const back=join(root,'back');convert(out,back,'obsidian');
- assert.match(readFileSync(join(back,'notes','doc.md'),'utf8'),/!\[\[attachments\/files\/[^\]]+outside.pdf#page=2\|Page two\]\]/);
+ assert.match(readFileSync(join(back,'notes','doc.md'),'utf8'),/!\[\[notes\/attachments\/doc\/[^\]]*outside.pdf#page=2\|Page two\]\]/);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 
@@ -119,9 +119,9 @@ test('in-base images and PDFs are consolidated under attachments in both directi
  for(const direction of ['markdown','obsidian']) {
   const out=join(root,direction);convert(input,out,direction);
   assert.deepEqual(readdirSync(out).sort(),['attachments','doc.md']);
-  const md=readFileSync(join(out,'doc.md'),'utf8');assert.match(md,/attachments\/files\//);
+  const md=readFileSync(join(out,'doc.md'),'utf8');assert.match(md,/attachments\/doc\//);
   assert.doesNotMatch(md,/images\/|refs\//);
-  assert.equal(readdirSync(join(out,'attachments/files')).length,2);
+  assert.equal(readdirSync(join(out,'attachments/doc')).filter(name=>!name.startsWith('pdfjs-')).length,2);
  }
  }finally{rmSync(root,{recursive:true,force:true});}
 });
@@ -130,13 +130,13 @@ test('footnote-only PDF appears inside its H6 note without a separate gallery an
  const {root,input}=setup();try{
  writeFileSync(join(input,'doc.md'),'# Note\n\nSee[^pdf]\n\n[^pdf]: 설명 [Source](<refs/원본 공고.pdf#page=3>)');
  const out=join(root,'out');convert(input,out);const md=readFileSync(join(out,'doc.md'),'utf8');
- assert.match(md,/###### 각주 1\n\n설명 !\[Source\]\(<attachments\/pdf-pages\//);
+ assert.match(md,/###### 각주 1\n\n설명 !\[Source\]\(<attachments\/doc\//);
  assert.doesNotMatch(md,/csync-pdf-pages:v1|### PDF 원문|\]\(#pdf-/);
  const tree=buildTreeRenderer(out,['doc.md']),doc=tree.docs['doc.md'];const rendered=tree.render('doc.md',doc.body,doc.title);
  assert.deepEqual(rendered.deadAnchors,[]);assert.equal(rendered.images.length,1);
  const back=join(root,'back');convert(out,back,'obsidian');
- assert.match(readFileSync(join(back,'doc.md'),'utf8'),/\[\^pdf\]: 설명 \[\[attachments\/files\/[^\]]+원본 공고.pdf#page=3\|Source\]\]/);
- const again=join(root,'again');convert(out,again);assert.equal(readdirSync(join(again,'attachments/files')).length,1);
+ assert.match(readFileSync(join(back,'doc.md'),'utf8'),/\[\^pdf\]: 설명 \[\[attachments\/doc\/[^\]]*원본 공고.pdf#page=3\|Source\]\]/);
+ const again=join(root,'again');convert(out,again);assert.equal(readdirSync(join(again,'attachments/doc')).filter(name=>!name.startsWith('pdfjs-')).length,1);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 
@@ -148,9 +148,34 @@ test('PDF.js renders the selected page pixels without any executable on PATH', a
   encoding:'utf8', env:{...process.env,PATH:'',Path:''},stdio:'pipe',
  });
  const {loadImage,createCanvas}=await import('@napi-rs/canvas');
- const dir=join(out,'attachments/pdf-pages');const image=await loadImage(join(dir,readdirSync(dir)[0]));
+ const dir=join(out,'attachments/doc');const image=await loadImage(join(dir,readdirSync(dir).find(name=>name.startsWith('pdfjs-'))));
  assert.equal(image.width,445);assert.equal(image.height,445);
  const canvas=createCanvas(image.width,image.height);const context=canvas.getContext('2d');context.drawImage(image,0,0);
  assert.deepEqual([...context.getImageData(100,100,1,1).data],[0,0,255,255]);
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+test('nested documents own portable attachments, including HTML tables and colliding names',()=>{
+ const {root,input}=setup();try{
+ for(const dir of ['one','two','shared/a','shared/b'])mkdirSync(join(input,dir),{recursive:true});
+ writeFileSync(join(input,'shared/a/same.png'),'first');writeFileSync(join(input,'shared/b/same.png'),'second');writeFileSync(join(input,'shared/report.txt'),'report');
+ const original='![First](../shared/a/same.png)\n\n![Second](../shared/b/same.png)\n\n<table><tr><td><img src="../shared/a/same.png"><a href="../shared/report.txt">Report</a></td></tr></table>\n\n```html\n<img src="../shared/not-copied.png">\n```\n';
+ writeFileSync(join(input,'one/doc.md'),original);writeFileSync(join(input,'two/doc.md'),'![Shared](../shared/a/same.png)');
+ const out=join(root,'out');convert(input,out);
+ const assets=join(out,'one/attachments/doc'),names=readdirSync(assets).sort();assert.equal(names.length,3);assert.ok(names.includes('same.png'));assert.ok(names.includes('report.txt'));assert.equal(names.filter(name=>name.endsWith('.png')).length,2);
+ assert.deepEqual(names.filter(name=>name.endsWith('.png')).map(name=>readFileSync(join(assets,name),'utf8')).sort(),['first','second']);
+ const md=readFileSync(join(out,'one/doc.md'),'utf8');assert.match(md,/src="attachments\/doc\/same.png"/);assert.match(md,/href="attachments\/doc\/report.txt"/);assert.match(md,/<img src="\.\.\/shared\/not-copied.png">/);
+ assert.equal(readFileSync(join(out,'two/attachments/doc/same.png'),'utf8'),'first');assert.equal(existsSync(join(out,'attachments')),false);assert.equal(existsSync(join(out,'shared')),false);assert.equal(readFileSync(join(input,'one/doc.md'),'utf8'),original);
+ rmSync(input,{recursive:true});const back=join(root,'back');convert(out,back,'obsidian');const again=join(root,'again');convert(back,again);
+ assert.deepEqual(readdirSync(join(again,'one/attachments/doc')).sort(),names);assert.equal(readFileSync(join(again,'two/attachments/doc/same.png'),'utf8'),'first');
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+test('legacy root attachments are relocated only in exported results',()=>{
+ const {root,input}=setup();try{
+ mkdirSync(join(input,'attachments/files/old-hash'),{recursive:true});writeFileSync(join(input,'attachments/files/old-hash/image.png'),'legacy image');
+ const original='![Legacy](attachments/files/old-hash/image.png)';writeFileSync(join(input,'doc.md'),original);
+ const out=join(root,'out');convert(input,out);assert.equal(readFileSync(join(out,'attachments/doc/image.png'),'utf8'),'legacy image');assert.equal(existsSync(join(out,'attachments/files')),false);assert.match(readFileSync(join(out,'doc.md'),'utf8'),/attachments\/doc\/image.png/);assert.equal(readFileSync(join(input,'doc.md'),'utf8'),original);assert.ok(existsSync(join(input,'attachments/files/old-hash/image.png')));
+ const repair=join(root,'repair');execFileSync(process.execPath,[cli,'convert','--fix','--base',input,'--out',repair],{stdio:'pipe'});assert.equal(readFileSync(join(repair,'attachments/doc/image.png'),'utf8'),'legacy image');assert.match(readFileSync(join(repair,'doc.md'),'utf8'),/attachments\/doc\/image.png/);
  }finally{rmSync(root,{recursive:true,force:true});}
 });

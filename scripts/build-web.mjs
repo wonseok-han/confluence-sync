@@ -15,3 +15,5 @@ await copyFile('node_modules/monaco-editor/ThirdPartyNotices.txt', 'dist/web/ass
 
 // Guide screenshots include click annotations and account redaction.
 await cp(new URL('../docs/images/guide/', import.meta.url), new URL('../dist/web/assets/guide/', import.meta.url), { recursive: true });
+
+await copyFile('src/web/assets/favicon.svg', 'dist/web/assets/favicon.svg');

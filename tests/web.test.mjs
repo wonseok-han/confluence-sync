@@ -39,15 +39,14 @@ test('web previews and exports one document with attachments, preserving origina
   const body = { base: join(root, 'vault'), file: join(root, 'vault/가이드/문서.md'), to: 'markdown', fix: false, preview: true };
   let response = await post(body); assert.equal(response.status, 200);
   let data = await response.json();
-  assert.match(data.after, /\.\.\/참조\.md/); assert.match(data.after, /attachments\/files\//);
+  assert.match(data.after, /\.\.\/참조\.md/); assert.match(data.after, /attachments\/문서\//);
   assert.equal(data.output, null); assert.deepEqual(readdirSync(root), ['vault']);
   assert.equal(readFileSync(body.file, 'utf8'), original);
   response = await post({ ...body, preview: false }); assert.equal(response.status, 200);
   data = await response.json();
   assert.equal(readFileSync(join(data.output, '가이드/문서.md'), 'utf8'), data.after);
   assert.equal(existsSync(join(data.output, '참조.md')), false);
-  const hashes = readdirSync(join(data.output, 'attachments/files'));
-  assert.equal(readFileSync(join(data.output, 'attachments/files', hashes[0], 'image.png'), 'utf8'), 'image-data');
+  assert.equal(readFileSync(join(data.output, '가이드/attachments/문서/image.png'), 'utf8'), 'image-data');
   assert.equal(readFileSync(body.file, 'utf8'), original);
   const second = await (await post({ ...body, preview: false })).json();
   assert.notEqual(data.output, second.output);
@@ -176,7 +175,7 @@ test('recursive filename search finds deepest documents, normalizes Korean and s
   assert.equal((await post({ base: found.root, file: deep.path, to: 'markdown', fix: false, preview: true })).status, 200);
 });
 
-test('consecutive exports reuse shared attachments and remain usable after a conflict', async t => {
+test('consecutive exports reuse document attachments and remain usable after a conflict', async t => {
   const { root, put } = workspace(t, { 'vault/a.md': '# A\n\n![image](image.png)', 'vault/b.md': '# B\n\n![image](image.png)', 'vault/image.png': 'shared-image' });
   const { post } = await app(t, root);
   const body = { base: join(root, 'vault'), file: join(root, 'vault/a.md'), out: join(root, 'output'), to: 'markdown', fix: false, preview: false };
@@ -186,7 +185,9 @@ test('consecutive exports reuse shared attachments and remain usable after a con
   }
   assert.ok(existsSync(join(root, 'output/a.md')));
   assert.ok(existsSync(join(root, 'output/b.md')));
-  assert.equal(readdirSync(join(root, 'output/attachments/files')).length, 1);
+  assert.deepEqual(readdirSync(join(root, 'output/attachments')).sort(), ['a','b']);
+  assert.equal(readFileSync(join(root,'output/attachments/a/image.png'),'utf8'),'shared-image');
+  assert.equal(readFileSync(join(root,'output/attachments/b/image.png'),'utf8'),'shared-image');
   put('vault/a.md', '# Changed');
   assert.equal((await post(body)).status, 409);
   assert.match(readFileSync(join(root, 'output/a.md'), 'utf8'), /# A/);
@@ -273,4 +274,15 @@ test('web token guide serves only the annotated screenshots bundled with the pac
     assert.deepEqual(bytes, readFileSync(new URL('../docs/images/guide/' + image.split('/').at(-1), import.meta.url)));
   }
   assert.equal((await fetch(url + '/docs/images/guide/01-account-settings.png')).status, 403);
+});
+
+test('document explorer and recursive search hide attachment directories without blocking referenced images',async t=>{
+ const {root}=workspace(t,{'doc.md':'![Image](attachments/doc/image.png)','attachments/doc/image.png':'image bytes','attachments/doc/internal.md':'# Asset','notes/doc.md':'# Document','notes/attachments/doc/internal.md':'# Asset','Attachments/hidden.md':'# Asset','attachments-notes/visible.md':'# Visible'});
+ const {url,headers}=await app(t,root);
+ const browse=async path=>(await (await fetch(url+'/api/browse?'+new URLSearchParams({path}),{headers})).json()).entries;
+ assert.deepEqual((await browse(root)).map(item=>item.name),['attachments-notes','notes','doc.md']);
+ assert.deepEqual((await browse(join(root,'notes'))).map(item=>item.name),['doc.md']);
+ const result=await (await fetch(url+'/api/search?'+new URLSearchParams({path:root,q:'.md'}),{headers})).json();
+ assert.deepEqual(result.entries.map(item=>item.relativePath).sort(),['attachments-notes/visible.md','doc.md','notes/doc.md']);
+ const response=await fetch(url+'/api/document-preview',{method:'POST',headers,body:JSON.stringify({base:root,file:join(root,'doc.md')})});assert.equal(response.status,200);assert.match((await response.json()).html,/data:image\/png;base64,/);
 });

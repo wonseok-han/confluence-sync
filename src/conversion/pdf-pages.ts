@@ -1,3 +1,4 @@
+import { documentAttachmentDir } from './asset-paths.js';
 import { createHash } from 'node:crypto';
 import { readFileSync, existsSync, realpathSync } from 'node:fs';
 import { resolve, relative, dirname, join } from 'node:path';
@@ -10,16 +11,16 @@ const decode = <T>(value: string): T => JSON.parse(Buffer.from(value, 'base64').
 const parser = new MarkdownIt({ html: true });
 
 /** 소스 위치를 유지하면서 코드·HTML 블록을 제외한 일반 텍스트를 처리한다. */
-export function mapMarkdownText(text: string, fn: (part: string) => string): string {
+export function mapMarkdownText(text: string, fn: (part: string) => string, htmlFn?: (part: string) => string): string {
   const lines = text.split('\n'), offsets = [0];
   for (const line of lines) offsets.push(offsets[offsets.length - 1] + line.length + 1);
   const spans = parser.parse(text, {}).filter(t => ['fence', 'code_block', 'html_block'].includes(t.type) && t.map)
-    .map(t => [offsets[t.map![0]], Math.min(offsets[t.map![1]], text.length)]);
+    .map(t => [offsets[t.map![0]], Math.min(offsets[t.map![1]], text.length), t.type === 'html_block' ? 1 : 0]);
   let cursor = 0, result = '';
   const prose = (s: string) => protectInline(s, fn);
-  for (const [start, end] of spans) {
+  for (const [start, end, html] of spans) {
     if (start < cursor) continue;
-    result += prose(text.slice(cursor, start)) + text.slice(start, end); cursor = end;
+    result += prose(text.slice(cursor, start)) + (html && htmlFn ? htmlFn(text.slice(start, end)) : text.slice(start, end)); cursor = end;
   }
   return result + prose(text.slice(cursor));
 }
@@ -75,7 +76,7 @@ function requireLocal(abs: string, base: string): void {
   if (rel === '..' || rel.startsWith('../') || rel.startsWith('..\\')) throw new Error(`PDF는 --base 안에 있어야 합니다: ${abs}`);
 }
 
-export async function extractPdfPages(text: string, file: string, base: string, output: string, dryRun: boolean, source: (path: string) => string = p => p): Promise<PdfResult> {
+export async function extractPdfPages(text: string, file: string, base: string, output: string, dryRun: boolean, source: (path: string) => string = p => p, restoreAssets = true): Promise<PdfResult> {
   const assets = new Set<string>(), headings = new Set(collectHeadings(text).map(h => h.slug));
   const pages = new Map<string, { heading: string; anchor: string; image: string; gallery: boolean }>();
   const hashes = new Map<string, string>();
@@ -106,7 +107,7 @@ export async function extractPdfPages(text: string, file: string, base: string, 
       const initialHeading = heading, initialAnchor = anchor;
       while (headings.has(anchor)) { heading = `${initialHeading}-${++suffix}`; anchor = `${initialAnchor}-${suffix}`; }
       headings.add(anchor);
-      const assetRel = `attachments/pdf-pages/pdfjs-${key}.png`;
+      const assetRel = `${documentAttachmentDir(file, base)}/pdfjs-${key}.png`;
       const target = resolve(output, assetRel);
       jobs.push({ file: abs, page, target });
       const outputFile = resolve(output, relative(base, file));
@@ -122,7 +123,7 @@ export async function extractPdfPages(text: string, file: string, base: string, 
     /<!-- csync-footnote:v1 [A-Za-z0-9+/=]+ -->\n[\s\S]*?<!-- \/csync-footnote -->/g,
     block => convertLinks(block, true));
   const converted = convertLinks(withInlineImages, false);
-  if (!pages.size) return { text, assets: restorePdfReferences(text, file, base).assets, pages: 0 };
+  if (!pages.size) return { text, assets: restoreAssets ? restorePdfReferences(text, file, base).assets : [], pages: 0 };
   await renderPdfPages(jobs, dryRun);
   const gallery = [...pages.values()].filter(p => p.gallery).map(p => `### ${p.heading}\n\n![${p.heading}](<${p.image}>)`).join('\n\n');
   return { text: converted.trimEnd() + (gallery ? `\n\n<!-- csync-pdf-pages:v1 -->\n${gallery}\n<!-- /csync-pdf-pages -->\n` : '\n'), assets: [...assets], pages: pages.size };

@@ -8,7 +8,8 @@ import type { Env } from '../confluence/config.js';
 export { WORKSPACE_FILE } from './metadata.js';
 export type Workspace = {
   version: 1 | 2;
-  scope?: { id: string; type: 'page' | 'folder'; path: string };
+  scope?: { path: string; type: 'file' | 'folder' };
+  remoteRoot?: { id: string; type: 'page' | 'folder'; path: string };
   scopeCheckRequired?: boolean;
   syncPaths?: string[];
   connection?: { baseUrl: string; spaceKey: string; spaceId?: string; homepageId?: string };
@@ -43,12 +44,14 @@ export function loadWorkspace(base: string): Workspace {
       (value.root !== undefined && (!value.root || typeof value.root.id !== 'string' || !value.root.id || !['page', 'folder'].includes(value.root.type) || typeof value.root.baseUrl !== 'string' || typeof value.root.spaceKey !== 'string'))) {
     throw new Error(`잘못된 작업공간 설정: ${path}`);
   }
+  // Read the old remote-scope shape without treating it as a selected local range.
+  if (value.scope?.id) { value.remoteRoot = value.scope; delete value.scope; }
   for (const path of value.syncPaths ?? []) if (scopePath(base, path) !== path) throw new Error(`관리 범위는 정규화된 상대 경로여야 합니다: ${path}`);
   if (value.scopeCheckRequired !== undefined && typeof value.scopeCheckRequired !== 'boolean') throw new Error('잘못된 스코프 검증 설정입니다.');
   if (value.connection && (typeof value.connection.baseUrl !== 'string' || typeof value.connection.spaceKey !== 'string')) throw new Error('잘못된 연결 설정입니다.');
-  if (value.version === 2 && (!value.scope || typeof value.scope.id !== 'string' || !value.scope.id ||
-      !['page', 'folder'].includes(value.scope.type) || typeof value.scope.path !== 'string' || !value.scope.path.startsWith('/') ||
-      !value.connection || !value.connection.baseUrl || !value.connection.spaceKey || !value.connection.spaceId || !value.connection.homepageId)) throw new Error('스코프 설정이 올바르지 않습니다. csync init --scope로 다시 설정하세요.');
+  if (value.scope && (!['file', 'folder'].includes(value.scope.type) || typeof value.scope.path !== 'string' || scopePath(base, value.scope.path) !== value.scope.path)) throw new Error('로컬 스코프가 올바르지 않습니다. 기준 폴더 안의 파일·폴더를 지정하세요.');
+  if (value.version === 2 && (!value.remoteRoot || typeof value.remoteRoot.id !== 'string' || !value.remoteRoot.id || !['page','folder'].includes(value.remoteRoot.type) || typeof value.remoteRoot.path !== 'string' || !value.remoteRoot.path.startsWith('/') ||
+      !value.connection?.baseUrl || !value.connection.spaceKey || !value.connection.spaceId || !value.connection.homepageId)) throw new Error('스페이스 연결이 올바르지 않습니다. csync init --scope로 다시 설정하세요.');
   return value;
 }
 export function saveWorkspace(base: string, value: Workspace): void {
@@ -64,11 +67,16 @@ export function scopePath(base: string, path: string): string {
   if (existsSync(base) && !within(realpathSync(base), realpathSync(ancestor))) throw new Error(`관리 범위가 작업공간 밖입니다: ${path}`);
   return relative(base, abs).split('\\').join('/') || '.';
 }
-/** A configured remote scope owns the entire local base, never a guessed local subset. */
-export function inScope(_rel: string, workspace: Workspace): boolean { return workspace.version === 2 && !!workspace.scope; }
-export function requireScope(workspace: Workspace): NonNullable<Workspace['scope']> {
-  if (workspace.version !== 2 || !workspace.scope) throw new Error('스코프가 설정되지 않았습니다. csync init --scope <스페이스 내 경로|id:ID>로 명시적으로 선택하세요. 전체는 --scope / 입니다. 기존 PARENT_ID·로컬 범위는 자동 전환하지 않습니다.');
-  return workspace.scope;
+/** A local scope filters work; it never changes a document's remote parent. */
+export function inScope(rel: string, workspace: Workspace): boolean {
+  const scope = workspace.scope;
+  if (!scope) return false;
+  if (scope.path === '.') return true;
+  return rel === scope.path || (scope.type === 'folder' && rel.startsWith(scope.path + '/'));
+}
+export function requireScope(workspace: Workspace): NonNullable<Workspace['remoteRoot']> {
+  if (workspace.version !== 2 || !workspace.scope || !workspace.remoteRoot) throw new Error('스코프가 설정되지 않았습니다. 로컬 스코프를 지정하세요. csync init --scope <기준 폴더 안의 파일·폴더>를 사용하세요. 전체는 --scope / 입니다. 이전 원격 연결 스코프는 작업 범위로 자동 전환하지 않습니다.');
+  return workspace.remoteRoot;
 }
 export function assertWorkspaceConnection(workspace: Workspace, env: Env): void {
   const connection = workspace.connection;

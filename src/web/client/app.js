@@ -1,3 +1,4 @@
+import { initSnackbars } from './snackbar.js';
 import { initHelp } from './help.js';
 import * as monaco from 'monaco-editor/editor/editor.api.js';
 import 'monaco-editor/languages/definitions/markdown/register.js';
@@ -8,26 +9,28 @@ import { initTableFormatting } from './table-format.js';
 
 self.MonacoEnvironment = { getWorker: () => new Worker('/assets/editor.worker.js', { type: 'module' }) };
 const $ = id => document.getElementById(id);
+const notify = initSnackbars();
 const token = document.querySelector('meta[name="csync-token"]').content;
 let folder, parent, entries = [], base = null, file = null, output = null, busy = false, navigation = 0;
 let searchResults = null, searchRoot = null, searching = false, searchMessage = '';
 let searchTimer, searchController, searchVersion = 0;
 let editor, syncUI;
 let previews = [];
-let convertKind = 'file';
+let convertKind = 'file', selectedDirectory = false;
 let expanded = new Set(), treeCache = new Map(), treeLoading = new Set();
 let mode = 'convert';
-const tableFormatting = initTableFormatting({ api, monaco,
+const tableFormatting = initTableFormatting({ api, monaco, notify,
   refresh: () => documentPreview.update(true),
   setBusy: value => { busy = value; controls(); render(); },
 });
 const documentPreview = initDocumentPreview({
-  api, formatting: tableFormatting, selection: () => ({ base: base || folder, file, folder: mode === 'convert' && convertKind === 'folder' }),
+  notify,
+  api, formatting: tableFormatting, selection: () => ({ base: base || folder, file, folder: mode === 'convert' ? convertKind === 'folder' : selectedDirectory }),
 });
 initHelp(() => mode);
 let restoring = true;
 let workspaces = { convert: {}, sync: {} };
-const explorerState = () => ({ base, folder, file, baseInput: $('base-input').value, expanded: [...expanded] });
+const explorerState = () => ({ base, folder, file, selectedDirectory, baseInput: $('base-input').value, expanded: [...expanded] });
 const preferencesKey = 'csync.workspace.v1';
 function savePreferences() {
   if (restoring) return;
@@ -104,6 +107,7 @@ try {
 } catch (error) {
   $('editor-error').hidden = false;
   $('editor-error').textContent = '본문 비교 화면을 불러오지 못했습니다. 새로고침해 주세요. ' + error.message;
+  notify($('editor-error').textContent, 'error');
 }
 $('previous-change').onclick = () => editor?.goToDiff('previous');
 $('next-change').onclick = () => editor?.goToDiff('next');
@@ -118,9 +122,10 @@ async function api(path, body, signal) {
   if (!response.ok) throw Object.assign(new Error(data.error || '요청을 처리하지 못했습니다.'), { code: data.code, conflicts: data.conflicts });
   return data;
 }
-function status(text, error = false) {
+function status(text, error = false, kind = error ? 'error' : 'info') {
   const el = $(mode === 'sync' ? 'sync-status' : 'status');
   el.textContent = text; el.classList.toggle('error', error);
+  if (kind) notify(text, kind);
 }
 function reset() {
   if (mode === 'sync') { status(''); return; }
@@ -141,12 +146,13 @@ function controls() {
   $('root-name').textContent = root ? root.split(/[\\/]/).filter(Boolean).pop() || root : '폴더를 선택하세요';
   $('root-path').textContent = root || '아직 설정되지 않았습니다.';
   $('root-purpose').textContent = mode === 'sync' ? 'Push · Pull 기준' : '변환 기준';
-  $('root-hint').textContent = mode === 'sync' ? '이 폴더 전체가 Push·Pull 대상입니다. 하위 폴더를 열어도 기준은 바뀌지 않습니다.' : '문서와 참조 링크를 찾는 기준입니다. 아래에서 변환할 파일·폴더를 선택하세요.';
+  $('root-hint').textContent = mode === 'sync' ? '스페이스 루트에 대응하는 기준 폴더입니다. Push·Pull 범위는 작업 스코프로 정합니다.' : '문서와 참조 링크를 찾는 기준입니다. 아래에서 변환할 파일·폴더를 선택하세요.';
   $('base-home').disabled = busy || !root || root === folder;
   const localPath = root && folder && inside(root, folder) ? folder.slice(root.length).replace(/\\/g, '/') : folder || '';
   $('path').textContent = !folder ? '폴더를 선택하세요' : folder === root ? '기준 폴더 /' : `기준 폴더 ${localPath}`;
   $('path').title = folder || '';
-  $('explorer-note').textContent = mode === 'sync' ? '문서 선택은 미리보기·편집용입니다' : '파일·폴더를 선택해 변환하세요';
+  $('explorer-scope').hidden = mode !== 'sync';
+  $('explorer-note').textContent = mode === 'sync' ? '선택한 파일·폴더를 작업 스코프로 지정할 수 있습니다' : '파일·폴더를 선택해 변환하세요';
 
   $('fix').disabled = busy || $('direction').value === 'repair';
   $('selected').textContent = file ? file.split(/[\\/]/).pop() : '변환할 문서를 선택하세요';
@@ -191,7 +197,7 @@ function render() {
     }
     button.append(icon, label); button.title = entry.path; button.setAttribute('aria-pressed', String(entry.path === file));
     button.onclick = () => {
-      if (mode === 'sync' && entry.directory) { browse(entry.path); return; }
+      selectedDirectory = entry.directory;
       if (mode === 'convert') convertKind = entry.directory ? 'folder' : 'file';
       file = entry.path;
       if (!base || !inside(base, file)) base = searchRoot || folder;
@@ -240,7 +246,7 @@ async function browse(path, chooseBase = false) {
     if (version !== navigation) return;
     folder = data.path; parent = data.parent; entries = data.entries;
     treeCache = new Map([[folder, entries]]); expanded = new Set([folder]); treeLoading = new Set();
-    if (chooseBase || !base) { base = folder; file = null; if (!restoring) reset(); }
+    if (chooseBase || !base) { base = folder; file = null; selectedDirectory = false; if (!restoring) reset(); }
     if (chooseBase) $('root-path-editor').open = false;
     $('base-input').value = base || folder;
     $('path').textContent = folder; $('path').title = folder; $('base-input').title = base || folder; $('search').value = ''; render(); controls();
@@ -248,7 +254,7 @@ async function browse(path, chooseBase = false) {
   } catch (error) { if (version === navigation) status('폴더를 열 수 없습니다: ' + error.message, true); }
 }
 async function pickFolder(kind) {
-  busy = true; controls(); render(); status('시스템 폴더 다이얼로그에서 폴더를 선택해 주세요.');
+  busy = true; controls(); render(); status('시스템 폴더 다이얼로그에서 폴더를 선택해 주세요.', false, null);
   try {
     const data = await api('/api/pick-folder', { kind, start: kind === 'base' ? base || folder : $('out-input').value || parent });
     if (data.path) {
@@ -322,7 +328,7 @@ async function convert(preview) {
   if (busy || !file) return;
   busy = true;
   try {
-    reset(); controls(); render(); status(preview ? '미리보기를 만드는 중입니다…' : '문서와 첨부파일을 변환하는 중입니다…');
+    reset(); controls(); render(); status(preview ? '미리보기를 만드는 중입니다…' : '문서와 첨부파일을 변환하는 중입니다…', false, null);
     const request = { base, file, scope: convertKind, out: $('out-input').value, to: $('direction').value, fix: $('fix').checked, preview };
     let data;
     const approvedOverwrites = {};
@@ -336,7 +342,7 @@ async function convert(preview) {
           status('덮어쓰기를 취소했습니다. 저장하지 않았습니다.'); return;
         }
         for (const item of error.conflicts) approvedOverwrites[item.path] = item.hash;
-        status('기존 파일을 덮어쓰는 중입니다…');
+        status('기존 파일을 덮어쓰는 중입니다…', false, null);
       }
     }
     previews = data.previews;
@@ -348,12 +354,12 @@ async function convert(preview) {
     showPreview(0);
     $('log').textContent = data.log; $('details').hidden = false; output = data.output;
     if (output) { $('output').textContent = output; $('result').hidden = false; }
-    if (preview) status('미리보기 완료. 출력 위치를 확인하고 저장하세요.');
+    if (preview) status('미리보기 완료. 출력 위치를 확인하고 저장하세요.', false, 'success');
     else if (data.saved && data.saved.created === 0 && data.saved.overwritten === 0) {
-      status(`기존 출력과 내용이 같아 저장하지 않았습니다. 파일 ${data.saved.reused}개를 그대로 재사용했습니다.`);
+      status(`기존 출력과 내용이 같아 저장하지 않았습니다. 파일 ${data.saved.reused}개를 그대로 재사용했습니다.`, false, 'success');
     } else {
       const saved = data.saved;
-      status(saved ? `저장 완료 · 새 파일 ${saved.created}개 · 덮어쓴 파일 ${saved.overwritten}개 · 동일 내용 재사용 ${saved.reused}개 (문서·첨부 포함)` : `문서 ${data.documentCount}개 저장 완료.`);
+      status(saved ? `저장 완료 · 새 파일 ${saved.created}개 · 덮어쓴 파일 ${saved.overwritten}개 · 동일 내용 재사용 ${saved.reused}개 (문서·첨부 포함)` : `문서 ${data.documentCount}개 저장 완료.`, false, 'success');
     }
   } catch (error) { status(error.message, true); }
   finally { busy = false; controls(); render(); }
@@ -370,9 +376,9 @@ $('open').onclick = async () => {
   catch (error) { status('폴더를 열 수 없습니다. 위 저장 경로를 이용해 주세요. ' + error.message, true); }
 };
 syncUI = initSync({
-  api, context: () => {
+  api, notify, context: () => {
     const state = mode === 'sync' ? explorerState() : workspaces.sync;
-    return { base: state.base || state.folder, folder: state.folder, file: state.file };
+    return { base: state.base || state.folder, folder: state.folder, file: state.file, directory: state.selectedDirectory };
   },
   setBusy: value => { busy = value; controls(); render(); },
   showSync: () => showMode('sync'),
@@ -384,7 +390,7 @@ document.querySelector('.app-main').addEventListener('change', savePreferences);
 async function restoreExplorer(saved) {
   const text = name => typeof saved[name] === 'string' ? saved[name] : '';
   navigation++; clearSearch();
-  base = null; file = null; folder = undefined; parent = undefined; entries = [];
+  base = null; file = null; selectedDirectory = false; folder = undefined; parent = undefined; entries = [];
   $('base-input').value = ''; controls(); render();
   let warning = '';
   const root = text('base'), location = text('folder');
@@ -401,9 +407,9 @@ async function restoreExplorer(saved) {
   const selected = text('file');
   if (selected && base && inside(base, selected)) {
     try {
-      if (mode === 'convert' && convertKind === 'folder') {
+      if ((mode === 'convert' && convertKind === 'folder') || (mode === 'sync' && saved.selectedDirectory === true)) {
         const listing = await api('/api/browse?path=' + encodeURIComponent(selected));
-        file = listing.path;
+        file = listing.path; selectedDirectory = true;
       } else {
       // A search result can be selected outside the currently displayed folder.
       const directory = selected.slice(0, Math.max(selected.lastIndexOf('/'), selected.lastIndexOf('\\')));

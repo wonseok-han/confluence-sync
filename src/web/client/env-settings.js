@@ -30,7 +30,7 @@ export function createEnvSettings({ api, context, setBusy, changed, renderConfig
       const result = await api('/api/sync/env/import', { base: origin, text, name: file.name });
       if (origin !== context().base) return;
       envId = result.envId; filename = file.name; changed(); renderConfig(result.config);
-      status('.env를 가져왔습니다. 기준 폴더의 파일은 변경하지 않았습니다.');
+      status('.env를 가져왔습니다. 기준 폴더의 파일은 변경하지 않았습니다.', false, 'success');
     } catch (error) { status(error.message, true); }
     finally { $('sync-env-file').value = ''; setBusy(false); }
   };
@@ -39,7 +39,7 @@ export function createEnvSettings({ api, context, setBusy, changed, renderConfig
     try {
       const result = await api('/api/sync/env/save', body);
       $('sync-env-base-mode').checked = true; $('sync-env-import-mode').checked = false;
-      changed(); renderConfig(result.config); status('기준 폴더에 .env를 저장했습니다. CLI에서도 같은 설정을 사용할 수 있습니다.');
+      changed(); renderConfig(result.config); status('기준 폴더에 .env를 저장했습니다. CLI에서도 같은 설정을 사용할 수 있습니다.', false, 'success');
     } catch (error) { status(error.message, true); }
     finally { resetApproval(); setBusy(false); }
   }

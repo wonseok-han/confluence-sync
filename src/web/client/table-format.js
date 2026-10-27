@@ -9,7 +9,7 @@ export function fitColumnWidths(total, weights) {
   return values;
 }
 
-export function initTableFormatting({ api, monaco, refresh, setBusy }) {
+export function initTableFormatting({ api, monaco, refresh, setBusy, notify = () => {} }) {
   const $ = id => document.getElementById(id);
   const frame = $('document-preview-frame'), toggle = $('table-edit-toggle'), controls = $('table-format-controls');
   const dialog = $('table-review-dialog'), note = $('table-format-status');
@@ -100,7 +100,7 @@ export function initTableFormatting({ api, monaco, refresh, setBusy }) {
       beforeModel.setValue(data.before); afterModel.setValue(data.after); editor.layout();
       $('table-save').disabled = false;
       message('변경 내용을 확인한 뒤 원본 파일에 저장할 수 있습니다.');
-    } catch (error) { message(error.message); }
+    } catch (error) { message(error.message); notify(error.message, 'error'); }
     finally { if (current === generation) updateControls(); }
   };
   $('table-save').onclick = async () => {
@@ -109,8 +109,8 @@ export function initTableFormatting({ api, monaco, refresh, setBusy }) {
     $('table-save').disabled = true; $('table-review-close').disabled = true; setBusy(true);
     try {
       await api('/api/table-format/save', { planId: approved });
-      dialog.close(); await refresh();
-    } catch (error) { $('table-save-status').textContent = error.message; }
+      dialog.close(); notify('표 서식을 원본 파일에 저장했습니다.', 'success'); await refresh();
+    } catch (error) { $('table-save-status').textContent = error.message; notify(error.message, 'error'); }
     finally { $('table-review-close').disabled = false; setBusy(false); }
   };
   $('table-review-close').onclick = () => dialog.close();
