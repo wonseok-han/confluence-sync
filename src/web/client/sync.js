@@ -27,13 +27,15 @@ export function initSync({ api, context, setBusy, showSync, refresh = async () =
     for (const value of ['push', 'pull']) $('sync-direction-' + value).setAttribute('aria-pressed', String(direction === value));
     $('sync-push-options').hidden = direction === 'pull';
     $('sync-preview').hidden = direction === 'pull'; $('sync-push').hidden = direction === 'pull';
+    $('sync-pull-options').hidden = direction !== 'pull';
+    $('sync-pull-full').disabled = busy;
     $('sync-pull').hidden = direction !== 'pull'; $('sync-pull-note').hidden = direction !== 'pull';
     $('sync-fetch').disabled = busy || !context().base || !configured || !credentialsReady;
     $('sync-pull').disabled = busy || !context().base || !configured || !credentialsReady;
     $('sync-log-empty').textContent = direction === 'pull' ? '가져오기를 실행하면 다운로드 내역을 표시합니다.' : '업로드 미리보기를 실행하면 문서별 신규·변경·이동 계획을 확인할 수 있습니다.';
     $('sync-direction-label').textContent = direction === 'pull' ? 'Confluence → 로컬' : '로컬 → Confluence';
     $('sync-direction-note').textContent = direction === 'pull' ? 'Confluence → 로컬. 저장된 작업 스코프에 해당하는 문서를 기준 폴더의 원래 위치로 가져옵니다.' : '스페이스 루트 연결은 유지하고, 저장된 작업 스코프 안의 문서만 업로드합니다.';
-    $('sync-pull-note').textContent = `작업 스코프 ${remotePath || '미설정'} → ${context().base || '01의 기준 폴더'}. 로컬 변경·이동 대기가 있으면 중단합니다. 자동 병합하지 않습니다.`;
+    $('sync-pull-note').textContent = `작업 스코프 ${remotePath || '미설정'} → ${context().base || '01의 기준 폴더'}. Fetch 결과가 있으면 변경된 기존 문서만 가져옵니다. 전체 탐색은 아래에서 선택하세요. 로컬 변경은 자동 병합하지 않습니다.`;
     $('sync-load').disabled = busy || !context().base;
     $('sync-preview').disabled = busy || !hasTarget() || !configured;
     $('sync-push').disabled = busy || direction !== 'push' || !configured || !credentialsReady || !planId || !previewJobId || preparedKey !== key();
@@ -91,7 +93,7 @@ export function initSync({ api, context, setBusy, showSync, refresh = async () =
     setBusy(true);
     status(kind === 'preview' ? '동기화 대상을 확인하고 있습니다…' : kind === 'fetch' ? '원격 변경 확인을 시작합니다…' : kind === 'pull' ? 'Confluence에서 가져오기를 시작합니다…' : '업로드를 시작합니다…', false, null);
     try {
-      const { job } = await api('/api/sync/' + kind, kind === 'preview' ? request : (kind === 'pull' || kind === 'fetch') ? envSettings.request() : { planId: id });
+      const { job } = await api('/api/sync/' + kind, kind === 'preview' ? request : kind === 'pull' ? {...envSettings.request(),full:$('sync-pull-full').checked} : kind === 'fetch' ? envSettings.request() : { planId: id });
       if (kind === 'preview') previewJobId = job.id;
       renderConfig(job.config); renderJob(job);
       if (kind === 'fetch') $('sync-results').scrollIntoView({ block: 'start' });

@@ -24,10 +24,10 @@ function cachePath(base: string) {
   return path;
 }
 
-export async function fetchRemote(baseInput: string, env: Env) {
+export async function fetchRemote(baseInput: string, env: Env, options: { mappingFile?: string } = {}) {
   const base = realpathSync(baseInput), workspace = loadWorkspace(base), root = requireScope(workspace);
   assertWorkspaceConnection(workspace, env);
-  const client = scopeClient({...env, baseUrl:env.baseUrl?.replace(/\/$/, '')}), mapping = loadMapping(mappingPath(base)), ignore = buildIgnorer(base, []);
+  const client = scopeClient({...env, baseUrl:env.baseUrl?.replace(/\/$/, '')}), mapping = loadMapping(options.mappingFile ?? mappingPath(base)), ignore = buildIgnorer(base, []);
   const scoped = Object.entries(mapping).filter(([path]) => inScope(path.replace(/\/$/, ''), workspace) && !ignore.ignores(path) && !inNestedWorkspace(base, path));
   const pages = scoped.filter(([path, entry]) => entry.type !== 'folder' && /\.md$/i.test(path)).sort(([a],[b]) => a.localeCompare(b));
   if (pages.some(([, entry]) => !/^\d+$/.test(entry.pageId))) throw new Error('매핑의 페이지 ID가 숫자가 아닙니다. 매핑을 확인하세요.');

@@ -19,7 +19,7 @@ const keys = connectionKeys;
 type Imported = { env: Settings; content: string; source: string };
 type Imports = Map<string, Imported>;
 type Settings = Record<string, string>;
-type Selection = { base: string; target: string; envId: string; verify: boolean; referenceRoots: string[] };
+type Selection = { full?: boolean; base: string; target: string; envId: string; verify: boolean; referenceRoots: string[] };
 type Prepared = { selection: Selection; env: Settings; config: ReturnType<typeof publicConfig>; fingerprint: string };
 export type SyncRunner = (args: string[], env: Settings, log: (text: string) => void) => Promise<number>;
 type Job = { warningCount?: number; id: string; kind: 'preview' | 'push' | 'pull' | 'fetch'; state: 'running' | 'succeeded' | 'failed'; log: string; selection: Selection; config: ReturnType<typeof publicConfig>; planId: string | null; startedAt: string; finishedAt?: string };
@@ -147,6 +147,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
     for (const root of kind === 'pull' || kind === 'fetch' ? [] : prepared.selection.referenceRoots) args.push('--reference-root', root);
     if (target && kind !== 'pull') args.push(target);
     if (kind === 'preview') args.push('--dry-run');
+    if (kind === 'pull' && prepared.selection.full) args.push('--full');
     if (verify && kind !== 'pull') args.push('--verify');
     let reportedFailure = false;
     const secrets = [prepared.env.CONFLUENCE_API_TOKEN, Buffer.from(`${prepared.env.CONFLUENCE_EMAIL}:${prepared.env.CONFLUENCE_API_TOKEN}`).toString('base64')].filter(Boolean);
@@ -252,13 +253,15 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
       locked = true; plan = null;
       try {
         const { base, config, body } = await scopedSettings(input);
+        const full = (body as { full?: unknown }).full;
+        if (full !== undefined && typeof full !== 'boolean') throw new Error('전체 탐색 설정을 확인하세요.');
         const workspace = loadWorkspace(base); requireScope(workspace);
         const { env, source } = await settings(base, body.envId!, imports);
         const visible = publicConfig(env, source, workspace);
         if (visible.missing.length) throw new Error(`설정 누락: ${visible.missing.join(', ')}`);
         const url = new URL(config.baseUrl!);
         if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Confluence BASE_URL은 인증정보·쿼리가 없는 HTTPS 주소여야 합니다.');
-        return launch('pull', { selection: { base, target: '', envId: body.envId!, verify: false, referenceRoots: [] }, env, config: visible, fingerprint: '' });
+        return launch('pull', { selection: { base, target: '', envId: body.envId!, verify: false, referenceRoots: [], ...(full ? {full: true} : {}) }, env, config: visible, fingerprint: '' });
       } finally { locked = false; }
     },
     preview: async (input: unknown) => {

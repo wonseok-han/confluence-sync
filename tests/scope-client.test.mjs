@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { initSync } from '../src/web/client/sync.js';
 
 function setup(t, api) {
- const ids=['sync-results','sync-fetch','sync-job-summary','sync-log','sync-job-state','sync-log-empty','sync-direction-push','sync-direction-pull','sync-push-options','sync-pull','sync-pull-note','sync-direction-label','sync-direction-note','sync-status','sync-env-base-mode','sync-env-import-mode','sync-env-import-controls','sync-env-file','sync-env-file-name','sync-env-source-note','sync-env-choose','sync-env-save','sync-env-confirm','sync-env-confirm-save','sync-env-confirm-cancel','sync-verify','sync-references','sync-config','sync-config-status','sync-scope-save','sync-scope-saved','sync-scope-candidate','sync-load','sync-add-reference','sync-preview','sync-push','sync-target','sync-reconnect'];
+ const ids=['sync-pull-options','sync-pull-full','sync-results','sync-fetch','sync-job-summary','sync-log','sync-job-state','sync-log-empty','sync-direction-push','sync-direction-pull','sync-push-options','sync-pull','sync-pull-note','sync-direction-label','sync-direction-note','sync-status','sync-env-base-mode','sync-env-import-mode','sync-env-import-controls','sync-env-file','sync-env-file-name','sync-env-source-note','sync-env-choose','sync-env-save','sync-env-confirm','sync-env-confirm-save','sync-env-confirm-cancel','sync-verify','sync-references','sync-config','sync-config-status','sync-scope-save','sync-scope-saved','sync-scope-candidate','sync-load','sync-add-reference','sync-preview','sync-push','sync-target','sync-reconnect'];
  const node=()=>({scrollIntoView(){this.scrolled=true},disabled:false,hidden:false,open:false,showModal(){this.open=true},close(){this.open=false},value:'',checked:false,textContent:'',children:[],attributes:{},setAttribute(key,value){this.attributes[key]=value},classList:{toggle(){}},addEventListener(){},append(...items){this.children.push(...items)},replaceChildren(...items){this.children=items;this.value=items[0]?.value??''}});
  const nodes=new Map(ids.map(id=>[id,node()]));nodes.get('sync-env-base-mode').checked=true;
  const oldDocument=globalThis.document,oldOption=globalThis.Option;
@@ -138,4 +138,11 @@ test('Fetch is explicit, available in both directions, and cannot enable upload'
  s.nodes.get('sync-direction-pull').onclick();await s.nodes.get('sync-fetch').onclick();
  assert.deepEqual(calls.find(call=>call.path.endsWith('/fetch')).body,{base:'/docs',envId:''});
  assert.equal(s.nodes.get('sync-results').scrolled,true);assert.match(s.nodes.get('sync-job-summary').textContent,/원격 변경 확인/);assert.match(s.notifications.at(-1).text,/동기화 기준은 유지/);assert.equal(s.nodes.get('sync-push').disabled,true);
+});
+
+test('Pull exposes an explicit full scan option and submits it without changing Fetch behavior',async t=>{
+ const calls=[];let job;const {nodes}=setup(t,async(path,body)=>{calls.push({path,body});if(path.endsWith('/config'))return config;if(path.endsWith('/pull'))return {job:job={id:String(calls.length),kind:'pull',state:'succeeded',config,selection:{base:'/docs'},log:''}};return {job}});
+ await nodes.get('sync-load').onclick();assert.equal(nodes.get('sync-pull-options').hidden,true);nodes.get('sync-direction-pull').onclick();assert.equal(nodes.get('sync-pull-options').hidden,false);
+ await nodes.get('sync-pull').onclick();assert.equal(calls.findLast(call=>call.path.endsWith('/pull')).body.full,false);
+ nodes.get('sync-pull-full').checked=true;await nodes.get('sync-pull').onclick();assert.equal(calls.findLast(call=>call.path.endsWith('/pull')).body.full,true);
 });

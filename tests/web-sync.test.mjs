@@ -321,3 +321,10 @@ test('HTTP Fetch endpoint returns a metadata job and preserves the source mappin
  const response=await fetch(url+'/api/sync/fetch',{method:'POST',headers:{'Content-Type':'application/json','X-CSync-Token':token,Origin:url},body:JSON.stringify({base:root,envId:''})});
  assert.equal(response.status,202);assert.equal((await response.json()).job.kind,'fetch');assert.equal(readFileSync(mappingPath(root),'utf8'),before);
 });
+
+test('web full Pull is explicit, validated and passed through to the CLI',async t=>{
+ const {root}=workspace(t,{'.env':env});request(root);const calls=[];const sync=createWebSync(async(args)=>{calls.push(args);return 0});
+ await assert.rejects(sync.pull({base:root,envId:'',full:'yes'}),/전체 탐색/);
+ await sync.pull({base:root,envId:'',full:true});await finished(sync);assert.deepEqual(calls[0],['pull','--base',realpathSync(root),'--full']);
+ await sync.pull({base:root,envId:''});await finished(sync);assert.deepEqual(calls[1],['pull','--base',realpathSync(root)]);
+});

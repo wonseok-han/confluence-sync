@@ -9,6 +9,7 @@
  */
 import { mkdirSync, writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync, readdirSync, copyFileSync, lstatSync, realpathSync } from 'node:fs';
 import { resolve, join, dirname, basename, relative } from 'node:path';
+import { fetchRemote } from './fetch.js';
 import { verifyScope } from './scope.js';
 import { positionalArgs } from '../cli/args.js';
 import { tmpdir } from 'node:os';
@@ -24,7 +25,7 @@ import { preparePushTree } from './prepare.js';
 import { docHash } from '../documents/markdown.js';
 import { rewriteTableLinks } from '../documents/tables.js';
 import { buildIgnorer } from './ignore.js';
-import { mappingPath as defaultMappingPath, metadataFiles } from './metadata.js';
+import { mappingPath as defaultMappingPath, metadataFiles, METADATA_DIR } from './metadata.js';
 import { loadMapping, saveMapping } from './mapping.js';
 import { cyan, dim, green } from '../shared/colors.js';
 
@@ -53,6 +54,8 @@ type Ctx = Opts & {
   client: Client;
   remoteBaseUrl: string;
   missingAttachments: number;
+  incremental: boolean;
+  expectedVersions: Map<string, number>;
   /** 이번 실행에서 만든 .md 절대경로 (링크 재작성 대상) */
   written: string[];
   /** pageId → .md 절대경로 (내부 링크를 상대경로로 바꾸는 데 쓴다) */
@@ -109,8 +112,8 @@ async function pullPage(ctx: Ctx, node: ContentNode, destDir: string): Promise<C
   const { client } = ctx;
   const { id, title, html, storage } = node;
   // 페이지도 하위 페이지 + 하위 폴더를 모두 가질 수 있다(폴더가 페이지 밑에 올 수 있음).
-  const childFolders = await client.getChildFolders(id);
-  const childPages = await client.getChildPages(id);
+  const childFolders = ctx.incremental ? [] : await client.getChildFolders(id);
+  const childPages = ctx.incremental ? [] : await client.getChildPages(id);
   const hasChildren = childFolders.length + childPages.length > 0;
 
   const rooted = id === ctx.rootId;
@@ -207,6 +210,8 @@ async function pullNode(ctx: Ctx, id: string, destDir: string): Promise<Counts> 
   try {
     await client.assertInScope(id);
     const node = await client.getNode(id);
+    const expected = ctx.expectedVersions.get(id);
+    if (ctx.incremental && (!Number.isInteger(node.version) || !node.version || (expected !== undefined && node.version < expected))) throw new Error(`원격 버전을 확인할 수 없거나 Fetch보다 이전 버전입니다: #${id}. 다시 Fetch한 후 Pull하세요.`);
 
     if (node.type === 'folder') {
       const dir = ctx.knownPaths.get(id) ?? (id === ctx.rootId ? destDir : join(destDir, slug(node.title)));
@@ -251,8 +256,9 @@ function readDocInfo(file: string): DocInfo {
 export function anchorPass(
   written: string[],
   pathById: Map<string, string>,
+  references: Map<string, DocInfo> = new Map(),
 ): { count: number; info: Map<string, DocInfo> } {
-  const info = new Map<string, DocInfo>();
+  const info = new Map<string, DocInfo>(references);
   for (const f of written) info.set(f, readDocInfo(f));
 
   let count = 0;
@@ -424,13 +430,16 @@ export async function runPull(argv: string[]): Promise<void> {
   const workspace = loadWorkspace(baseDir);
   const scope = requireScope(workspace);
   const oldMapping = loadMapping(mappingPath);
+  const stamp = (file: string) => existsSync(file) ? createHash('sha256').update(readFileSync(file)).digest('hex') : undefined;
+  const metadataBefore = new Map([mappingPath, join(baseDir, '.env'), ...metadataFiles(baseDir)].map(path => [path, stamp(path)]));
+  const assertMetadataUnchanged = () => { for (const [path, hash] of metadataBefore) if (stamp(path) !== hash) throw new Error('pull 도중 설정·매핑이 변경되었습니다.'); };
+
   const env = readEnv(baseDir);
   requireEnv(env); assertWorkspaceConnection(workspace, env);
   if (noMapping) throw new Error('스코프 기반 pull은 매핑을 유지해야 합니다.');
   if (argv.includes('--root')) throw new Error('--root 대신 init --scope로 연결할 원격 스코프를 먼저 설정하세요.');
   if (wholeSpace && workspace.scope!.path !== '.') throw new Error('--space는 사용자가 / 스코프를 선택한 작업공간에서만 사용할 수 있습니다.');
   const client = createClient({ baseUrl: env.baseUrl!, email: env.email!, token: env.token! }, { force: false, verify: false, scope: { id: scope.id, spaceId: workspace.connection!.spaceId! } });
-  await verifyScope(client, workspace);
   const target = positionalArgs(argv)[1];
   const knownById = new Map(Object.entries(oldMapping).map(([rel, entry]) => [entry.pageId, rel]));
   let ids: string[];
@@ -445,11 +454,35 @@ export async function runPull(argv: string[]): Promise<void> {
     ids = candidates.filter(([path])=>!containers.some(([parent])=>parent!==path && path.startsWith(parent.endsWith('/')?parent:parent.replace(/README\.md$/, '')))).map(([,entry])=>entry.pageId);
     if (!ids.length) throw new Error('선택한 로컬 스코프의 원격 매핑이 없습니다. 처음 가져올 때는 / 스코프에서 Pull하여 전체 매핑을 확보하세요.');
   }
+  // A complete Fetch observation selects existing pages; it never authorizes a baseline advance.
+  let incremental = false, skipped = 0;
+  const expectedVersions = new Map<string, number>();
+  const full = wholeSpace || argv.includes('--full') || !!target;
+  const hasMappedPages = Object.entries(oldMapping).some(([path, entry]) => entry.type !== 'folder' && /\.md$/i.test(path) && inScope(path, workspace));
+  if (!full && hasMappedPages && existsSync(join(baseDir, METADATA_DIR, 'remote.json'))) {
+    const { snapshot, cached, requests } = await fetchRemote(baseDir, env, { mappingFile: mappingPath });
+    const unavailable = snapshot.items.filter(item => item.state === 'unavailable');
+    if (unavailable.length) throw new Error(`Fetch 조회 불가 페이지가 있습니다: ${unavailable.map(item => `${item.path} (#${item.pageId})`).join(', ')}. 삭제·권한·보관 상태를 확인하세요. 문서와 매핑은 유지합니다.`);
+    incremental = true;
+    ids = snapshot.items.filter(item => {
+      const entry = oldMapping[item.path], file = resolve(baseDir, item.path);
+      if (item.remoteVersion !== undefined) expectedVersions.set(item.pageId, item.remoteVersion);
+      const unchanged = item.state === 'unchanged' && entry?.hash && entry.remoteVersion && item.baselineVersion === entry.remoteVersion && item.remoteVersion === entry.remoteVersion && !entry.pendingMove && existsSync(file) && lstatSync(file).isFile() && !lstatSync(file).isSymbolicLink();
+      if (unchanged) skipped++;
+      return !unchanged;
+    }).map(item => item.pageId);
+    console.log(`Fetch 기반 Pull · 조회 시각 ${snapshot.checkedAt}${cached ? ' (캐시)' : ''} · 메타데이터 요청 ${requests}회`);
+    console.log(`다운로드 대상 ${ids.length}건 · 버전 동일 건너뜀 ${skipped}건`);
+    console.log('새 페이지·폴더·첨부 단독 변경은 전체 탐색에서 확인합니다: csync pull --full');
+  } else console.log(full ? '스코프 전체 탐색 Pull' : 'Fetch 결과가 없어 스코프 전체를 탐색합니다.');
+  assertMetadataUnchanged();
   const rootId = ids.includes(scope.id) ? scope.id : undefined;
   if (baseDir !== outDir) throw new Error('Pull은 기준 폴더 안의 원래 경로에 저장합니다. --base와 --out은 같아야 합니다.');
   if (rootId && knownById.has(rootId) && knownById.get(rootId) !== 'README.md') throw new Error('스페이스 루트 매핑은 README.md여야 합니다. 기존 매핑을 확인하세요.');
+  if (incremental && !ids.length) { console.log('완료 · Fetch 기준 내려받을 원격 변경이 없습니다. 문서·매핑을 유지합니다.'); return; }
+  await verifyScope(client, workspace);
+  assertMetadataUnchanged();
   // Stage everything first. Any download/conversion/scope failure leaves local sources untouched.
-  const stamp = (file: string) => existsSync(file) ? createHash('sha256').update(readFileSync(file)).digest('hex') : undefined;
   const originals = new Map<string, string | undefined>();
   const remember = (dir: string) => {
     if (!existsSync(dir)) return;
@@ -463,7 +496,8 @@ export async function runPull(argv: string[]): Promise<void> {
   for (const path of [mappingPath, join(baseDir, '.env'), ...metadataFiles(baseDir)]) originals.set(path, stamp(path));
   const ignore = buildIgnorer(baseDir, []);
   const rels = (existsSync(baseDir) ? collectMarkdown(baseDir) : []).map(file => relative(baseDir, file).split('\\').join('/')).filter(rel => !inNestedWorkspace(baseDir, rel) && !ignore.ignores(rel));
-  const scoped = rels.filter(rel => inScope(rel, workspace));
+  const requestedIds = new Set(ids);
+  const scoped = rels.filter(rel => inScope(rel, workspace) && (!incremental || requestedIds.has(oldMapping[rel]?.pageId)));
   const tree = await preparePushTree(baseDir, rels, scoped);
   let localHashes: Map<string, string>;
   try { localHashes = new Map(scoped.map(rel => { const doc = tree.docs[rel]; return [rel, docHash(doc.title, tree.render(rel, doc.body, doc.title))]; })); }
@@ -471,7 +505,7 @@ export async function runPull(argv: string[]): Promise<void> {
   const stage = mkdtempSync(join(tmpdir(), 'csync-pull-'));
   const stageOut = join(stage, relative(baseDir, outDir));
   const ctx: Ctx = {
-    client, remoteBaseUrl: env.baseUrl!, missingAttachments: 0,
+    client, remoteBaseUrl: env.baseUrl!, missingAttachments: 0, incremental, expectedVersions,
     obsidian: argv.includes('--obsidian'), spaceKey: env.spaceKey!, written: [], pathById: new Map(), folderIds: new Map(),
     versions: new Map(), assetOwners: new Map(), knownPaths: new Map([...knownById].map(([id, rel]) => [id, resolve(stage, rel)])),
     stageBase: stage, baseDir, workspace, rootId, claimed: new Map(), visited: new Set(),
@@ -484,8 +518,16 @@ export async function runPull(argv: string[]): Promise<void> {
       if (rootId === id && oldMapping['README.md'] && oldMapping['README.md'].pageId !== id) throw new Error('루트 README.md가 다른 페이지에 연결되어 있습니다.');
       add(counts, await pullNode(ctx, id, stageOut));
     }
-    const { count: anchors, info } = anchorPass(ctx.written, ctx.pathById);
-    const relinked = relinkPass(ctx.written, ctx.pathById, ctx.obsidian, info);
+    // Link changed pages to unchanged local pages without rewriting or re-baselining them.
+    const linkPaths = new Map(ctx.pathById), referenceInfo = new Map<string, DocInfo>();
+    if (incremental) for (const [id, rel] of knownById) {
+      if (linkPaths.has(id) || !/\.md$/i.test(rel) || ignore.ignores(rel) || inNestedWorkspace(baseDir, rel)) continue;
+      const original = resolve(baseDir, rel), staged = resolve(stage, rel);
+      if (!within(baseDir, original) || !within(stage, staged) || !existsSync(original) || !lstatSync(original).isFile() || lstatSync(original).isSymbolicLink() || !within(realpathSync(baseDir), realpathSync(original))) continue;
+      linkPaths.set(id, staged); referenceInfo.set(staged, readDocInfo(original));
+    }
+    const { count: anchors, info } = anchorPass(ctx.written, linkPaths, referenceInfo);
+    const relinked = relinkPass(ctx.written, linkPaths, ctx.obsidian, info);
     const stagedFiles: string[] = [];
     const stagedDirs: string[] = [];
     const gather = (dir: string) => {
@@ -535,7 +577,7 @@ export async function runPull(argv: string[]): Promise<void> {
     const paths = new Map([...ctx.pathById].map(([id, path]) => [id, join(baseDir, relative(stage, path))]));
     const folders = new Map([...ctx.folderIds].map(([path, id]) => [join(baseDir, relative(stage, path)), id]));
     const mapped = await mappingPass(baseDir, mappingPath, paths, folders, ctx.versions);
-    console.log(`\n${green('완료')}  페이지 ${counts.pages}개, 폴더 ${counts.folders}개  매핑 ${mapped}건  내부링크 ${relinked}개, 앵커 ${anchors}개`);
+    console.log(`\n${green('완료')}  페이지 ${counts.pages}개, 폴더 ${counts.folders}개${incremental ? `, 건너뜀 ${skipped}개` : ''}  매핑 ${mapped}건  내부링크 ${relinked}개, 앵커 ${anchors}개`);
     console.log(dim(`  base: ${baseDir}`));
     if (ctx.missingAttachments) console.log(`[경고 요약] 원격 첨부 ${ctx.missingAttachments}개를 로컬로 저장하지 못했습니다. 문서는 저장했으며 원격 참조를 유지했습니다.`);
   } finally { rmSync(stage, { recursive: true, force: true }); }

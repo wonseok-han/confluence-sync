@@ -43,7 +43,14 @@ export const syncPanel = `
           <p id="sync-verify-help" class="hint">선택하면 미리보기 중 Confluence를 조회하므로 시간이 더 걸릴 수 있습니다. 파일과 원격 내용은 변경하지 않습니다.</p>
         </section>
       </div>
-      <p id="sync-pull-note" class="sync-target" hidden>저장된 로컬 작업 스코프의 문서를 원래 경로로 가져옵니다. 로컬 변경·이동 대기가 있으면 중단합니다. 자동 병합하지 않습니다.</p>
+      <div id="sync-pull-options" class="sync-push-options" hidden>
+        <p id="sync-pull-note" class="sync-target" hidden>Fetch 결과가 있으면 변경된 기존 문서만 가져옵니다. 최초 Pull은 전체를 탐색합니다.</p>
+        <section class="sync-option-section" aria-labelledby="sync-pull-full-heading">
+          <h3 id="sync-pull-full-heading">가져오기 범위</h3>
+          <label class="repair-option sync-verify-option"><input id="sync-pull-full" type="checkbox" aria-describedby="sync-pull-full-help">스코프 전체 다시 탐색 · 새 페이지와 첨부 변경 포함</label>
+          <p id="sync-pull-full-help" class="hint">Fetch 결과가 있으면 2분 이내 조회 시점에 변경된 기존 문서만 받습니다. 만료된 결과는 다시 조회하며, Fetch 결과가 없으면 전체를 탐색합니다. 전체 탐색은 새 문서를 찾고 첨부도 다시 확인하므로 API 호출이 늘어납니다. 로컬 변경·이동 대기는 덮어쓰지 않습니다.</p>
+        </section>
+      </div>
     </div>
     <div class="action-bar"><span class="save-note">작업 방향과 로컬 작업 스코프를 확인하세요.</span><div class="actions"><button id="sync-fetch" type="button" title="원격 메타데이터만 확인합니다. 본문·첨부는 받지 않으며 2분 이내에는 캐시를 재사용합니다." disabled>원격 변경 확인 (Fetch)</button><button id="sync-preview" disabled>업로드 미리보기</button><button id="sync-push" class="primary" disabled>Confluence에 업로드</button><button id="sync-pull" class="primary" disabled hidden>Confluence에서 가져오기</button></div></div>
     <div class="feedback"><p id="sync-status" class="status" role="status" aria-live="polite">작업 방향을 선택하고 연결 설정과 스코프를 확인하세요.</p><button id="sync-reconnect" hidden>진행 상태 다시 확인</button></div>
