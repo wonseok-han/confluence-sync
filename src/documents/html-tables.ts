@@ -1,7 +1,8 @@
 import MarkdownIt from 'markdown-it';
+import { installCallouts } from './callouts.js';
 
 /** Keep a raw table in one token, including blank lines between its rows. */
-export function htmlTableMarkdown(): MarkdownIt {
+export function htmlTableMarkdown(format: 'html' | 'storage' = 'html'): MarkdownIt {
   const md = new MarkdownIt({ html: true, linkify: true, breaks: false });
   md.block.ruler.before('html_block', 'html_table', (state, start, end, silent) => {
     if (state.sCount[start] - state.blkIndent >= 4) return false;
@@ -21,5 +22,6 @@ export function htmlTableMarkdown(): MarkdownIt {
     }
     return false;
   });
+  installCallouts(md, format);
   return md;
 }

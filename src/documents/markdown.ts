@@ -47,7 +47,7 @@ type RenderCtx = {
   linkedTitles: Set<string>; // 이 문서가 내부 링크로 가리키는 대상 제목들
 };
 
-const md = htmlTableMarkdown();
+const md = htmlTableMarkdown('storage');
 
 const emptyCtx = (): RenderCtx => ({
   fileDir: '', titleIndex: {}, anchorIndex: {}, selfRel: '', selfTitle: '',
