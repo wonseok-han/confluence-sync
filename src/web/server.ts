@@ -33,7 +33,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
   const conflictMessage = () => {
     if (busy) return `${busy} 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.`;
     const job = sync.current();
-    const name = job?.state === 'running' ? { pull: '가져오기(Pull)', push: '업로드(Push)', preview: '업로드 미리보기' }[job.kind] : 'Confluence 요청 처리';
+    const name = job?.state === 'running' ? { pull: '가져오기(Pull)', push: '업로드(Push)', preview: '업로드 미리보기', fetch: '원격 변경 확인' }[job.kind] : 'Confluence 요청 처리';
     return `${name} 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.`;
   };
   const server = createServer(async (req, res) => {
@@ -101,7 +101,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath, 'ko'));
         json(200, { root, entries, skipped }); return;
       }
-      if (req.method !== 'POST' || !['/api/table-format/preview', '/api/table-format/save', '/api/document-preview', '/api/convert', '/api/open', '/api/pick-folder', '/api/sync/config', '/api/sync/env/import', '/api/sync/env/save', '/api/sync/scopes', '/api/sync/scope', '/api/sync/preview', '/api/sync/push', '/api/sync/pull'].includes(url.pathname)) {
+      if (req.method !== 'POST' || !['/api/table-format/preview', '/api/table-format/save', '/api/document-preview', '/api/convert', '/api/open', '/api/pick-folder', '/api/sync/config', '/api/sync/env/import', '/api/sync/env/save', '/api/sync/scopes', '/api/sync/scope', '/api/sync/preview', '/api/sync/push', '/api/sync/pull', '/api/sync/fetch'].includes(url.pathname)) {
         json(404, { error: '없는 요청입니다.' }); return;
       }
       if (!req.headers['content-type']?.startsWith('application/json')) { json(415, { error: 'JSON 요청이 필요합니다.' }); return; }
@@ -148,9 +148,9 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         if (typeof body.base !== 'string' || typeof body.envId !== 'string') throw new Error('설정 경로를 확인해 주세요.');
         json(200, await sync.config(body.base, body.envId)); return;
       }
-      if (url.pathname === '/api/sync/preview' || url.pathname === '/api/sync/push' || url.pathname === '/api/sync/pull') {
+      if (url.pathname === '/api/sync/preview' || url.pathname === '/api/sync/push' || url.pathname === '/api/sync/pull' || url.pathname === '/api/sync/fetch') {
         if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }
-        const job = url.pathname.endsWith('/preview') ? await sync.preview(body) : url.pathname.endsWith('/pull') ? await sync.pull(body) : await sync.push(body.planId);
+        const job = url.pathname.endsWith('/preview') ? await sync.preview(body) : url.pathname.endsWith('/pull') ? await sync.pull(body) : url.pathname.endsWith('/fetch') ? await sync.fetch(body) : await sync.push(body.planId);
         json(202, { job }); return;
       }
       if (url.pathname === '/api/pick-folder') {

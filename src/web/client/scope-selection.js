@@ -14,7 +14,7 @@ export function createScopeSelection({ api, context, configKey, request, setBusy
     const path = candidate();
     $('sync-scope-save').disabled = busy || !path;
     $('sync-scope-candidate').textContent = path ? `${path} (${context().directory ? '폴더와 하위 문서' : '파일 하나'})` : '아래 문서 탐색에서 파일·폴더를 선택하세요.';
-    $('sync-scope-saved').textContent = saved ? `${saved.path === '.' ? '/' : saved.path} (${saved.type === 'file' ? '파일 하나' : '폴더와 하위 문서'})` : saved === undefined ? '02에서 설정 확인을 눌러 불러오세요.' : '미설정 — 직접 선택하세요.';
+    $('sync-scope-saved').textContent = saved ? `${saved.path === '.' ? '/' : saved.path} (${saved.type === 'file' ? '파일 하나' : '폴더와 하위 문서'})` : saved === undefined ? '.env 연결 설정에서 설정 확인을 눌러 불러오세요.' : '미설정 — 직접 선택하세요.';
   }
   $('sync-scope-save').onclick = async () => {
     const path = candidate();

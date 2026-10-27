@@ -299,3 +299,25 @@ test('scope save identifies pending mapping inspection even when no Pull/Push jo
  }finally{release();}
  assert.equal((await first).status,200);assert.equal((await post()).status,200);
 });
+
+test('web Fetch uses the shared CLI command without upload options or approval',async t=>{
+ const {root}=workspace(t,{'.env':env});request(root);const calls=[];
+ const sync=createWebSync(async(args,settings,log)=>{calls.push({args,settings});log('이번 API 요청: 1회\n원격 변경 1\n');return 0});
+ await sync.fetch({base:root,envId:'',target:'/outside',verify:true,referenceRoots:['/outside']});
+ const job=await finished(sync);assert.equal(job.kind,'fetch');assert.equal(job.state,'succeeded');assert.equal(job.planId,null);assert.deepEqual(calls[0].args,['fetch','--base',realpathSync(root)]);assert.equal(calls[0].settings.CONFLUENCE_API_TOKEN,'synthetic-secret');
+ await assert.rejects(sync.push('anything'),/미리보기/);
+});
+
+test('web Fetch requires a saved scope and connection, and serializes concurrent requests',async t=>{
+ const {root}=workspace(t,{'.env':env});let release;const sync=createWebSync(()=>new Promise(resolve=>{release=resolve}));
+ await assert.rejects(sync.fetch({base:root,envId:''}),/스코프/);request(root);await sync.fetch({base:root,envId:''});
+ await assert.rejects(sync.fetch({base:root,envId:''}),/진행 중/);await assert.rejects(sync.setScope({base:root,envId:'',scopePath:'/'}),/진행 중/);release(0);await finished(sync);
+});
+
+test('HTTP Fetch endpoint returns a metadata job and preserves the source mapping',async t=>{
+ const {root,put}=workspace(t,{'.env':env});request(root);put('.csync/mapping.json',JSON.stringify({'doc.md':{pageId:'1',remoteVersion:1}}));const before=readFileSync(mappingPath(root),'utf8');
+ const {server,url}=await startWeb({start:root,port:0,syncRunner:async(args,settings,log)=>{assert.equal(args[0],'fetch');log('원격 확인 완료\n');return 0}});t.after(()=>{server.closeAllConnections();server.close()});
+ const token=(await(await fetch(url)).text()).match(/name="csync-token" content="([^"]+)"/)[1];
+ const response=await fetch(url+'/api/sync/fetch',{method:'POST',headers:{'Content-Type':'application/json','X-CSync-Token':token,Origin:url},body:JSON.stringify({base:root,envId:''})});
+ assert.equal(response.status,202);assert.equal((await response.json()).job.kind,'fetch');assert.equal(readFileSync(mappingPath(root),'utf8'),before);
+});

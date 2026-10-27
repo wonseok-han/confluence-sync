@@ -22,7 +22,7 @@ type Settings = Record<string, string>;
 type Selection = { base: string; target: string; envId: string; verify: boolean; referenceRoots: string[] };
 type Prepared = { selection: Selection; env: Settings; config: ReturnType<typeof publicConfig>; fingerprint: string };
 export type SyncRunner = (args: string[], env: Settings, log: (text: string) => void) => Promise<number>;
-type Job = { warningCount?: number; id: string; kind: 'preview' | 'push' | 'pull'; state: 'running' | 'succeeded' | 'failed'; log: string; selection: Selection; config: ReturnType<typeof publicConfig>; planId: string | null; startedAt: string; finishedAt?: string };
+type Job = { warningCount?: number; id: string; kind: 'preview' | 'push' | 'pull' | 'fetch'; state: 'running' | 'succeeded' | 'failed'; log: string; selection: Selection; config: ReturnType<typeof publicConfig>; planId: string | null; startedAt: string; finishedAt?: string };
 
 async function settings(base: string, envId: string, imports: Imports) {
   if (envId) {
@@ -53,6 +53,7 @@ async function fingerprint(base: string, env: Settings) {
     for (const entry of entries) {
       if (entry.name === 'node_modules' || (entry.name.startsWith('.') && ![METADATA_DIR, '.confluence-sync.json', '.confluence-syncignore', '.confluence-workspace.json'].includes(entry.name))) continue;
       const path = join(dir, entry.name);
+      if (relative(base, path).split('\\').join('/') === `${METADATA_DIR}/remote.json`) continue;
       if (entry.isDirectory()) await walk(path);
       else if (entry.isFile()) {
         const info = await stat(path);
@@ -142,8 +143,8 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
     const current: Job = { id: randomUUID(), kind, state: 'running', log: '', selection: prepared.selection, config: prepared.config, planId: null, startedAt: new Date().toISOString() };
     job = current; plan = null;
     const { base, target, verify } = prepared.selection;
-    const args = [kind === 'pull' ? 'pull' : 'push', '--base', base];
-    for (const root of kind === 'pull' ? [] : prepared.selection.referenceRoots) args.push('--reference-root', root);
+    const args = [kind === 'pull' ? 'pull' : kind === 'fetch' ? 'fetch' : 'push', '--base', base];
+    for (const root of kind === 'pull' || kind === 'fetch' ? [] : prepared.selection.referenceRoots) args.push('--reference-root', root);
     if (target && kind !== 'pull') args.push(target);
     if (kind === 'preview') args.push('--dry-run');
     if (verify && kind !== 'pull') args.push('--verify');
@@ -231,6 +232,20 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
       const resolved = await realpath(resolve(base));
       const { env, source } = await settings(resolved, envId, imports);
       return publicConfig(env, source, loadWorkspace(resolved));
+    },
+    fetch: async (input: unknown) => {
+      if (running()) throw new Error('다른 작업이 진행 중입니다.');
+      locked = true; plan = null;
+      try {
+        const { base, config, body } = await scopedSettings(input);
+        const workspace = loadWorkspace(base); requireScope(workspace);
+        const { env, source } = await settings(base, body.envId!, imports);
+        const visible = publicConfig(env, source, workspace);
+        if (visible.missing.length) throw new Error(`설정 누락: ${visible.missing.join(', ')}`);
+        const url = new URL(config.baseUrl!);
+        if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Confluence BASE_URL은 인증정보·쿼리가 없는 HTTPS 주소여야 합니다.');
+        return launch('fetch', { selection: { base, target: '', envId: body.envId!, verify: false, referenceRoots: [] }, env, config: visible, fingerprint: '' });
+      } finally { locked = false; }
     },
     pull: async (input: unknown) => {
       if (running()) throw new Error('다른 작업이 진행 중입니다.');

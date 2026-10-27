@@ -37,7 +37,7 @@ export class ConfluenceDownloadError extends Error {
 export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   const authHeader = () => 'Basic ' + Buffer.from(`${cfg.email}:${cfg.token}`).toString('base64');
 
-  async function api(path: string, init?: RequestInit): Promise<any> {
+  async function api(path: string, init?: RequestInit, onHeaders?: (headers: Headers) => void): Promise<any> {
     const signal = opts.requestTimeoutMs ? AbortSignal.timeout(opts.requestTimeoutMs) : undefined;
     try {
       const res = await fetch(`${cfg.baseUrl}${path}`, {
@@ -47,6 +47,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
         },
       });
       if (!res.ok) throw new ConfluenceApiError(res.status, path, await res.text(), res.statusText);
+      onHeaders?.(res.headers);
       return res.status === 204 ? null : await res.json();
     } catch (error) {
       if (signal?.aborted) throw new Error(`Confluence 메타데이터 응답 대기 시간이 초과되었습니다 (${opts.requestTimeoutMs! / 1000}초). 잠시 후 다시 시도하세요. 요청: ${path}`);

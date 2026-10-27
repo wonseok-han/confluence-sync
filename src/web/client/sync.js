@@ -28,6 +28,7 @@ export function initSync({ api, context, setBusy, showSync, refresh = async () =
     $('sync-push-options').hidden = direction === 'pull';
     $('sync-preview').hidden = direction === 'pull'; $('sync-push').hidden = direction === 'pull';
     $('sync-pull').hidden = direction !== 'pull'; $('sync-pull-note').hidden = direction !== 'pull';
+    $('sync-fetch').disabled = busy || !context().base || !configured || !credentialsReady;
     $('sync-pull').disabled = busy || !context().base || !configured || !credentialsReady;
     $('sync-log-empty').textContent = direction === 'pull' ? '가져오기를 실행하면 다운로드 내역을 표시합니다.' : '업로드 미리보기를 실행하면 문서별 신규·변경·이동 계획을 확인할 수 있습니다.';
     $('sync-direction-label').textContent = direction === 'pull' ? 'Confluence → 로컬' : '로컬 → Confluence';
@@ -50,7 +51,7 @@ export function initSync({ api, context, setBusy, showSync, refresh = async () =
   }
   function renderJob(job) {
     $('sync-job-summary').hidden = false;
-    $('sync-job-summary').textContent = `${job.kind === 'preview' ? '업로드 미리보기' : job.kind === 'pull' ? '가져오기' : '업로드'} · ${job.kind === 'pull' ? `${job.config.spaceKey || '스페이스 미설정'} → ${job.selection.base}` : `${job.selection.target || job.selection.base} → ${job.config.spaceKey || '스페이스 미설정'}`} (${job.config.baseUrl || '서버 미설정'})`;
+    $('sync-job-summary').textContent = `${job.kind === 'preview' ? '업로드 미리보기' : job.kind === 'fetch' ? '원격 변경 확인' : job.kind === 'pull' ? '가져오기' : '업로드'} · ${job.kind === 'pull' || job.kind === 'fetch' ? `${job.config.spaceKey || '스페이스 미설정'} → ${job.selection.base}` : `${job.selection.target || job.selection.base} → ${job.config.spaceKey || '스페이스 미설정'}`} (${job.config.baseUrl || '서버 미설정'})`;
     $('sync-log-empty').hidden = true; $('sync-log').hidden = false;
     const log = $('sync-log'), following = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     renderSyncLog(log, job.log || '작업을 준비하는 중입니다…');
@@ -58,12 +59,13 @@ export function initSync({ api, context, setBusy, showSync, refresh = async () =
     $('sync-job-state').textContent = job.state === 'succeeded' && job.warningCount ? '완료 (경고)' : { running: '진행 중', succeeded: '완료', failed: '실패' }[job.state];
     const announce = !announcedJobs.has(job.id);
     if (job.state !== 'running') announcedJobs.add(job.id);
-    if (job.state === 'running') status(job.kind === 'preview' ? '로컬 문서와 매핑을 비교하고 있습니다…' : job.kind === 'pull' ? 'Confluence에서 문서를 가져오고 있습니다…' : 'Confluence에 업로드하고 있습니다. 진행 내역을 확인하세요.', false, null);
-    else if (job.state === 'failed') status(job.kind === 'pull' ? '가져오기에 실패했습니다. 로컬 변경이나 오류 내역을 확인한 뒤 다시 시도하세요.' : '업로드가 실패했거나 일부 문서가 처리되지 않았습니다. 내역을 확인한 뒤 다시 미리보기해 주세요.', true, announce ? 'error' : null);
+    if (job.state === 'running') status(job.kind === 'preview' ? '로컬 문서와 매핑을 비교하고 있습니다…' : job.kind === 'fetch' ? '원격 페이지 메타데이터를 확인하고 있습니다…' : job.kind === 'pull' ? 'Confluence에서 문서를 가져오고 있습니다…' : 'Confluence에 업로드하고 있습니다. 진행 내역을 확인하세요.', false, null);
+    else if (job.state === 'failed') status(job.kind === 'fetch' ? '원격 변경 확인에 실패했습니다. 실행 내역을 확인하세요. 이전 캐시는 유지됩니다.' : job.kind === 'pull' ? '가져오기에 실패했습니다. 로컬 변경이나 오류 내역을 확인한 뒤 다시 시도하세요.' : '업로드가 실패했거나 일부 문서가 처리되지 않았습니다. 내역을 확인한 뒤 다시 미리보기해 주세요.', true, announce ? 'error' : null);
     else if (job.kind === 'preview') {
       if (job.id === previewJobId && preparedKey === key() && !job.config.missing.length && job.config.scope) planId = job.planId;
       status(job.config.missing.length ? '미리보기 완료. 접속 설정을 채운 뒤 다시 미리보기해 주세요.' : planId ? '미리보기 완료. 대상과 업로드 위치를 확인하고 Confluence에 업로드를 누르세요.' : '미리보기 내역을 불러왔습니다. 현재 선택으로 다시 미리보기해 주세요.', false, announce ? (job.config.missing.length ? 'warning' : 'success') : null);
-    } else if (job.warningCount) status(`가져오기를 완료했습니다. 첨부 ${job.warningCount}개를 저장하지 못해 원격 참조를 유지했습니다. 실행 내역을 확인하세요.`, false, announce ? 'warning' : null);
+    } else if (job.kind === 'fetch') status('원격 변경 확인을 완료했습니다. 조회 시각·변경 내역은 03 실행 내역에서 확인하세요. 문서와 동기화 기준은 유지됩니다.', false, announce ? 'success' : null);
+    else if (job.warningCount) status(`가져오기를 완료했습니다. 첨부 ${job.warningCount}개를 저장하지 못해 원격 참조를 유지했습니다. 실행 내역을 확인하세요.`, false, announce ? 'warning' : null);
     else status(job.kind === 'pull' ? '가져오기가 완료되었습니다. 기준 폴더에서 문서를 확인하세요.' : '업로드가 완료되었습니다. 다른 대상을 선택해 계속 작업할 수 있습니다.', false, announce ? 'success' : null);
   }
   async function poll() {
@@ -87,11 +89,12 @@ export function initSync({ api, context, setBusy, showSync, refresh = async () =
     invalidatePreview();
     if (kind === 'preview') preparedKey = key();
     setBusy(true);
-    status(kind === 'preview' ? '동기화 대상을 확인하고 있습니다…' : kind === 'pull' ? 'Confluence에서 가져오기를 시작합니다…' : '업로드를 시작합니다…', false, null);
+    status(kind === 'preview' ? '동기화 대상을 확인하고 있습니다…' : kind === 'fetch' ? '원격 변경 확인을 시작합니다…' : kind === 'pull' ? 'Confluence에서 가져오기를 시작합니다…' : '업로드를 시작합니다…', false, null);
     try {
-      const { job } = await api('/api/sync/' + kind, kind === 'preview' ? request : kind === 'pull' ? envSettings.request() : { planId: id });
+      const { job } = await api('/api/sync/' + kind, kind === 'preview' ? request : (kind === 'pull' || kind === 'fetch') ? envSettings.request() : { planId: id });
       if (kind === 'preview') previewJobId = job.id;
       renderConfig(job.config); renderJob(job);
+      if (kind === 'fetch') $('sync-results').scrollIntoView({ block: 'start' });
       await poll();
     } catch (error) {
       status(error.message, true);
@@ -122,6 +125,7 @@ export function initSync({ api, context, setBusy, showSync, refresh = async () =
     onSave: config => { invalidatePreview(); renderConfig(config); },
   });
   for (const value of ['push', 'pull']) $('sync-direction-' + value).onclick = () => { if (!busy) { direction = value; update(false); } };
+  $('sync-fetch').onclick = () => start('fetch');
   $('sync-pull').onclick = () => start('pull');
   $('sync-preview').onclick = () => start('preview');
   $('sync-push').onclick = () => start('push');

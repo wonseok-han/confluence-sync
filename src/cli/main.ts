@@ -5,6 +5,7 @@ import { runInit } from './init.js';
 import { runConvert } from '../conversion/convert.js';
 import { runPull } from '../sync/pull.js';
 import { runRemap } from '../sync/remap.js';
+import { runFetch } from '../sync/fetch.js';
 import { runPush } from '../sync/push.js';
 
 const argv = process.argv.slice(2);
@@ -17,6 +18,7 @@ try {
       case 'convert': await runConvert(argv); break;
       case 'remap': await runRemap(argv); break;
       case 'push': { const args = [...argv]; args.splice(args.indexOf(positionalArgs(argv)[0]), 1); await runPush(args); break; }
+      case 'fetch': await runFetch(argv); break;
       case 'pull': await runPull(argv); break;
       case 'web': { const { runWeb } = await import('../web/server.js'); await runWeb(argv); break; }
       case undefined:

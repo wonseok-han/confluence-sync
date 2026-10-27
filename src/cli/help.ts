@@ -12,6 +12,7 @@ ${dim('Confluence Cloud ↔ Markdown 가져오기(Pull)·업로드(Push) CLI.')}
 ${dim('짧은 이름')} ${o('csync')} ${dim('로도 실행할 수 있습니다(아래 confluence-sync 를 csync 로 대체 가능).')}
 
 ${h('사용법:')}
+  ${o('csync fetch [--base <dir>]')}          연결된 페이지의 원격 변경만 확인(문서 유지)
   ${o('csync push [경로...]')} [옵션]          로컬 → Confluence 업로드
   ${o('confluence-sync web')}                   문서 변환·Confluence Push/Pull 웹 화면(로컬 전용)
   ${o('confluence-sync init')}                  대화형으로 .env 설정 파일 생성
@@ -20,6 +21,13 @@ ${h('사용법:')}
   ${o('confluence-sync --help | --version')}
   ${o('csync')}만 실행하면 도움말을 표시합니다. 업로드는 ${o('csync push')}를 명시하세요.
   Pull과 Push는 각각 실행하며 자동 병합하지 않습니다.
+
+${h('fetch(원격 변경 확인):')}
+  ${o('csync fetch')} · ${o('csync fetch --base <dir>')}
+  저장된 스코프의 매핑된 페이지만 ID 100개씩 묶어 조회합니다. 본문·첨부는 받지 않습니다.
+  결과는 .csync/remote.json에 저장하고 2분 동안 재사용합니다. 최대 20회 요청 후 중단합니다.
+  동기화 기준 버전·문서·매핑은 변경하지 않으며 Push 승인이나 충돌 검사를 대신하지 않습니다.
+  새 원격 문서·폴더·첨부 단독 변경은 검사하지 않습니다. 조회 누락은 삭제로 단정하지 않습니다.
 
 ${h('파일 이동과 매핑:')}
   pageId를 유지하고 파일을 옮기면 push가 기존 매핑을 자동 재연결하고 원격 위치를 이동합니다.
