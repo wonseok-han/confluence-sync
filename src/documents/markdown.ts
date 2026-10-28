@@ -251,6 +251,8 @@ export type Rendered = {
 };
 
 export type StorageOpts = {
+  /** Read-only baseline comparison for releases before callout support. */
+  legacyCallouts?: boolean;
   rewriteHref?: (href: string) => string;
   /** Obsidian [[wikilink]] 해석기(주면 표준 링크로 먼저 정규화한다) */
   resolveLink?: LinkResolver;
@@ -287,7 +289,7 @@ export function toStorage(
     bodySlugs: opts.bodySlugs ?? [],
   };
   const src = opts.resolveLink ? resolveWikilinks(markdown, opts.resolveLink) : markdown;
-  const storage = md.render(src);
+  const storage = md.render(src, { legacyCallouts: opts.legacyCallouts });
   return {
     storage,
     images: ctx.images,

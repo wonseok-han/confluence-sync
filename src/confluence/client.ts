@@ -8,7 +8,7 @@ import type { Mapping } from '../sync/mapping.js';
 import { red, yellow, dim } from '../shared/colors.js';
 
 export type ConfluenceConfig = { baseUrl: string; email: string; token: string };
-export type ClientOpts = { force: boolean; verify: boolean; requestTimeoutMs?: number; scope?: { id: string; spaceId: string } };
+export type ClientOpts = { force: boolean; verify: boolean; requestTimeoutMs?: number; scope?: { id: string; spaceId: string; spaceOnly?: boolean } };
 export type UpsertResult = 'created' | 'updated' | 'skipped' | 'moved';
 export type ImageRef = { filename: string; abs: string };
 /** getNode 결과: 본문(HTML/storage) + 출처 메타(frontmatter 용). */
@@ -133,15 +133,17 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   const uploadImages = uploadAttachments;
 
   /** Expanded metadata only: scope selection never downloads page bodies. */
-  async function getContentInfo(id: string): Promise<{ id: string; title: string; type: 'page' | 'folder'; spaceId: string; ancestors: { id: string; title: string }[] }> {
+  async function getContentInfo(id: string): Promise<{ id: string; title: string; type: 'page' | 'folder'; spaceId: string; parentId?: string; ancestors: { id: string; title: string }[] }> {
     const data = await getV1(`/rest/api/content/${encodeURIComponent(id)}?expand=ancestors,space,version`);
     if (String(data.id) !== id || !['page', 'folder'].includes(data.type) || !data.space?.id || !Array.isArray(data.ancestors)) throw new Error(`콘텐츠 위치를 확인할 수 없습니다: ${id}`);
-    return { id: String(data.id), title: data.title, type: data.type, spaceId: String(data.space.id), ancestors: data.ancestors.map((a: any) => ({ id: String(a.id), title: a.title })) };
+    const parentId = data.parentId ?? data.ancestors.at(-1)?.id;
+    return { id: String(data.id), title: data.title, type: data.type, spaceId: String(data.space.id), ...(parentId ? {parentId: String(parentId)} : {}), ancestors: data.ancestors.map((a: any) => ({ id: String(a.id), title: a.title })) };
   }
-  async function assertInScope(id: string): Promise<void> {
+  async function assertInScope(id: string) {
     if (!opts.scope) return;
     const info = await getContentInfo(id);
-    if (info.spaceId !== opts.scope.spaceId || (info.id !== opts.scope.id && !info.ancestors.some(a => a.id === opts.scope!.id))) throw new Error(`선택한 원격 스코프 밖입니다: #${id}`);
+    if (info.spaceId !== opts.scope.spaceId || (!opts.scope.spaceOnly && info.id !== opts.scope.id && !info.ancestors.some(a => a.id === opts.scope!.id))) throw new Error(`선택한 원격 스코프 밖입니다: #${id}`);
+    return info;
   }
 
   /** Read-only preflight. An unknown baseline must never authorize overwriting an existing page. */
@@ -158,6 +160,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
   function assertPageBaseline(entry: Mapping[string], current: any, spaceId: string, key: string, writes: boolean): void {
     if (!current) throw new Error(`원격 페이지 #${entry.pageId}가 없습니다: ${key}. 자동 재생성하지 않습니다.`);
     if (current.spaceId !== undefined && String(current.spaceId) !== spaceId) throw new Error(`페이지 스페이스가 다릅니다: ${key}`);
+    if (writes && entry.remoteParentId && typeof current.parentId === 'string' && current.parentId !== entry.remoteParentId) throw new Error(`원격 위치 충돌: ${key} (기준 부모 #${entry.remoteParentId}, 현재 #${current.parentId}) — pull로 원격 위치를 확인하세요.`);
     if (entry.remoteVersion === undefined) {
       if (writes) throw new Error(`원격 버전 기준이 없습니다: ${key}. 로컬 변경을 보관한 뒤 pull로 기준을 확보하세요.`);
       return;
@@ -210,6 +213,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
         }
         if (!changed) {
           delete existing.pendingMove;
+          if (typeof cur.parentId === 'string') existing.remoteParentId = cur.parentId;
           if (moved && cur.version?.number) existing.remoteVersion = cur.version.number;
           return moved ? 'moved' : 'skipped';
         }
@@ -225,7 +229,8 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
             version: { number: nextVersion, message: `sync from git: ${key}` },
           }),
         });
-        mapping[key] = { pageId: existing.pageId, title, hash, remoteVersion: nextVersion };
+        const remoteParentId = typeof cur.parentId === 'string' ? cur.parentId : existing.remoteParentId;
+        mapping[key] = { pageId: existing.pageId, title, hash, remoteVersion: nextVersion, ...(remoteParentId ? {remoteParentId} : {}) };
         return 'updated';
       }
     }
@@ -237,7 +242,7 @@ export function createClient(cfg: ConfluenceConfig, opts: ClientOpts) {
     };
     if (parentId) body.parentId = parentId;
     const created = await api(`/api/v2/pages`, { method: 'POST', body: JSON.stringify(body) });
-    mapping[key] = { pageId: created.id, title, hash, remoteVersion: created.version?.number ?? 1 };
+    mapping[key] = { pageId: created.id, title, hash, remoteVersion: created.version?.number ?? 1, ...(parentId ? {remoteParentId: parentId} : {}) };
     return 'created';
   }
 

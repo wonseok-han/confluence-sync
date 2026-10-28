@@ -1,3 +1,5 @@
+import {explicitPush} from './helpers/explicit-push.mjs';
+const runPush = args => corePush(explicitPush(args));
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync,readFileSync,readdirSync,writeFileSync,mkdirSync} from 'node:fs';
@@ -8,7 +10,7 @@ import {bindScope,scopeResponder} from './helpers/scope.mjs';
 import {preparePushTree} from '../dist/sync/prepare.js';
 import {buildTreeRenderer} from '../dist/sync/render.js';
 import {docHash} from '../dist/documents/markdown.js';
-import {runPush} from '../dist/sync/push.js';
+import {runPush as corePush} from '../dist/sync/push.js';
 import {mappingPass} from '../dist/sync/pull.js';
 import {mappingPath} from '../dist/sync/metadata.js';
 

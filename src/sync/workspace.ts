@@ -51,7 +51,9 @@ export function loadWorkspace(base: string): Workspace {
   if (value.connection && (typeof value.connection.baseUrl !== 'string' || typeof value.connection.spaceKey !== 'string')) throw new Error('잘못된 연결 설정입니다.');
   if (value.scope && (!['file', 'folder'].includes(value.scope.type) || typeof value.scope.path !== 'string' || scopePath(base, value.scope.path) !== value.scope.path)) throw new Error('로컬 스코프가 올바르지 않습니다. 기준 폴더 안의 파일·폴더를 지정하세요.');
   if (value.version === 2 && (!value.remoteRoot || typeof value.remoteRoot.id !== 'string' || !value.remoteRoot.id || !['page','folder'].includes(value.remoteRoot.type) || typeof value.remoteRoot.path !== 'string' || !value.remoteRoot.path.startsWith('/') ||
-      !value.connection?.baseUrl || !value.connection.spaceKey || !value.connection.spaceId || !value.connection.homepageId)) throw new Error('스페이스 연결이 올바르지 않습니다. csync init --scope로 다시 설정하세요.');
+      !value.connection?.baseUrl || !value.connection.spaceKey || !value.connection.spaceId || !value.connection.homepageId)) throw new Error('스페이스 연결이 올바르지 않습니다. csync init --connect로 다시 연결하세요.');
+  delete value.scope;
+  delete value.syncPaths;
   return value;
 }
 export function saveWorkspace(base: string, value: Workspace): void {
@@ -67,15 +69,12 @@ export function scopePath(base: string, path: string): string {
   if (existsSync(base) && !within(realpathSync(base), realpathSync(ancestor))) throw new Error(`관리 범위가 작업공간 밖입니다: ${path}`);
   return relative(base, abs).split('\\').join('/') || '.';
 }
-/** A local scope filters work; it never changes a document's remote parent. */
-export function inScope(rel: string, workspace: Workspace): boolean {
-  const scope = workspace.scope;
-  if (!scope) return false;
-  if (scope.path === '.') return true;
-  return rel === scope.path || (scope.type === 'folder' && rel.startsWith(scope.path + '/'));
+/** The workspace root is the whole managed space; individual Push selection is separate. */
+export function inScope(_rel: string, workspace: Workspace): boolean {
+  return workspace.version === 2 && !!workspace.remoteRoot && !!workspace.connection;
 }
 export function requireScope(workspace: Workspace): NonNullable<Workspace['remoteRoot']> {
-  if (workspace.version !== 2 || !workspace.scope || !workspace.remoteRoot) throw new Error('스코프가 설정되지 않았습니다. 로컬 스코프를 지정하세요. csync init --scope <기준 폴더 안의 파일·폴더>를 사용하세요. 전체는 --scope / 입니다. 이전 원격 연결 스코프는 작업 범위로 자동 전환하지 않습니다.');
+  if (workspace.version !== 2 || !workspace.remoteRoot || !workspace.connection) throw new Error('스페이스 연결이 없습니다. csync init --connect로 기준 폴더를 연결하거나 최초 Pull을 실행하세요.');
   return workspace.remoteRoot;
 }
 export function assertWorkspaceConnection(workspace: Workspace, env: Env): void {

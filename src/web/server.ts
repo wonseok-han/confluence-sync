@@ -33,7 +33,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
   const conflictMessage = () => {
     if (busy) return `${busy} 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.`;
     const job = sync.current();
-    const name = job?.state === 'running' ? { pull: '가져오기(Pull)', push: '업로드(Push)', preview: '업로드 미리보기', fetch: '원격 변경 확인' }[job.kind] : 'Confluence 요청 처리';
+    const name = job?.state === 'running' ? { restore: '문서 복구', pull: '가져오기(Pull)', push: '업로드(Push)', preview: '업로드 미리보기', fetch: '원격 변경 확인' }[job.kind] : 'Confluence 요청 처리';
     return `${name} 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.`;
   };
   const server = createServer(async (req, res) => {
@@ -101,7 +101,7 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath, 'ko'));
         json(200, { root, entries, skipped }); return;
       }
-      if (req.method !== 'POST' || !['/api/table-format/preview', '/api/table-format/save', '/api/document-preview', '/api/convert', '/api/open', '/api/pick-folder', '/api/sync/config', '/api/sync/env/import', '/api/sync/env/save', '/api/sync/scopes', '/api/sync/scope', '/api/sync/preview', '/api/sync/push', '/api/sync/pull', '/api/sync/fetch'].includes(url.pathname)) {
+      if (req.method !== 'POST' || !['/api/table-format/preview', '/api/table-format/save', '/api/document-preview', '/api/convert', '/api/open', '/api/pick-folder', '/api/sync/diff', '/api/sync/staging', '/api/sync/config', '/api/sync/env/import', '/api/sync/env/save', '/api/sync/connect', '/api/sync/preview', '/api/sync/push', '/api/sync/pull', '/api/sync/fetch', '/api/sync/restore'].includes(url.pathname)) {
         json(404, { error: '없는 요청입니다.' }); return;
       }
       if (!req.headers['content-type']?.startsWith('application/json')) { json(415, { error: 'JSON 요청이 필요합니다.' }); return; }
@@ -130,10 +130,10 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         }
         return;
       }
-      if (url.pathname === '/api/sync/scope') {
+      if (url.pathname === '/api/sync/connect') {
         if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }
-        busy = '로컬 스코프 저장';
-        try { json(200, await sync.setScope(body)); }
+        busy = '스페이스 연결 저장';
+        try { json(200, await sync.connect(body)); }
         finally { busy = null; }
         return;
       }
@@ -143,6 +143,18 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         try { json(200, url.pathname.endsWith('/import') ? await sync.importEnv(body) : await sync.saveEnv(body)); }
         finally { busy = null; }
         return;
+      }
+      if (url.pathname === '/api/sync/diff') {
+        if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }
+        json(200, await sync.diff(body)); return;
+      }
+      if (url.pathname === '/api/sync/restore') {
+        if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }
+        const result = await sync.restore(body); json('job' in result ? 202 : 200,result); return;
+      }
+      if (url.pathname === '/api/sync/staging') {
+        if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }
+        json(200, await sync.staging(body)); return;
       }
       if (url.pathname === '/api/sync/config') {
         if (typeof body.base !== 'string' || typeof body.envId !== 'string') throw new Error('설정 경로를 확인해 주세요.');

@@ -1,3 +1,5 @@
+import {explicitPush} from './helpers/explicit-push.mjs';
+const runPush = args => corePush(explicitPush(args));
 import {bindScope,scopeResponder} from './helpers/scope.mjs';
 import {mappingPath} from '../dist/sync/metadata.js';
 import test from 'node:test';
@@ -7,7 +9,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {runRemap} from '../dist/sync/remap.js';
-import {runPush} from '../dist/sync/push.js';
+import {runPush as corePush} from '../dist/sync/push.js';
 import {workspace,mockFetch,configure} from './helpers/fixtures.mjs';
 const fm = (id, title='A') => `---\npageId: ${id}\ntitle: ${title}\n---\n\nBody\n`;
 const load = root => JSON.parse(readFileSync(mappingPath(root),'utf8'));

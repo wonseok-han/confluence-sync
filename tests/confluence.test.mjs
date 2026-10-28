@@ -13,7 +13,7 @@ test('unchanged page skips without any network access',async t=>{
 test('new page sends storage and parent, then records the returned id',async t=>{
  mockFetch(t,[{path:page,method:'POST',body:{id:'new'},check:r=>{
   const b=JSON.parse(r.body);assert.equal(b.parentId,'parent');assert.equal(b.spaceId,'space');assert.deepEqual(b.body,{representation:'storage',value:'<p>A</p>'});assert.match(r.headers.Authorization,/^Basic /);
- }}]);const m={};assert.equal(await client().upsertPage(m,'space','a.md','A','<p>A</p>','hash','parent'),'created');assert.deepEqual(m['a.md'],{pageId:'new',title:'A',hash:'hash',remoteVersion:1});
+ }}]);const m={};assert.equal(await client().upsertPage(m,'space','a.md','A','<p>A</p>','hash','parent'),'created');assert.deepEqual(m['a.md'],{pageId:'new',title:'A',hash:'hash',remoteVersion:1,remoteParentId:'parent'});
 });
 
 test('changed page increments server version and preserves mapping until update succeeds',async t=>{
@@ -99,7 +99,7 @@ test('already moved page clears pending plan without mutation',async t=>{
 });
 test('move and content change uses fresh version after move',async t=>{
  mockFetch(t,[{path:page+'/1?body-format=storage',body:{body:{storage:{value:'body'}},spaceId:'space',parentId:'old',version:{number:1}}},{path:'/wiki/rest/api/content/1/move/append/dest',method:'PUT'},{path:page+'/1?body-format=storage',body:{body:{storage:{value:'body'}},spaceId:'space',parentId:'dest',version:{number:2}}},{path:page+'/1',method:'PUT',check:r=>assert.equal(JSON.parse(r.body).version.number,3)}]);
- const m=pending();assert.equal(await client().upsertPage(m,'space','a.md','A','body','new','dest'),'updated');assert.equal(m['a.md'].hash,'new');assert.equal(m['a.md'].pendingMove,undefined);
+ const m=pending();assert.equal(await client().upsertPage(m,'space','a.md','A','body','new','dest'),'updated');assert.equal(m['a.md'].hash,'new');assert.equal(m['a.md'].remoteParentId,'dest');assert.equal(m['a.md'].pendingMove,undefined);
 });
 for(const status of [403,404])test(`missing or inaccessible remapped page ${status} never creates a replacement`,async t=>{
  mockFetch(t,[{path:page+'/1?body-format=storage',status}]);const m=pending();await assert.rejects(client().upsertPage(m,'space','a.md','A','body','same','dest'));assert.ok(m['a.md'].pendingMove);
@@ -235,4 +235,10 @@ test('attachment uploads are blocked if the target page is outside the selected 
  const {root,put}=workspace(t);const abs=put('report.pdf','private bytes');t.mock.method(console,'error',()=>{});
  mockFetch(t,[{path:'/wiki/rest/api/content/1/child/attachment?filename=report.pdf',body:{results:[]}},{path:'/wiki/rest/api/content/1?expand=ancestors,space,version',body:{id:'1',type:'page',title:'Outside',space:{id:'space'},ancestors:[]}}]);
  assert.equal(await client({scope:{id:'200',spaceId:'space'}}).uploadAttachments('1',[{filename:'report.pdf',abs}],root),0);
+});
+
+test('a concurrent parent move blocks writing even when the remote version is unchanged',async t=>{
+ const m={'a.md':{pageId:'1',hash:'old',remoteVersion:1,remoteParentId:'baseline'}};
+ mockFetch(t,[{path:page+'/1',body:{id:'1',spaceId:'space',parentId:'other',version:{number:1}}}]);
+ await assert.rejects(client().upsertPage(m,'space','a.md','A','body','changed','baseline'),/원격 위치 충돌/);assert.equal(m['a.md'].remoteParentId,'baseline');assert.equal(m['a.md'].hash,'old');
 });

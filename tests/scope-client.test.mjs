@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { initSync } from '../src/web/client/sync.js';
 
-function setup(t, api) {
- const ids=['sync-pull-options','sync-pull-full','sync-results','sync-fetch','sync-job-summary','sync-log','sync-job-state','sync-log-empty','sync-direction-push','sync-direction-pull','sync-push-options','sync-pull','sync-pull-note','sync-direction-label','sync-direction-note','sync-status','sync-env-base-mode','sync-env-import-mode','sync-env-import-controls','sync-env-file','sync-env-file-name','sync-env-source-note','sync-env-choose','sync-env-save','sync-env-confirm','sync-env-confirm-save','sync-env-confirm-cancel','sync-verify','sync-references','sync-config','sync-config-status','sync-scope-save','sync-scope-saved','sync-scope-candidate','sync-load','sync-add-reference','sync-preview','sync-push','sync-target','sync-reconnect'];
- const node=()=>({scrollIntoView(){this.scrolled=true},disabled:false,hidden:false,open:false,showModal(){this.open=true},close(){this.open=false},value:'',checked:false,textContent:'',children:[],attributes:{},setAttribute(key,value){this.attributes[key]=value},classList:{toggle(){}},addEventListener(){},append(...items){this.children.push(...items)},replaceChildren(...items){this.children=items;this.value=items[0]?.value??''}});
+function setup(t, api, activity) {
+ const ids=['sync-view','sync-restore-dialog','sync-restore-title','sync-restore-path','sync-restore-warning','sync-restore-confirm','sync-restore-cancel','sync-stage-heading','sync-pull-remote','sync-diff-close','sync-diff-dialog','sync-diff-remote','sync-diff-path','sync-diff-note','sync-diff-editor','sync-diff-labels','sync-env-toggle','sync-env-body','sync-env-chevron','sync-env-toggle-label','sync-stage-list','sync-stage-count','sync-stage-scan','sync-stage-add','sync-stage-remove','sync-stage-note','sync-results','sync-fetch','sync-job-summary','sync-log','sync-job-state','sync-log-empty','sync-push-options','sync-status','sync-env-base-mode','sync-env-import-mode','sync-env-import-controls','sync-env-file','sync-env-file-name','sync-env-source-note','sync-env-choose','sync-env-save','sync-env-confirm','sync-env-confirm-save','sync-env-confirm-cancel','sync-verify','sync-references','sync-config','sync-config-status','sync-scope-save','sync-scope-saved','sync-scope-candidate','sync-load','sync-connect','sync-add-reference','sync-preview','sync-push','sync-target','sync-reconnect'];
+ const node=()=>({querySelectorAll(){return []},scrollIntoView(){this.scrolled=true},disabled:false,hidden:false,open:false,showModal(){this.open=true},close(){this.open=false},value:'',checked:false,textContent:'',children:[],attributes:{},getAttribute(key){return this.attributes[key]},setAttribute(key,value){this.attributes[key]=value},classList:{toggle(){}},addEventListener(){},append(...items){this.children.push(...items)},replaceChildren(...items){this.children=items;this.value=items[0]?.value??''}});
  const nodes=new Map(ids.map(id=>[id,node()]));nodes.get('sync-env-base-mode').checked=true;
  const oldDocument=globalThis.document,oldOption=globalThis.Option;
  globalThis.document={getElementById:id=>nodes.get(id),createElement:node,createDocumentFragment:node};globalThis.Option=function(text,value){this.textContent=text;this.value=value;};
@@ -12,51 +12,30 @@ function setup(t, api) {
  const context={base:'/docs',file:'/docs/doc.md',folder:'/docs'};
  const notifications=[];
  let controller;const busy=value=>controller.update(value);
- controller=initSync({api,notify:(text,kind)=>notifications.push({text,kind}),context:()=>context,setBusy:busy,showSync:async()=>{}});controller.update(false);
+ controller=initSync({api,activity,notify:(text,kind)=>notifications.push({text,kind}),context:()=>context,setBusy:busy,showSync:async()=>{}});controller.update(false);
  return {nodes,context,controller,notifications};
 }
-const config={source:'.env',baseUrl:'https://example.invalid/wiki',email:'demo',spaceKey:'TEST',hasToken:true,missing:[],scope:{path:'doc.md',type:'file'}};
+const config={source:'.env',baseUrl:'https://example.invalid/wiki',email:'demo',spaceKey:'TEST',hasToken:true,missing:[],connected:true};
 
-test('explorer selection becomes a scope only after explicit save; file, folder and root are supported',async t=>{
- const calls=[];const {nodes,context,controller}=setup(t,async(path,body)=>{calls.push({path,body});return {...config,scope:{path:body.scopePath,type:context.directory?'folder':'file'}};});
- context.file='';controller.update(false);assert.equal(nodes.get('sync-scope-save').disabled,true);
- context.file='/docs/doc.md';controller.update(false);assert.equal(calls.length,0);assert.match(nodes.get('sync-scope-candidate').textContent,/doc.md.*파일 하나/);
- await nodes.get('sync-scope-save').onclick();assert.deepEqual(calls.at(-1).body,{base:'/docs',envId:'',scopePath:'doc.md'});
- assert.match(nodes.get('sync-scope-saved').textContent,/doc.md/);
- context.file='/docs/nested';context.directory=true;controller.update(false);
- assert.equal(calls.length,1);assert.match(nodes.get('sync-scope-candidate').textContent,/nested.*폴더와 하위 문서/);assert.match(nodes.get('sync-scope-saved').textContent,/doc.md/);
- await nodes.get('sync-scope-save').onclick();assert.equal(calls.at(-1).body.scopePath,'nested');
- context.file='/docs';controller.update(false);await nodes.get('sync-scope-save').onclick();assert.equal(calls.at(-1).body.scopePath,'/');
- context.base='/other';controller.update(false);assert.equal(nodes.get('sync-scope-save').disabled,true);assert.doesNotMatch(nodes.get('sync-scope-saved').textContent,/nested/);
+test('workspace connection is explicit and independent of explorer selection',async t=>{
+ const calls=[];const {nodes,context,controller}=setup(t,async(path,body)=>{calls.push({path,body});return path.endsWith('/config')?{...config,connected:false}:config;});
+ await nodes.get('sync-load').onclick();assert.equal(nodes.get('sync-connect').disabled,false);assert.equal(nodes.get('sync-fetch').disabled,true);
+ context.file='/docs/nested/doc.md';controller.update(false);assert.equal(calls.length,1);
+ await nodes.get('sync-connect').onclick();assert.deepEqual(calls.at(-1),{path:'/api/sync/connect',body:{base:'/docs',envId:''}});assert.equal(nodes.get('sync-connect').disabled,true);assert.equal(nodes.get('sync-fetch').disabled,false);
 });
 
-test('explorer scopes normalize Windows paths without accepting sibling folders',async t=>{
- const calls=[];const {nodes,context,controller}=setup(t,async(path,body)=>{calls.push(body);return config;});
- context.base='C:\\docs';context.file='C:\\docs\\nested\\doc.md';controller.update(false);
- await nodes.get('sync-scope-save').onclick();assert.equal(calls.at(-1).scopePath,'nested/doc.md');
- context.file='C:\\docs_backup\\doc.md';controller.update(false);assert.equal(nodes.get('sync-scope-save').disabled,true);
+test('late connection responses cannot configure a different base',async t=>{
+ let finish;const {nodes,context,controller}=setup(t,(path)=>path.endsWith('/config')?Promise.resolve({...config,connected:false}):new Promise(resolve=>{finish=resolve}));
+ await nodes.get('sync-load').onclick();const pending=nodes.get('sync-connect').onclick();context.base='/other';controller.update(true);finish(config);await pending;
+ assert.equal(nodes.get('sync-fetch').disabled,true);assert.equal(nodes.get('sync-preview').disabled,true);
 });
 
-test('late scope save responses cannot configure a different base',async t=>{
- let finish;const {nodes,context,controller}=setup(t,()=>new Promise(resolve=>{finish=resolve}));
- const pending=nodes.get('sync-scope-save').onclick();context.base='/other';context.file='';controller.update(true);finish(config);await pending;
- assert.equal(nodes.get('sync-preview').disabled,true);assert.doesNotMatch(nodes.get('sync-scope-saved').textContent,/doc.md/);
-});
-
-test('scope save errors preserve the saved range and allow retry',async t=>{
- let fail=false;const {nodes,context,controller,notifications}=setup(t,async()=>{if(fail)throw Error('denied');return config;});
- await nodes.get('sync-load').onclick();fail=true;context.file='/docs/nested';context.directory=true;controller.update(false);
- await nodes.get('sync-scope-save').onclick();assert.match(notifications.at(-1).text,/denied/);assert.match(nodes.get('sync-scope-saved').textContent,/doc.md/);assert.equal(nodes.get('sync-scope-save').disabled,false);
-});
-
-test('web direction controls separate upload and pull and allow pull without selecting a local document',async t=>{
+test('upload and initial full import are available together without direction switching',async t=>{
  const {nodes,context,controller}=setup(t,async()=>config);
  context.file='';await nodes.get('sync-load').onclick();controller.update(false);
- assert.equal(nodes.get('sync-preview').disabled,false);assert.equal(nodes.get('sync-pull').hidden,true);
- nodes.get('sync-direction-pull').onclick();assert.equal(nodes.get('sync-preview').hidden,true);assert.equal(nodes.get('sync-push').hidden,true);assert.equal(nodes.get('sync-pull').hidden,false);assert.equal(nodes.get('sync-pull').disabled,false);assert.equal(nodes.get('sync-push-options').hidden,true);assert.match(nodes.get('sync-direction-label').textContent,/Confluence → 로컬/);
- nodes.get('sync-direction-push').onclick();assert.equal(nodes.get('sync-preview').hidden,false);assert.equal(nodes.get('sync-pull').hidden,true);assert.equal(nodes.get('sync-push-options').hidden,false);
+ assert.equal(nodes.get('sync-preview').disabled,true);assert.equal(nodes.get('sync-fetch').disabled,false);
+ assert.equal(nodes.get('sync-push').disabled,true);
 });
-
 
 test('web upload always sends the base workspace, independent of explorer file and folder',async t=>{
  const calls=[];const {nodes,context,controller}=setup(t,async(path,body)=>{calls.push({path,body});if(path.endsWith('/preview'))throw Error('stop before execution');if(path.endsWith('/job'))return {job:null};return config;});
@@ -87,7 +66,7 @@ function previewApi({state='succeeded',missing=[],rejectPush=false}={}) {
   if(path.endsWith('/preview'))return {job:job={id:'preview-job',kind:'preview',state,log:'',planId:state==='succeeded'?'approved':null,config:{...config,missing},selection:{base:'/docs'}}};
   if(path.endsWith('/job'))return {job};
   if(path.endsWith('/push')){pushes++;if(rejectPush)throw Error('consumed');return {job:job={...job,id:'push-job',kind:'push',planId:null,state:'succeeded'}};}
-  if(path.endsWith('/scope'))return {...config,scope:{path:body.scopePath,type:'file'}};
+  if(path.endsWith('/connect'))return config;
   throw Error(path);
  }};
 }
@@ -107,9 +86,9 @@ for(const options of [{state:'failed'},{missing:['TOKEN']}])test(`failed or inco
  assert.equal(nodes.get('sync-push').disabled,true);await nodes.get('sync-push').onclick();assert.equal(mock.pushes,0);
 });
 
-test('options, scope save, configuration reload and direction changes each require another preview',async t=>{
+test('option and connection changes each require another preview',async t=>{
  const mock=previewApi(),{nodes,controller}=setup(t,mock.api);await nodes.get('sync-load').onclick();
- for(const change of [async()=>{nodes.get('sync-verify').checked=!nodes.get('sync-verify').checked;controller.update(false)},async()=>{await nodes.get('sync-scope-save').onclick()},async()=>{await nodes.get('sync-load').onclick()},async()=>{nodes.get('sync-direction-pull').onclick();nodes.get('sync-direction-push').onclick()}]){
+ for(const change of [async()=>{nodes.get('sync-verify').checked=!nodes.get('sync-verify').checked;controller.update(false)},async()=>{await nodes.get('sync-load').onclick()}]){
   await nodes.get('sync-preview').onclick();assert.equal(nodes.get('sync-push').disabled,false);
   await change();assert.equal(nodes.get('sync-push').disabled,true);
   await controller.resume();controller.update(false);assert.equal(nodes.get('sync-push').disabled,true);
@@ -127,22 +106,44 @@ test('resuming a previous preview does not enable upload before a new preview',a
  assert.equal(s.nodes.get('sync-push').disabled,true);
 });
 
-test('Fetch is explicit, available in both directions, and cannot enable upload',async t=>{
+test('Fetch is explicit beside changes and cannot enable upload',async t=>{
  const calls=[];let job;const s=setup(t,async(path,body)=>{
-  calls.push({path,body});if(path.endsWith('/config'))return config;
+  calls.push({path,body});if(path.endsWith('/staging'))return {rows:[]};if(path.endsWith('/config'))return config;
   if(path.endsWith('/fetch'))return {job:job={id:'fetch-one',kind:'fetch',state:'succeeded',log:'원격 변경 1',config,selection:{base:'/docs'},planId:null}};
   if(path.endsWith('/job'))return {job};throw Error(path);
  });
  assert.equal(s.nodes.get('sync-fetch').disabled,true);await s.nodes.get('sync-load').onclick();assert.equal(s.nodes.get('sync-fetch').disabled,false);
  assert.equal(calls.some(call=>call.path.endsWith('/fetch')),false);
- s.nodes.get('sync-direction-pull').onclick();await s.nodes.get('sync-fetch').onclick();
+ await s.nodes.get('sync-fetch').onclick();
  assert.deepEqual(calls.find(call=>call.path.endsWith('/fetch')).body,{base:'/docs',envId:''});
- assert.equal(s.nodes.get('sync-results').scrolled,true);assert.match(s.nodes.get('sync-job-summary').textContent,/원격 변경 확인/);assert.match(s.notifications.at(-1).text,/동기화 기준은 유지/);assert.equal(s.nodes.get('sync-push').disabled,true);
+ assert.equal(s.nodes.get('sync-stage-heading').scrolled,true);assert.match(s.nodes.get('sync-job-summary').textContent,/원격 변경 확인/);assert.match(s.notifications.at(-1).text,/동기화 기준은 유지/);assert.equal(s.nodes.get('sync-push').disabled,true);
 });
 
-test('Pull exposes an explicit full scan option and submits it without changing Fetch behavior',async t=>{
- const calls=[];let job;const {nodes}=setup(t,async(path,body)=>{calls.push({path,body});if(path.endsWith('/config'))return config;if(path.endsWith('/pull'))return {job:job={id:String(calls.length),kind:'pull',state:'succeeded',config,selection:{base:'/docs'},log:''}};return {job}});
- await nodes.get('sync-load').onclick();assert.equal(nodes.get('sync-pull-options').hidden,true);nodes.get('sync-direction-pull').onclick();assert.equal(nodes.get('sync-pull-options').hidden,false);
- await nodes.get('sync-pull').onclick();assert.equal(calls.findLast(call=>call.path.endsWith('/pull')).body.full,false);
- nodes.get('sync-pull-full').checked=true;await nodes.get('sync-pull').onclick();assert.equal(calls.findLast(call=>call.path.endsWith('/pull')).body.full,true);
+test('workspace has no separate initial or whole-space import control',async()=>{
+ const {syncPanel}=await import('../dist/web/views/sync-panel.js');assert.doesNotMatch(syncPanel,/id="sync-pull"|최초 다운로드|스페이스 전체 가져오기|sync-direction/);assert.match(syncPanel,/id="sync-pull-remote"/);
+});
+
+function activitySpy(){const tasks=[];return {tasks,begin(options){const task={options,updates:[],ended:false,update(value){this.updates.push(value)},end(){this.ended=true}};tasks.push(task);return task}};}
+
+test('job loading survives POST and running polls, and ends only after result refresh',async t=>{
+ const timers=[];t.mock.method(globalThis,'setTimeout',fn=>{timers.push(fn);return fn});t.mock.method(globalThis,'clearTimeout',()=>{});
+ const activity=activitySpy();let state='running';const calls=[];
+ const job=()=>({id:'loading-job',kind:'fetch',state,startedAt:'2026-10-27T00:00:00Z',config,selection:{base:'/docs'},log:'페이지 메타데이터 확인'});
+ const s=setup(t,async(path,body,_signal,options)=>{calls.push({path,options});if(path.endsWith('/config'))return config;if(path.endsWith('/staging')){assert.equal(activity.tasks[0].ended,false);return {rows:[]};}return {job:job()};},activity);
+ await s.nodes.get('sync-load').onclick();await s.nodes.get('sync-fetch').onclick();assert.equal(activity.tasks.length,1);assert.equal(activity.tasks[0].ended,false);assert.equal(s.nodes.get('sync-fetch').disabled,true);assert.equal(activity.tasks[0].updates.at(-1).startedAt,'2026-10-27T00:00:00Z');
+ state='succeeded';await timers.shift()();assert.equal(activity.tasks[0].ended,true);assert.equal(s.nodes.get('sync-fetch').disabled,false);assert.equal(calls.find(c=>c.path.endsWith('/staging')).options.background,true);
+});
+
+test('polling failure retains uncertain loading and retry completes the same operation',async t=>{
+ const activity=activitySpy();let fail=true;const job={id:'retry-job',kind:'fetch',state:'running',config,selection:{base:'/docs'},log:''};
+ const s=setup(t,async(path)=>{if(path.endsWith('/config'))return config;if(path.endsWith('/job')){if(fail)throw Error('offline');return {job:{...job,state:'succeeded'}};}if(path.endsWith('/staging'))return {rows:[]};return {job};},activity);
+ await s.nodes.get('sync-load').onclick();await s.nodes.get('sync-fetch').onclick();assert.equal(activity.tasks[0].ended,false);assert.equal(activity.tasks[0].updates.at(-1).uncertain,true);assert.equal(s.nodes.get('sync-reconnect').hidden,false);assert.equal(s.nodes.get('sync-fetch').disabled,true);
+ fail=false;await s.nodes.get('sync-reconnect').onclick();assert.equal(activity.tasks[0].ended,true);assert.equal(s.nodes.get('sync-fetch').disabled,false);
+});
+
+test('single Pull button submits the same request for all workspace states',async t=>{
+ const timers=[];t.mock.method(globalThis,'setTimeout',fn=>{timers.push(fn);return fn});t.mock.method(globalThis,'clearTimeout',()=>{});const calls=[];let job;
+ const s=setup(t,async(path,body)=>{calls.push({path,body});if(path.endsWith('/config'))return config;if(path.endsWith('/staging'))return {rows:[{path:'incoming.md',pageId:'123',status:'same',staged:false,stale:false,remoteState:'changed'}]};if(path.endsWith('/pull'))return {job:job={id:'incoming-job',kind:'pull',state:'succeeded',config,selection:{base:'/docs'},log:''}};return {job}});
+ await s.nodes.get('sync-load').onclick();assert.equal(s.nodes.get('sync-pull-remote').disabled,true);const stop=s.controller.watch();await timers.shift()();assert.equal(s.nodes.get('sync-pull-remote').disabled,false);assert.match(s.nodes.get('sync-pull-remote').textContent,/1개/);
+ await s.nodes.get('sync-pull-remote').onclick();assert.deepEqual(calls.findLast(call=>call.path.endsWith('/pull')).body,{base:'/docs',envId:'',remoteOnly:true});stop();
 });

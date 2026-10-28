@@ -1,8 +1,8 @@
 export const syncPanel = `
 <div id="sync-view" class="workspace-content" role="tabpanel" aria-labelledby="tab-sync" hidden>
   <section class="panel env-settings" aria-labelledby="sync-env-heading">
-        <div class="panel-heading"><h2 id="sync-env-heading">.env 연결 설정 <span class="subtle-label">먼저 설정</span></h2><button id="sync-load" type="button">설정 확인</button></div>
-    <div class="env-settings-body">
+        <div class="panel-heading"><h2 id="sync-env-heading"><button id="sync-env-toggle" class="preview-disclosure" type="button" aria-expanded="false" aria-controls="sync-env-body"><span id="sync-env-chevron" aria-hidden="true">▸</span>.env 연결 설정<span id="sync-env-toggle-label" class="preview-disclosure-label">펼치기</span></button></h2><div class="actions"><button id="sync-load" type="button">설정 확인</button><button id="sync-connect" type="button" disabled>스페이스 연결</button></div></div>
+    <div id="sync-env-body" class="env-settings-body" hidden>
         <p class="hint">API 토큰이 없나요? <button id="open-token-guide" class="quiet" type="button" aria-haspopup="dialog" aria-controls="help-dialog">API 토큰 발급 가이드</button></p>
         <fieldset class="env-source-options"><legend class="sr-only">환경변수 설정 방식</legend>
           <label><input type="radio" name="sync-env-source" id="sync-env-base-mode" checked><span><strong>기준 폴더의 .env 사용</strong><small>01에서 선택한 폴더의 설정을 읽습니다.</small></span></label>
@@ -20,17 +20,32 @@ export const syncPanel = `
         </div>
     </div>
   </section>
-  <section class="panel" aria-label="Confluence 작업 설정">
-    <div class="panel-heading"><h2><span class="section-number">02</span>Confluence</h2><span class="count" id="sync-direction-label">로컬 → Confluence</span></div>
-    <div class="settings-body sync-settings">
-      <div class="sync-direction" role="group" aria-label="Confluence 작업 방향"><button id="sync-direction-push" type="button" aria-pressed="true">↑ 업로드 (Push)</button><button id="sync-direction-pull" type="button" aria-pressed="false">↓ 가져오기 (Pull)</button></div>
-      <p id="sync-direction-note" class="sync-intro">01의 기준 폴더는 스페이스 루트에 대응합니다. 실제 Push·Pull 대상은 저장된 작업 스코프입니다.</p>
-      <div id="sync-push-options" class="sync-push-options">
-        <section class="sync-option-section" aria-labelledby="sync-range-heading">
-          <h3 id="sync-range-heading">업로드할 범위</h3>
-          <p class="hint">01에 저장한 스코프와 제외 규칙을 적용합니다. 범위를 바꾸려면 01에서 다시 저장하세요.</p>
-          <p id="sync-target" class="sync-target">01에서 기준 폴더를 선택하세요.</p>
-        </section>
+  <section class="panel sync-workbench" aria-label="Confluence 작업 설정">
+    <div class="panel-heading"><h2><span class="section-number">02</span>Confluence</h2><span id="sync-stage-count" class="count">0개 업로드 예정</span></div>
+    <div class="sync-workbench-body">
+      <p id="sync-target" class="sync-target">01에서 스페이스 전체를 보관할 기준 폴더를 선택하세요.</p>
+      <div class="sync-workbench-toolbar">
+        <div class="actions" aria-label="원격 변경 확인 및 가져오기">
+          <button id="sync-fetch" type="button" title="스페이스의 새 문서와 버전·위치 변경을 확인합니다. 2분 이내 결과는 재사용합니다." disabled>원격 변경 확인 (Fetch)</button>
+          <button id="sync-pull-remote" type="button" disabled>↓ 원격 변경 가져오기 (Pull)</button>
+          <button hidden id="sync-stage-scan" type="button">↻ 로컬 다시 확인</button>
+        </div>
+        <div class="actions" aria-label="업로드 대상 일괄 선택">
+          <button id="sync-stage-add" type="button" disabled><span aria-hidden="true">＋</span> 변경 문서 모두 포함</button>
+          <button id="sync-stage-remove" type="button" disabled><span aria-hidden="true">−</span> 모두 제외</button>
+        </div>
+      </div>
+      <div class="sync-observation"><span id="sync-stage-checking" class="stage-checking" aria-hidden="true"><i class="activity-spinner" aria-hidden="true"></i>로컬 확인 중…</span><span>로컬 자동 확인 · 5초 간격 · API 호출 없음</span><span id="sync-stage-remote-note">원격 상태 미확인 · Fetch로 갱신하세요.</span></div>
+      <div class="sync-change-heading"><h3 id="sync-stage-heading">변경사항</h3><span>받을 문서는 Pull · 보낼 변경은 체크 후 Push</span></div>
+      <p id="sync-stage-note" class="hint" role="status">로컬 변경을 자동으로 확인합니다. 원격 상태는 Fetch를 눌러 확인하세요.</p>
+      <div id="sync-stage-list" class="sync-stage-list" aria-label="업로드 문서 선택"></div>
+    </div>
+    <div class="sync-execution">
+      <div class="sync-execution-heading"><h3>선택 문서 업로드</h3><span class="count">로컬 → Confluence</span></div>
+      <p class="sync-intro">체크한 문서를 미리보기한 뒤 업로드하세요.</p>
+      <details class="sync-advanced"><summary>추가 설정 <span>참조 문서 · 원격 검증</span></summary>
+        <div class="sync-settings">
+          <div id="sync-push-options" class="sync-push-options">
         <section class="sync-option-section" aria-labelledby="sync-reference-heading">
           <h3 id="sync-reference-heading">참조 문서 연결 <span class="subtle-label">선택 사항</span></h3>
           <p id="sync-references-help" class="hint">다른 동기화 폴더의 게시 매핑을 이용해 문서 링크를 연결합니다. 같은 Confluence 서버의 폴더를 지정하세요. 참조 문서는 업로드하지 않습니다.</p>
@@ -43,19 +58,28 @@ export const syncPanel = `
           <p id="sync-verify-help" class="hint">선택하면 미리보기 중 Confluence를 조회하므로 시간이 더 걸릴 수 있습니다. 파일과 원격 내용은 변경하지 않습니다.</p>
         </section>
       </div>
-      <div id="sync-pull-options" class="sync-push-options" hidden>
-        <p id="sync-pull-note" class="sync-target" hidden>Fetch 결과가 있으면 변경된 기존 문서만 가져옵니다. 최초 Pull은 전체를 탐색합니다.</p>
-        <section class="sync-option-section" aria-labelledby="sync-pull-full-heading">
-          <h3 id="sync-pull-full-heading">가져오기 범위</h3>
-          <label class="repair-option sync-verify-option"><input id="sync-pull-full" type="checkbox" aria-describedby="sync-pull-full-help">스코프 전체 다시 탐색 · 새 페이지와 첨부 변경 포함</label>
-          <p id="sync-pull-full-help" class="hint">Fetch 결과가 있으면 2분 이내 조회 시점에 변경된 기존 문서만 받습니다. 만료된 결과는 다시 조회하며, Fetch 결과가 없으면 전체를 탐색합니다. 전체 탐색은 새 문서를 찾고 첨부도 다시 확인하므로 API 호출이 늘어납니다. 로컬 변경·이동 대기는 덮어쓰지 않습니다.</p>
-        </section>
-      </div>
+        </div>
+      </details>
     </div>
-    <div class="action-bar"><span class="save-note">작업 방향과 로컬 작업 스코프를 확인하세요.</span><div class="actions"><button id="sync-fetch" type="button" title="원격 메타데이터만 확인합니다. 본문·첨부는 받지 않으며 2분 이내에는 캐시를 재사용합니다." disabled>원격 변경 확인 (Fetch)</button><button id="sync-preview" disabled>업로드 미리보기</button><button id="sync-push" class="primary" disabled>Confluence에 업로드</button><button id="sync-pull" class="primary" disabled hidden>Confluence에서 가져오기</button></div></div>
-    <div class="feedback"><p id="sync-status" class="status" role="status" aria-live="polite">작업 방향을 선택하고 연결 설정과 스코프를 확인하세요.</p><button id="sync-reconnect" hidden>진행 상태 다시 확인</button></div>
+    <div class="action-bar"><span class="save-note">받을 변경과 체크한 업로드 문서를 확인하세요.</span><div class="actions"><button id="sync-preview" disabled>업로드 미리보기</button><button id="sync-push" class="primary" disabled>Confluence에 업로드</button></div></div>
+    <div class="feedback"><p id="sync-status" class="status" role="status" aria-live="polite">변경사항을 확인하고 받을 문서와 보낼 문서를 선택하세요.</p><button id="sync-reconnect" hidden>진행 상태 다시 확인</button></div>
   </section>
 
+  <dialog id="sync-diff-dialog" class="sync-diff-dialog" aria-labelledby="sync-diff-title">
+    <div class="panel-heading"><h2 id="sync-diff-title">문서 변경 비교</h2><button id="sync-diff-close" type="button">닫기</button></div>
+    <div class="settings-body"><p id="sync-diff-path" class="sync-diff-path"></p><p id="sync-diff-note" class="hint" role="status"></p>
+      <div class="actions"><button id="sync-diff-remote" type="button" hidden>원격과 비교 · 본문 1회 조회</button></div>
+      <div id="sync-diff-labels" class="sync-diff-labels" hidden><span id="sync-diff-before-label">기준 Markdown</span><span>현재 로컬 Markdown</span></div>
+      <div id="sync-diff-editor" class="sync-diff-editor" hidden></div>
+    </div>
+  </dialog>
+  <dialog id="sync-restore-dialog" class="env-confirm-dialog restore-dialog" aria-labelledby="sync-restore-title" aria-describedby="sync-restore-warning">
+    <h3 id="sync-restore-title">문서를 원격 최신으로 복구할까요?</h3>
+    <p id="sync-restore-path" class="sync-diff-path"></p>
+    <p id="sync-restore-warning" class="restore-warning"></p>
+    <p class="hint">원격 문서는 변경하지 않습니다. 복구 후 업로드 선택에서 제외합니다. 다운로드 도중 추가 수정이 생기면 중단합니다.</p>
+    <div class="actions"><button id="sync-restore-cancel" type="button">취소</button><button id="sync-restore-confirm" type="button" class="restore-confirm">원격에서 복구</button></div>
+  </dialog>
   <dialog id="sync-env-confirm" class="env-confirm-dialog" aria-labelledby="sync-env-confirm-title">
     <h3 id="sync-env-confirm-title">기존 .env의 연결 설정을 바꿀까요?</h3>
     <p id="sync-env-confirm-path" class="hint"></p>

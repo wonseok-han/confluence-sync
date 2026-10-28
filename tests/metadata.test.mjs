@@ -1,3 +1,4 @@
+import {changeStaging} from '../dist/sync/staging.js';
 import {bindScope,scopeFixture} from './helpers/scope.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,7 +37,7 @@ test('fresh metadata lives only in .csync and is never collected as Markdown or 
  const { root, put } = workspace(t, { '.env': env, 'doc.md': '# Doc' });
  saveMapping(mappingPath(root), mapping); saveWorkspace(root, config); put('.csync/ignore', 'drafts/\n'); put('.csync/private.md', '# State');
  assert.deepEqual(loadMapping(join(root, '.csync/mapping.json')), mapping);
- assert.deepEqual(loadWorkspace(root), config); assert.equal(ignorePath(root), join(root, '.csync/ignore'));
+ assert.deepEqual(loadWorkspace(root), {version:1}); assert.equal(ignorePath(root), join(root, '.csync/ignore'));
  assert.deepEqual(collectMarkdown(root), [join(root, 'doc.md')]);
  assert.equal(readFileSync(join(root, '.env'), 'utf8'), env);
  for (const name of Object.keys(legacy)) assert.equal(existsSync(join(root, name)), false);
@@ -58,7 +59,7 @@ test('legacy files remain authoritative until explicit migration; dry-run writes
  assert.deepEqual(loadMapping(mappingPath(root)), mapping); assert.equal(buildIgnorer(root, []).ignores('drafts/a.md'), true);
  assert.equal(migrateMetadata(root), 3);
  for (const name of Object.keys(legacy)) assert.equal(existsSync(join(root, name)), false);
- assert.deepEqual(loadMapping(mappingPath(root)), mapping); assert.deepEqual(loadWorkspace(root), config);
+ assert.deepEqual(loadMapping(mappingPath(root)), mapping); assert.deepEqual(loadWorkspace(root), {version:1});
  assert.equal(readFileSync(ignorePath(root), 'utf8'), 'drafts/\n'); assert.equal(readFileSync(join(root, '.env'), 'utf8'), env);
  assert.equal(readFileSync(join(root, 'patents/doc.md'), 'utf8'), '# Document'); assert.equal(migrateMetadata(root), 0);
 });
@@ -108,15 +109,15 @@ test('reference links use mappings in .csync without modifying the reference wor
  assert.equal(existsSync(join(refs, '.confluence-sync.json')), false);
 });
 
-test('pull from an env-only directory refuses to infer a scope and writes no state', async t => {
- configure(t);const {root}=workspace(t,{'.env':env});mockFetch(t,[]);
- await assert.rejects(runPull(['pull','--space','--out',root]),/스코프가 설정되지/);
+test('failed initial space lookup preserves env and does not create metadata', async t => {
+ configure(t);const {root}=workspace(t,{'.env':env});mockFetch(t,[{path:'/wiki/api/v2/spaces?keys=TEST',status:403}]);
+ await assert.rejects(runPull(['pull','--space','--out',root]),/403/);
  assert.equal(existsSync(join(root,'.csync')),false);assert.equal(readFileSync(join(root,'.env'),'utf8'),env);
 });
 
 for (const path of ['.csync/mapping.json', '.csync/workspace.json', '.csync/ignore']) test(`web preview includes new metadata content in its fingerprint: ${path}`, async t => {
  const { root, put } = workspace(t, { '.env': env, 'doc.md': '# Doc', '.csync/mapping.json': '{}', '.csync/workspace.json': '{"version":1,"syncPaths":["."]}', '.csync/ignore': 'a.md\n' });
- bindScope(root);const sync = createWebSync(async () => 0); await sync.preview(request(root)); const preview = await finished(sync); assert.equal(preview.state, 'succeeded');
+ bindScope(root);await changeStaging(root,['.'],'add');const sync = createWebSync(async () => 0); await sync.preview(request(root)); const preview = await finished(sync); assert.equal(preview.state, 'succeeded');
  const file = join(root, path), before = statSync(file);
  const content = path.endsWith('mapping.json') ? '{"doc.md":{"pageId":"123"}}' : path.endsWith('workspace.json') ? JSON.stringify({...scopeFixture(),scope:{type:'file',path:'doc.md'}}) : 'b.md\n';
  put(path, content); utimesSync(file, before.atime, before.mtime);

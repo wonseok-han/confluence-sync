@@ -1,7 +1,11 @@
+import { validateRestorePaths } from '../sync/pull.js';
+import { observeChanges } from '../sync/changes.js';
+import { documentDiff } from '../sync/diff.js';
+import { inspectStaging, changeStaging, stagedPaths, loadIndex } from '../sync/staging.js';
 import { connectionKeys, importConnection, mergeConnection } from '../confluence/env-file.js';
 import { loadWorkspace, inScope, inNestedWorkspace, requireScope, type Workspace } from '../sync/workspace.js';
 import { mappingPath as defaultMappingPath, METADATA_DIR } from '../sync/metadata.js';
-import { configureScope } from '../sync/scope.js';
+import { connectWorkspace } from '../sync/scope.js';
 import type { Env } from '../confluence/config.js';
 import { referenceRoots } from '../sync/references.js';
 /** Web adapter for the existing push CLI. Only preview and incremental push are exposed. */
@@ -19,10 +23,10 @@ const keys = connectionKeys;
 type Imported = { env: Settings; content: string; source: string };
 type Imports = Map<string, Imported>;
 type Settings = Record<string, string>;
-type Selection = { full?: boolean; base: string; target: string; envId: string; verify: boolean; referenceRoots: string[] };
+type Selection = { restorePaths?: string[]; restoreOverwrite?: boolean; remoteOnly?: boolean; full?: boolean; base: string; target: string; envId: string; verify: boolean; referenceRoots: string[] };
 type Prepared = { selection: Selection; env: Settings; config: ReturnType<typeof publicConfig>; fingerprint: string };
 export type SyncRunner = (args: string[], env: Settings, log: (text: string) => void) => Promise<number>;
-type Job = { warningCount?: number; id: string; kind: 'preview' | 'push' | 'pull' | 'fetch'; state: 'running' | 'succeeded' | 'failed'; log: string; selection: Selection; config: ReturnType<typeof publicConfig>; planId: string | null; startedAt: string; finishedAt?: string };
+type Job = { warningCount?: number; id: string; kind: 'preview' | 'push' | 'pull' | 'fetch' | 'restore'; state: 'running' | 'succeeded' | 'failed'; log: string; selection: Selection; config: ReturnType<typeof publicConfig>; planId: string | null; startedAt: string; finishedAt?: string };
 
 async function settings(base: string, envId: string, imports: Imports) {
   if (envId) {
@@ -41,19 +45,19 @@ async function settings(base: string, envId: string, imports: Imports) {
 
 function publicConfig(env: Settings, source: string, workspace?: Workspace) {
   return { source, baseUrl: env.CONFLUENCE_BASE_URL, email: env.CONFLUENCE_EMAIL,
-    spaceKey: env.CONFLUENCE_SPACE_KEY, scope: workspace?.version === 2 && workspace.scope ? {...workspace.scope, path:workspace.scope.path==='.'?'/':workspace.scope.path} : null,
-    hasToken: !!env.CONFLUENCE_API_TOKEN, scopeCheckRequired: false,
+    spaceKey: env.CONFLUENCE_SPACE_KEY, connected: workspace?.version === 2 && !!workspace.remoteRoot && workspace.connection?.baseUrl.replace(/\/$/, '') === env.CONFLUENCE_BASE_URL?.replace(/\/$/, '') && workspace.connection?.spaceKey === env.CONFLUENCE_SPACE_KEY,
+    rootPath: workspace?.remoteRoot?.path ?? null, hasToken: !!env.CONFLUENCE_API_TOKEN,
     missing: keys.slice(0, 4).filter(key => !env[key]) };
 }
 // The preview is invalidated if documents, attachments, mapping, ignore rules or credentials change.
-async function fingerprint(base: string, env: Settings) {
+async function fingerprint(base: string, env: Settings, skipIndex = false) {
   const hash = createHash('sha256').update(JSON.stringify(env));
   const walk = async (dir: string) => {
     const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       if (entry.name === 'node_modules' || (entry.name.startsWith('.') && ![METADATA_DIR, '.confluence-sync.json', '.confluence-syncignore', '.confluence-workspace.json'].includes(entry.name))) continue;
       const path = join(dir, entry.name);
-      if (relative(base, path).split('\\').join('/') === `${METADATA_DIR}/remote.json`) continue;
+      if (relative(base, path).split('\\').join('/') === `${METADATA_DIR}/remote.json` || skipIndex && relative(base, path).split('\\').join('/') === `${METADATA_DIR}/index.json`) continue;
       if (entry.isDirectory()) await walk(path);
       else if (entry.isFile()) {
         const info = await stat(path);
@@ -92,6 +96,7 @@ async function prepare(input: unknown, imports: Imports): Promise<Prepared> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('페이지 매핑 파일이 올바르지 않습니다. .csync/mapping.json 또는 기존 매핑을 확인해 주세요.');
   }
+  stagedPaths(base);
   const { env, source } = await settings(base, body.envId, imports);
   const selection = { base, target: target === base ? '' : target, envId: body.envId, verify: body.verify, referenceRoots: refs };
   const snapshots = await Promise.all([base, ...refs].map(async root => {
@@ -129,8 +134,10 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
   let job: Job | null = null;
   let plan: { id: string; prepared: Prepared } | null = null;
   let locked = false;
-  const scopedSettings = async (input: unknown) => {
-    const body = input as { base?: string; envId?: string; parentId?: string; scopeId?: string; confirmation?: string };
+  let restorePlan: {id:string; prepared:Prepared} | null = null;
+  let stagingCache: {key:string; rows: Awaited<ReturnType<typeof inspectStaging>>; revision:string} | undefined;
+  const connectionSettings = async (input: unknown) => {
+    const body = input as { base?: string; envId?: string;  };
     if (!body || typeof body.base !== 'string' || typeof body.envId !== 'string') throw new Error('설정 경로를 확인하세요.');
     const base = await realpath(resolve(body.base));
     if (!(await stat(base)).isDirectory() || dirname(base) === base) throw new Error('로컬 기준 폴더를 선택하세요.');
@@ -143,11 +150,13 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
     const current: Job = { id: randomUUID(), kind, state: 'running', log: '', selection: prepared.selection, config: prepared.config, planId: null, startedAt: new Date().toISOString() };
     job = current; plan = null;
     const { base, target, verify } = prepared.selection;
-    const args = [kind === 'pull' ? 'pull' : kind === 'fetch' ? 'fetch' : 'push', '--base', base];
-    for (const root of kind === 'pull' || kind === 'fetch' ? [] : prepared.selection.referenceRoots) args.push('--reference-root', root);
+    const args = [kind === 'pull' ? 'pull' : kind === 'fetch' ? 'fetch' : kind === 'restore' ? 'restore' : 'push', '--base', base];
+    for (const root of kind === 'pull' || kind === 'fetch' || kind === 'restore' ? [] : prepared.selection.referenceRoots) args.push('--reference-root', root);
     if (target && kind !== 'pull') args.push(target);
     if (kind === 'preview') args.push('--dry-run');
+    if (kind === 'restore') {args.push(...prepared.selection.restorePaths!); if(prepared.selection.restoreOverwrite)args.push('--overwrite');}
     if (kind === 'pull' && prepared.selection.full) args.push('--full');
+    if (kind === 'pull' && prepared.selection.remoteOnly) args.push('--remote-only');
     if (verify && kind !== 'pull') args.push('--verify');
     let reportedFailure = false;
     const secrets = [prepared.env.CONFLUENCE_API_TOKEN, Buffer.from(`${prepared.env.CONFLUENCE_EMAIL}:${prepared.env.CONFLUENCE_API_TOKEN}`).toString('base64')].filter(Boolean);
@@ -175,6 +184,48 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
   };
   return {
     running,
+    diff: async (input: unknown) => {
+      if(running())throw new Error('다른 작업이 진행 중입니다.');
+      locked=true;
+      try {
+        const {base,config}=await connectionSettings(input);
+        const body=input as {path?:unknown;remote?:unknown};
+        if(typeof body.path!=='string'||body.remote!==undefined&&typeof body.remote!=='boolean')throw new Error('비교할 문서를 선택하세요.');
+        return await documentDiff(base,body.path,{remote:body.remote as boolean|undefined,env:config});
+      }finally{locked=false;}
+    },
+    staging: async (input: unknown) => {
+      if (running()) throw new Error('다른 작업이 진행 중입니다.');
+      locked = true;
+      try {
+        const { base, config } = await connectionSettings(input);
+        const body = input as { paths?: unknown; action?: unknown; referenceRoots?: unknown };
+        if (body.referenceRoots !== undefined && (!Array.isArray(body.referenceRoots) || body.referenceRoots.some(p => typeof p !== 'string'))) throw new Error('참조 폴더를 확인하세요.');
+        const options = {referenceRoots: body.referenceRoots as string[] ?? [], baseUrl:config.baseUrl};
+        const cacheKey=JSON.stringify([base,options,loadWorkspace(base)]);
+        const revision = async () => JSON.stringify(await Promise.all([base,...referenceRoots(base,options.referenceRoots)].map(root=>fingerprint(root,{connection:JSON.stringify(config)},true))));
+        let currentRevision=await revision();
+        let rows: Awaited<ReturnType<typeof inspectStaging>>;
+        const cacheMatched=stagingCache?.key===cacheKey && stagingCache.revision===currentRevision;
+        if (body.action !== undefined) {
+          if (!['add','remove'].includes(String(body.action)) || !Array.isArray(body.paths) || body.paths.some(p => typeof p !== 'string')) throw new Error('문서 선택을 확인하세요.');
+          plan = null;
+          const touched=await changeStaging(base, body.paths as string[], body.action as 'add'|'remove', options);
+          const prior=stagingCache?.key===cacheKey?stagingCache.rows:[];
+          const merged=new Map(prior.map(row=>[row.path,row]));
+          if(body.action==='add')for(const row of touched)merged.set(row.path,{...row,pageId:(row as {pageId?:string}).pageId,staged:true,stale:false});
+          const entries=loadIndex(base).entries;
+          rows=[...merged.values()].map(row=>({...row,staged:!!entries[row.path],stale:!!entries[row.path]&&(!!row.unmapped||JSON.stringify(entries[row.path])!==JSON.stringify(row.entry))}));
+          if(!cacheMatched)currentRevision='';
+        } else rows = stagingCache?.key===cacheKey && stagingCache.revision===currentRevision ? stagingCache.rows : await inspectStaging(base, options);
+        const activeEntries=loadIndex(base).entries;
+        rows=rows.map(row=>({...row,staged:!!activeEntries[row.path],stale:!!activeEntries[row.path]&&(!!row.unmapped||JSON.stringify(activeEntries[row.path])!==JSON.stringify(row.entry))}));
+        for(const [path,entry] of Object.entries(activeEntries))if(!rows.some(row=>row.path===path))rows.push({path,status:'unavailable',staged:true,stale:true,entry});
+        stagingCache={key:cacheKey,rows,revision:currentRevision};
+        const view = observeChanges(base, rows, config);
+        return {...view, revision:JSON.stringify([currentRevision,activeEntries,view.remoteCheckedAt,view.rows])};
+      } finally { locked = false; }
+    },
     importEnv: async (input: unknown) => {
       if (running()) throw new Error('다른 Confluence 작업이 진행 중입니다.');
       const body = input as { base?: string; text?: string; name?: string };
@@ -216,14 +267,12 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
         return { saved: true, config: publicConfig(env, source, loadWorkspace(base)) };
       } finally { if (temp) await unlink(temp).catch(() => {}); locked = false; }
     },
-    setScope: async (input: unknown) => {
+    connect: async (input: unknown) => {
       if (running()) throw new Error('다른 Confluence 작업이 진행 중입니다.');
       locked = true; plan = null;
       try {
-        const { base, config, body } = await scopedSettings(input);
-        const path = (body as {scopePath?:unknown}).scopePath;
-        if (typeof path !== 'string') throw new Error('기준 폴더 안의 파일·폴더를 스코프로 직접 선택하세요.');
-        await configureScope(base,config,path);
+        const { base, config, body } = await connectionSettings(input);
+        await connectWorkspace(base,config);
         const {env,source} = await settings(base,body.envId!,imports);
         return publicConfig(env,source,loadWorkspace(base));
       } finally { locked = false; }
@@ -238,7 +287,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
       if (running()) throw new Error('다른 작업이 진행 중입니다.');
       locked = true; plan = null;
       try {
-        const { base, config, body } = await scopedSettings(input);
+        const { base, config, body } = await connectionSettings(input);
         const workspace = loadWorkspace(base); requireScope(workspace);
         const { env, source } = await settings(base, body.envId!, imports);
         const visible = publicConfig(env, source, workspace);
@@ -248,12 +297,40 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
         return launch('fetch', { selection: { base, target: '', envId: body.envId!, verify: false, referenceRoots: [] }, env, config: visible, fingerprint: '' });
       } finally { locked = false; }
     },
+    restore: async (input: unknown) => {
+      if (running()) throw new Error('다른 작업이 진행 중입니다.');
+      locked = true;
+      try {
+        const {base, body} = await connectionSettings(input);
+        const request = input as {path?:unknown; overwrite?:unknown; confirmationId?:unknown};
+        const workspace = loadWorkspace(base); requireScope(workspace);
+        const {env,source} = await settings(base, body.envId!, imports);
+        const config = publicConfig(env,source,workspace);
+        if (!config.connected || config.missing.length) throw new Error('스페이스 연결과 .env 설정을 확인하세요.');
+        const url = new URL(config.baseUrl!);
+        if(url.protocol!=='https:' || url.username || url.password || url.search || url.hash)throw new Error('Confluence BASE_URL은 인증정보·쿼리가 없는 HTTPS 주소여야 합니다.');
+        if (request.confirmationId !== undefined) {
+          const approved = restorePlan; restorePlan = null;
+          if (!approved || request.confirmationId !== approved.id || approved.prepared.selection.base !== base || approved.prepared.selection.envId !== body.envId) throw new Error('복구 대상을 다시 확인하세요.');
+          if (await fingerprint(base,env) !== approved.prepared.fingerprint) throw new Error('확인 이후 로컬 문서나 설정이 바뀌었습니다. 복구 대상을 다시 확인하세요.');
+          validateRestorePaths(base,approved.prepared.selection.restorePaths!,approved.prepared.selection.restoreOverwrite);
+          return {job:launch('restore',approved.prepared)};
+        }
+        if (typeof request.path !== 'string' || typeof request.overwrite !== 'boolean') throw new Error('복구할 문서와 덮어쓰기 여부를 확인하세요.');
+        const paths = validateRestorePaths(base,[request.path],request.overwrite);
+        const id = randomUUID();
+        restorePlan = {id,prepared:{selection:{base,target:'',envId:body.envId!,verify:false,referenceRoots:[],restorePaths:paths,restoreOverwrite:request.overwrite},env,config,fingerprint:await fingerprint(base,env)}};
+        return {confirmationId:id,path:paths[0],overwrite:request.overwrite};
+      } finally {locked=false;}
+    },
     pull: async (input: unknown) => {
       if (running()) throw new Error('다른 작업이 진행 중입니다.');
       locked = true; plan = null;
       try {
-        const { base, config, body } = await scopedSettings(input);
+        const { base, config, body } = await connectionSettings(input);
         const full = (body as { full?: unknown }).full;
+        const remoteOnly=(body as {remoteOnly?:unknown}).remoteOnly;
+        if(remoteOnly!==undefined&&typeof remoteOnly!=='boolean'||remoteOnly&&full)throw new Error('원격 변경 가져오기 옵션을 확인하세요.');
         if (full !== undefined && typeof full !== 'boolean') throw new Error('전체 탐색 설정을 확인하세요.');
         const workspace = loadWorkspace(base); requireScope(workspace);
         const { env, source } = await settings(base, body.envId!, imports);
@@ -261,7 +338,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
         if (visible.missing.length) throw new Error(`설정 누락: ${visible.missing.join(', ')}`);
         const url = new URL(config.baseUrl!);
         if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Confluence BASE_URL은 인증정보·쿼리가 없는 HTTPS 주소여야 합니다.');
-        return launch('pull', { selection: { base, target: '', envId: body.envId!, verify: false, referenceRoots: [], ...(full ? {full: true} : {}) }, env, config: visible, fingerprint: '' });
+        return launch('pull', { selection: { base, target: '', envId: body.envId!, verify: false, referenceRoots: [], ...(full ? {full: true} : {}),...(remoteOnly?{remoteOnly:true}:{}) }, env, config: visible, fingerprint: '' });
       } finally { locked = false; }
     },
     preview: async (input: unknown) => {

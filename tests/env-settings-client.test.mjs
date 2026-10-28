@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createEnvSettings} from '../src/web/client/env-settings.js';
 function setup(t,api){
- const ids=['sync-env-base-mode','sync-env-import-mode','sync-env-import-controls','sync-env-file','sync-env-file-name','sync-env-source-note','sync-env-choose','sync-env-save','sync-env-confirm','sync-env-confirm-path','sync-env-confirm-save','sync-env-confirm-cancel'];
- const nodes=new Map(ids.map(id=>[id,{checked:false,hidden:false,value:'',open:false,addEventListener(){},click(){this.clicked=true},showModal(){this.open=true},close(){this.open=false}}]));
+ const ids=['sync-env-toggle','sync-env-body','sync-env-chevron','sync-env-toggle-label','sync-env-base-mode','sync-env-import-mode','sync-env-import-controls','sync-env-file','sync-env-file-name','sync-env-source-note','sync-env-choose','sync-env-save','sync-env-confirm','sync-env-confirm-path','sync-env-confirm-save','sync-env-confirm-cancel'];
+ const nodes=new Map(ids.map(id=>[id,{attributes:{},getAttribute(key){return this.attributes[key]},setAttribute(key,value){this.attributes[key]=value},checked:false,hidden:false,value:'',open:false,addEventListener(){},click(){this.clicked=true},showModal(){this.open=true},close(){this.open=false}}]));
  nodes.get('sync-env-base-mode').checked=true;const old=globalThis.document;globalThis.document={getElementById:id=>nodes.get(id)};t.after(()=>{globalThis.document=old;});
  const context={base:'/docs'},configs=[],messages=[];let control;let changes=0;
  control=createEnvSettings({api,context:()=>context,setBusy:value=>control.update(value),changed:()=>{changes++},renderConfig:config=>configs.push(config),status:text=>messages.push(text)});control.update(false);
@@ -24,4 +24,10 @@ test('existing env save opens confirmation and cancelling performs no write',asy
  s.mode();await s.file();await s.nodes.get('sync-env-save').onclick();assert.equal(s.nodes.get('sync-env-confirm').open,true);assert.equal(calls.length,2);
  s.nodes.get('sync-env-confirm-cancel').onclick();assert.equal(s.nodes.get('sync-env-confirm').open,false);assert.equal(calls.length,2);
  await s.nodes.get('sync-env-save').onclick();await s.nodes.get('sync-env-confirm-save').onclick();assert.equal(calls.at(-1).body.expectedHash,'old-hash');assert.equal(s.nodes.get('sync-env-base-mode').checked,true);
+});
+
+test('connection settings collapse without clearing imported credentials or making requests',async t=>{
+ let calls=0;const s=setup(t,async()=>{calls++;return {}});s.nodes.get('sync-env-toggle').setAttribute('aria-expanded','false');s.nodes.get('sync-env-body').hidden=true;
+ s.nodes.get('sync-env-toggle').onclick();assert.equal(s.nodes.get('sync-env-body').hidden,false);assert.equal(s.nodes.get('sync-env-toggle-label').textContent,'접기');
+ s.nodes.get('sync-env-toggle').onclick();assert.equal(s.nodes.get('sync-env-body').hidden,true);assert.equal(s.nodes.get('sync-env-toggle-label').textContent,'펼치기');assert.equal(calls,0);
 });

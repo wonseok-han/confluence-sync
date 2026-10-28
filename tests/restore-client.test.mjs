@@ -1,0 +1,13 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {createRestore} from '../src/web/client/restore.js';
+function setup(t,api){const old=globalThis.document;const ids=['sync-restore-dialog','sync-restore-title','sync-restore-path','sync-restore-warning','sync-restore-confirm','sync-restore-cancel'];const nodes=new Map(ids.map(id=>[id,{textContent:'',open:false,showModal(){this.open=true},close(){this.open=false},focus(){this.focused=true},addEventListener(event,handler){this[event]=handler}}]));globalThis.document={getElementById:id=>nodes.get(id)};t.after(()=>globalThis.document=old);let busy=false;const selection={base:'/docs',envId:'session'},started=[],messages=[];const control=createRestore({api,selection:()=>selection,setBusy:value=>busy=value,isBusy:()=>busy,status:(...args)=>messages.push(args),start:async(...args)=>started.push(args)});return {control,nodes,selection,started,messages};}
+test('restore UI requires confirmation, displays overwrite consequences and cancellation never starts a job',async t=>{
+ const requests=[];const s=setup(t,async(url,body)=>{requests.push({url,body});return {confirmationId:'approved',path:'a.md',overwrite:true}});
+ await s.control.open('a.md',true);assert.equal(s.nodes.get('sync-restore-dialog').open,true);assert.match(s.nodes.get('sync-restore-warning').textContent,/ローカル|ローカル修正|로컬 수정/);assert.equal(s.nodes.get('sync-restore-cancel').focused,true);assert.equal(s.started.length,0);assert.equal(requests[0].body.overwrite,true);
+ s.nodes.get('sync-restore-cancel').onclick();assert.equal(s.nodes.get('sync-restore-dialog').open,false);await s.nodes.get('sync-restore-confirm').onclick();assert.equal(s.started.length,0);
+ await s.control.open('a.md',true);await s.nodes.get('sync-restore-confirm').onclick();assert.deepEqual(s.started,[['restore',{base:'/docs',envId:'session',confirmationId:'approved'}]]);assert.equal(s.nodes.get('sync-restore-dialog').open,false);
+});
+test('missing-file UI describes protected recovery and changed context invalidates approval',async t=>{
+ const s=setup(t,async()=>({confirmationId:'approved',path:'README.md',overwrite:false}));await s.control.open('README.md',false);assert.match(s.nodes.get('sync-restore-warning').textContent,/덮어쓰지 않습니다/);s.selection.base='/other';await s.nodes.get('sync-restore-confirm').onclick();assert.equal(s.started.length,0);assert.match(s.messages[0][0],/다시 선택/);
+});
+test('failed preflight never opens confirmation or starts a restore',async t=>{const s=setup(t,async()=>{throw Error('cannot restore')});await s.control.open('a.md',true);assert.equal(s.nodes.get('sync-restore-dialog').open,false);assert.equal(s.started.length,0);assert.equal(s.messages[0][0],'cannot restore');});

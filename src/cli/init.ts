@@ -6,10 +6,10 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { loadWorkspace, saveWorkspace, resolveSyncBase } from '../sync/workspace.js';
+import { loadWorkspace, resolveSyncBase } from '../sync/workspace.js';
 import { migrateMetadata, mappingPath } from '../sync/metadata.js';
 import { loadMapping } from '../sync/mapping.js';
-import { configureScope } from '../sync/scope.js';
+import { connectWorkspace } from '../sync/scope.js';
 import { readEnv } from '../confluence/config.js';
 import { bold, cyan, dim, green, red, yellow } from '../shared/colors.js';
 
@@ -75,9 +75,16 @@ function promptSecret(query: string): Promise<string> {
 }
 
 export async function runInit(argv: string[]): Promise<void> {
-  if (argv.includes('--confirm-scope') && !argv.includes('--scope')) throw new Error('--confirm-scope는 --scope와 함께 사용하세요.');
+  if(argv.includes('--scope')||argv.includes('--confirm-scope'))throw new Error('--scope 설정은 제거되었습니다. 기준 폴더가 스페이스 전체 작업공간입니다. 연결은 init --connect를 사용하세요.');
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--base') {
+      if (!argv[++i] || argv[i].startsWith('-')) throw new Error('--base 뒤에 기준 폴더를 지정하세요.');
+    } else if (!['init', '--connect', '--migrate', '--dry-run', '--force', '--no-color'].includes(argv[i])) throw new Error(`지원하지 않는 init 인자: ${argv[i]}. csync init --help를 확인하세요.`);
+  }
+  if (argv.includes('--dry-run') && !argv.includes('--migrate')) throw new Error('init --dry-run은 --migrate와 함께 사용하세요. .env 생성이나 연결은 실행하지 않았습니다.');
+  if (argv.includes('--force') && (argv.includes('--connect') || argv.includes('--migrate'))) throw new Error('init --force는 .env 생성에만 사용하세요.');
   if (argv.includes('--migrate')) {
-    if (argv.includes('--scope')) throw new Error('--migrate와 --scope는 각각 실행하세요.');
+    if (argv.includes('--connect')) throw new Error('--migrate와 --connect는 각각 실행하세요.');
     const index = argv.indexOf('--base');
     const base = resolveSyncBase(index >= 0 ? argv[index + 1] : undefined) ?? process.cwd();
     loadMapping(mappingPath(base));
@@ -86,18 +93,17 @@ export async function runInit(argv: string[]): Promise<void> {
     console.log(`${argv.includes('--dry-run') ? '이전 미리보기' : '이전 완료'}: ${count}개 메타데이터. 문서·.env 유지, Confluence 호출 없음.`);
     return;
   }
-  if (argv.includes('--scope')) {
-    const baseArg = argv.indexOf('--base');
-    if (baseArg >= 0 && (!argv[baseArg + 1] || argv[baseArg + 1].startsWith('--'))) throw new Error('--base 경로가 필요합니다.');
-    const base = baseArg >= 0 ? resolve(argv[baseArg + 1]) : process.cwd();
-    const choices = argv.flatMap((arg, i) => arg === '--scope' ? [argv[i + 1]] : []);
-    if (choices.length !== 1 || !choices[0] || choices[0].startsWith('--')) throw new Error('--scope <스페이스 내 경로|id:ID>를 하나 지정하세요. 전체는 / 입니다.');
-    if (argv.includes('--dry-run') || argv.includes('--confirm-scope')) throw new Error('스코프는 로컬 작업 범위입니다. init --scope <파일·폴더>로 저장하세요. 원격 변경 확인은 필요하지 않습니다.');
-    const workspace = await configureScope(base, readEnv(base), choices[0]);
-    console.log(`로컬 스코프 저장: ${workspace.scope!.path === '.' ? '/' : workspace.scope!.path} (${workspace.scope!.type}) — 스페이스 연결·매핑·원격 위치는 유지됩니다.`);
+  if (argv.includes('--connect')) {
+    const index=argv.indexOf('--base');
+    const base=resolveSyncBase(index>=0?argv[index+1]:undefined)??process.cwd();
+    const workspace=await connectWorkspace(base,readEnv(base));
+    console.log(`${green('스페이스 연결 완료:')} ${cyan(base)} ↔ ${cyan(workspace.connection!.spaceKey)}`);
     return;
   }
-  const target = resolve(process.cwd(), '.env');
+  const baseIndex = argv.indexOf('--base');
+  const base = resolve(baseIndex >= 0 ? argv[baseIndex + 1] : process.cwd());
+  const target = resolve(base, '.env');
+  const next = base === process.cwd() ? 'csync pull' : `csync pull --base ${JSON.stringify(base)}`;
   const force = argv.includes('--force');
 
   const fields: Field[] = [
@@ -105,7 +111,7 @@ export async function runInit(argv: string[]): Promise<void> {
     { key: 'CONFLUENCE_EMAIL', hint: 'Atlassian 계정 이메일' },
     { key: 'CONFLUENCE_API_TOKEN', hint: 'Scoped API 토큰 (id.atlassian.com → Create API token with scopes). 입력은 가려집니다', secret: true },
     { key: 'CONFLUENCE_SPACE_KEY', hint: 'URL .../wiki/spaces/<KEY>/... 의 KEY' },
-    { key: 'CONFLUENCE_SYNC_BASE', hint: `동기화 루트 디렉토리 (기본: ${process.cwd()})`, optional: true, def: process.cwd() },
+    { key: 'CONFLUENCE_SYNC_BASE', hint: `스페이스 문서 작업공간 (기본: ${base})`, optional: true, def: base },
   ];
 
   const renderEnv = (vals: Record<string, string>) =>
@@ -131,7 +137,7 @@ export async function runInit(argv: string[]): Promise<void> {
   // 비대화형(파이프/CI): 값 없이 빈 템플릿만 생성
   if (!input.isTTY) {
     writeFileSync(target, renderEnv({}));
-    console.log(`템플릿 .env 를 생성했습니다: ${target}\n각 값을 채워 넣으세요.`);
+    console.log(`템플릿 .env 를 생성했습니다: ${target}\n값 입력 후: ${next} (최초 전체 받기)\n다운로드 없이 연결만: csync init --connect --base ${JSON.stringify(base)}`);
     return;
   }
 
@@ -157,5 +163,5 @@ export async function runInit(argv: string[]): Promise<void> {
 
   writeFileSync(target, renderEnv(values));
   console.log(green(`\n✓ .env 생성 완료: ${target}`));
-  console.log(`  다음으로:  ${cyan('csync init --scope <스페이스 내 경로>')}  ${dim('(필수 스코프 설정)')}`);
+  console.log(`  다음으로:  ${cyan(next)}  ${dim('(스페이스 전체를 최초로 가져옵니다)')}`);
 }

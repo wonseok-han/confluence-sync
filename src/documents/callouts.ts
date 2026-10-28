@@ -21,6 +21,8 @@ const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&l
 /** Transform actual quote tokens, leaving code examples and ordinary quotes untouched. */
 export function installCallouts(md: MarkdownIt, format: 'html' | 'storage') {
   md.core.ruler.after('inline', 'obsidian_callouts', state => {
+    // Compatibility rendering is read-only and only used to verify older baselines.
+    if (state.env?.legacyCallouts) return;
     const tokens = state.tokens;
     for (let i = 0; i < tokens.length; i++) {
       if (tokens[i].type !== 'blockquote_open' || tokens[i + 1]?.type !== 'paragraph_open' || tokens[i + 2]?.type !== 'inline' || tokens[i + 3]?.type !== 'paragraph_close') continue;

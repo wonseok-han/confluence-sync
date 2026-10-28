@@ -21,13 +21,6 @@ export const webPage = (token: string) => `<!doctype html>
         <button id="choose-base" class="folder-button"><span aria-hidden="true">↻</span>기준 폴더 변경…</button>
         <details id="root-path-editor" class="root-path-editor"><summary>경로를 직접 입력해 변경</summary><label for="base-input">새 기준 폴더 경로</label><input id="base-input" class="path-input" placeholder="폴더의 전체 경로"><button id="apply-base" type="button">이 폴더를 기준으로 설정</button></details>
       </div>
-      <section id="explorer-scope" class="explorer-scope" aria-labelledby="sync-scope-heading" hidden>
-        <h3 id="sync-scope-heading">작업 스코프 · 필수</h3>
-        <p class="hint">아래 문서 탐색에서 선택한 뒤 저장하세요. 저장된 스코프가 Push·Pull에 적용됩니다.</p>
-        <div class="scope-summary"><div><span>저장된 스코프 · 실제 작업 범위</span><p id="sync-scope-saved"></p></div><div><span>저장 후보 · 탐색에서 선택</span><p id="sync-scope-candidate"></p></div></div>
-        <button id="sync-scope-save" type="button" disabled>선택한 범위를 스코프로 저장</button>
-        <p class="scope-warning"><strong>주의: 전체 /를 선택하면 기준 폴더 전체가 대상입니다.</strong> 업로드 전에 미리보기를 확인하세요.</p>
-      </section>
       <div class="explorer-navigation">
         <div class="explorer-nav-heading"><span>문서 탐색</span><button id="base-home" class="quiet" type="button" aria-label="기준 폴더로 돌아가기">기준 폴더로</button></div>
         <div class="explorer-nav-row"><button id="up" class="quiet" aria-label="상위 폴더" title="상위 폴더">↑</button><p id="path" class="path" aria-label="현재 탐색 위치"></p></div>
@@ -71,4 +64,4 @@ export const webPage = (token: string) => `<!doctype html>
   <footer><span id="workspace-note"><i></i>변환은 이 컴퓨터에서 처리됩니다.</span><span>Markdown · Confluence</span></footer>
 ${helpDialog}
 <dialog id="table-review-dialog" class="table-review-dialog" aria-labelledby="table-review-title"><div class="panel-heading"><h2 id="table-review-title">표 서식 변경 확인</h2><button id="table-review-close">닫기</button></div><p class="table-review-note">편집한 표들의 너비 변경을 함께 저장합니다. 일반 Markdown 표는 HTML 표로 변환합니다.</p><div id="table-review-diff" class="table-review-diff"></div><p id="table-save-status" role="status" aria-live="polite"></p><div class="table-review-footer"><button id="table-save" class="primary">원본 파일에 저장</button></div></dialog>
-</main><aside id="snackbars" class="snackbars" aria-label="작업 알림"></aside><script src="/assets/app.js" type="module"></script></body></html>`;
+</main><aside id="activity-panel" class="activity-panel" role="status" aria-live="polite" aria-atomic="false" hidden><span class="activity-spinner" aria-hidden="true"></span><div class="activity-content"><strong id="activity-title"></strong><p id="activity-detail"></p><div class="activity-meta"><time id="activity-elapsed" aria-hidden="true"></time><a id="activity-link" href="#sync-results" hidden>실행 내역 보기 ↓</a></div></div></aside><aside id="snackbars" class="snackbars" aria-label="작업 알림"></aside><script src="/assets/app.js" type="module"></script></body></html>`;

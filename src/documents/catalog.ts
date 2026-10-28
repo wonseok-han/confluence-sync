@@ -266,7 +266,7 @@ export function resolveSelection(rels: string[], positionals: string[], baseDir:
       console.error(`  ⚠ base 밖 경로 무시: ${p}`);
       continue;
     }
-    const matched = rels.filter((r) => r === relToBase || r.startsWith(relToBase + '/'));
+    const matched = rels.filter((r) => !relToBase || r === relToBase || r.startsWith(relToBase + '/'));
     if (matched.length === 0) console.error(`  ⚠ 매칭되는 문서 없음: ${p}`);
     matched.forEach((m) => set.add(m));
   }

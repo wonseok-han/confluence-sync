@@ -1,3 +1,4 @@
+import {explicitPush} from './helpers/explicit-push.mjs';
 import {bindScope} from './helpers/scope.mjs';
 import {mappingPath} from '../dist/sync/metadata.js';
 import test from 'node:test';
@@ -15,6 +16,7 @@ function run(root,args,extra={}) {
 }
 function offline(root,put,args,steps) {
  bindScope(args.includes('--base')?args[args.indexOf('--base')+1]:root);
+ if(args.includes('push'))args=explicitPush(args,true);
  const responses=put('responses.json',JSON.stringify(steps));const calls=put('calls.jsonl','');
  const r=run(root,args,{NODE_OPTIONS:`--import=${preload}`,CSYNC_TEST_RESPONSES:responses,CSYNC_TEST_CALLS:calls,CSYNC_TEST_SCOPE_BASE:args.includes('--base')?args[args.indexOf('--base')+1]:root,CONFLUENCE_BASE_URL:'https://example.invalid/wiki',CONFLUENCE_EMAIL:'test@example.invalid',CONFLUENCE_API_TOKEN:'fake',CONFLUENCE_SPACE_KEY:'TEST'});
  return {...r,calls:readFileSync(calls,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)};
@@ -25,7 +27,7 @@ test('version and help work without credentials or a base directory',t=>{
 });
 
 test('push refuses missing base and missing authentication',t=>{
- const {root}=workspace(t,{'doc.md':'# Doc'});assert.equal(run(root,[]).status,0);const r=run(root,['push','--base',root]);assert.notEqual(r.status,0);assert.match(r.stderr,/스코프/);
+ const {root}=workspace(t,{'doc.md':'# Doc'});assert.equal(run(root,[]).status,0);const r=run(root,['push','--base',root]);assert.notEqual(r.status,0);assert.match(r.stderr,/스페이스 연결/);
 });
 
 test('init generates a template and refuses an accidental overwrite',t=>{
@@ -52,7 +54,7 @@ test('convert exports only selected file under its base-relative path and preser
 test('full push creates and persists a page; second push skips and content edit updates',t=>{
  const {root,put}=workspace(t,{'doc.md':'# Doc\n\nOriginal'});const space={path:'/wiki/api/v2/spaces?keys=TEST',body:{results:[{id:'space'}]}};
  let r=offline(root,put,['push','--base',root],[space,{path:'/wiki/api/v2/pages',method:'POST',body:{id:'page'}}]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls[1].body.title,'Doc');assert.equal(JSON.parse(readFileSync(mappingPath(root),'utf8'))['doc.md'].pageId,'page');
- r=offline(root,put,['push','--base',root],[space]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,1);
+ r=offline(root,put,['push','--base',root],[]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,0);
  put('doc.md','# Doc\n\nChanged');r=offline(root,put,['push','--base',root],[space,{path:'/wiki/api/v2/pages/page',body:{version:{number:1}}},{path:'/wiki/api/v2/pages/page',body:{version:{number:1}}},{path:'/wiki/api/v2/pages/page',method:'PUT'}]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.at(-1).body.version.number,2);assert.match(r.calls.at(-1).body.body.value,/Changed/);
 });
 
@@ -123,7 +125,7 @@ test('push uploads linked files once, retries failure, skips unchanged and detec
  assert.equal(r.status,1,r.stderr);assert.match(r.calls[1].body.body.value,/ri:attachment ri:filename="report.pdf"/);
  assert.equal(JSON.parse(readFileSync(mappingPath(root),'utf8'))['doc.md'].hash,undefined);
  r=offline(root,put,['push','--base',root],[space,...update(1),lookup,upload]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,6);
- r=offline(root,put,['push','--base',root],[space]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,1);
+ r=offline(root,put,['push','--base',root],[]);assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,0);
  put('report.pdf','second');r=offline(root,put,['push','--base',root],[space,...update(2),{...lookup,body:{results:[{id:'att'}]}},{path:upload.path+'/att/data',method:'POST'}]);
  assert.equal(r.status,0,r.stderr);assert.equal(r.calls.length,6);
 });
@@ -153,4 +155,23 @@ test('bare csync only shows help, and options or paths never imply an upload eve
 test('removed sync alias cannot upload, call Confluence or modify mapping',t=>{
  const original=JSON.stringify({'a.md':{pageId:'1',hash:'kept',remoteVersion:1}});const {root,put}=workspace(t,{'a.md':'# A','.confluence-sync.json':original});
  const result=offline(root,put,['sync','--base',root],[]);assert.equal(result.status,1);assert.match(result.stderr,/지원하지 않는 명령/);assert.match(result.stderr,/csync push/);assert.equal(result.calls.length,0);assert.equal(readFileSync(mappingPath(root),'utf8'),original);
+});
+
+
+for (const command of ['init','status','fetch','pull','diff','add','unstage','push','web','convert','remap'])test(`${command} help is scoped to that command and needs no credentials`,t=>{
+ const {root}=workspace(t);const result=run(root,[command,'--help']);assert.equal(result.status,0,result.stderr);assert.match(result.stdout,new RegExp('csync '+command));
+ if(command!=='convert')assert.doesNotMatch(result.stdout,/--to obsidian/);
+ if(command==='push'){assert.match(result.stdout,/CLI 미리보기는 선택 사항/);assert.match(result.stdout,/저장된 선택과 별개/);}
+});
+
+test('init --base creates env in that folder and explains initial Pull versus connection only',t=>{
+ const {root,put}=workspace(t,{'docs/keep.md':'# Keep'});const base=join(root,'docs');const result=run(root,['init','--base',base]);
+ assert.equal(result.status,0,result.stderr);assert.equal(existsSync(join(root,'.env')),false);assert.equal(existsSync(join(base,'.env')),true);
+ assert.match(result.stdout,/csync pull --base/);assert.match(result.stdout,/init --connect/);assert.equal(readFileSync(join(base,'keep.md'),'utf8'),'# Keep');
+ const bad=run(root,['init','--base']);assert.equal(bad.status,1);assert.match(bad.stderr,/기준 폴더/);
+});
+
+
+for(const args of [['init','--typo'],['init','--dry-run'],['init','--force','--connect'],['add','a.md','--base'],['unstage','.','--reference-root']])test(`invalid setup/selection arguments stop without writing files: ${args}`,t=>{
+ const {root}=workspace(t,{'a.md':'# Keep'});const result=run(root,args);assert.equal(result.status,1);assert.equal(existsSync(join(root,'.env')),false);assert.equal(existsSync(join(root,'.csync')),false);assert.equal(readFileSync(join(root,'a.md'),'utf8'),'# Keep');
 });

@@ -2,6 +2,13 @@
 export function createEnvSettings({ api, context, setBusy, changed, renderConfig, status }) {
   const $ = id => document.getElementById(id);
   let base = context().base, envId = '', filename = '', busy = false, approval = null;
+  $('sync-env-toggle').onclick = () => {
+    const expanded = $('sync-env-toggle').getAttribute('aria-expanded') !== 'true';
+    $('sync-env-toggle').setAttribute('aria-expanded', String(expanded));
+    $('sync-env-body').hidden = !expanded;
+    $('sync-env-chevron').textContent = expanded ? '▾' : '▸';
+    $('sync-env-toggle-label').textContent = expanded ? '접기' : '펼치기';
+  };
   const imported = () => $('sync-env-import-mode').checked;
   const identity = () => `${imported() ? 'import' : 'base'}:${envId}`;
   const request = () => ({ base: context().base, envId: imported() ? envId || 'not-imported' : '' });
