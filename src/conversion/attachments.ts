@@ -4,13 +4,14 @@ import { existsSync, statSync, readFileSync } from 'node:fs';
 import { resolve, relative, dirname, basename, extname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { documentAttachmentDir } from './asset-paths.js';
+import { isConfluenceWebPath } from '../confluence/links.js';
 import { mapMarkdownText } from './pdf-pages.js';
 
 /** 출력 트리의 경로와 실제 입력 파일을 연결한다. dry-run에서도 파일 복사 없이 사용한다. */
 export function attachmentMapper(file: string, base: string) {
   const copies = new Map<string, string>(); // base 상대 출력 경로 → 입력 절대경로
   function localPath(raw: string): string | null {
-    if (!raw || raw.startsWith('#') || raw.startsWith('//')) return null;
+    if (!raw || raw.startsWith('#') || raw.startsWith('//') || isConfluenceWebPath(raw)) return null;
     if (/^file:/i.test(raw)) return fileURLToPath(raw);
     if (!isAbsolute(raw) && /^[a-z][a-z\d+.-]*:/i.test(raw)) return null;
     try { return resolve(dirname(file), decodeURIComponent(raw)); } catch { return null; }

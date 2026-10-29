@@ -7,6 +7,7 @@ import {createDocument} from '@mixmark-io/domino';
 import {parse} from 'dotenv';
 import {mapMarkdownText} from '../conversion/pdf-pages.js';
 import {WIKILINK_RE,parseWikilink} from '../documents/anchors.js';
+import {isConfluenceWebPath} from '../confluence/links.js';
 export const MAX_FILE=100*1024*1024, MAX_TOTAL=512*1024*1024, MAX_FILES=20000;
 export type FileEntry={path:string;hash:string;size:number};
 export type Mount={virtual:string;root:string;readonly?:boolean};
@@ -42,9 +43,10 @@ export function validateEnv(text:string){const env=parse(text);const base=env.CO
  */
 export async function validateWorkspace(mounts:Mount[],checkEnv=true,checkDocuments=true):Promise<void>{
  const parser=new MarkdownIt({html:true});const entries=await snapshot(mounts);
- const allowed=(file:string,target:string)=>{
+ const allowed=(file:string,target:string,webLink=false)=>{
   try{target=target.replace(/^<(.*)>$/,'$1');for(let i=0;i<4;i++){const decoded=decodeURIComponent(target);if(decoded===target)break;target=decoded;}}catch{throw Error('해석할 수 없는 링크 경로입니다.');}
   if(!target||target.startsWith('#')||/^(?:https?:|mailto:|data:)/i.test(target))return;
+  if(webLink&&isConfluenceWebPath(target))return;
   if(/^[a-z][a-z\d+.-]*:|^\/\//i.test(target)||target.startsWith('/')||target.includes('\\'))throw Error(`${virtualPath(mounts,file)}: 서버의 절대 경로를 참조하는 문서는 처리할 수 없습니다.`);
   const path=resolve(dirname(file),target.split(/[?#]/)[0]);if(!mounts.some(m=>path===m.root||path.startsWith(m.root+'/')))throw Error('선택한 폴더 밖의 첨부·문서를 참조합니다. 참조 폴더를 추가하거나 링크를 수정하세요.');
  };
@@ -56,13 +58,13 @@ export async function validateWorkspace(mounts:Mount[],checkEnv=true,checkDocume
   if(!checkDocuments||!/\.md$/i.test(file)||rel.startsWith('.csync/'))continue;
   const text=await readFile(file,'utf8');
   const scan=(part:string)=>{
-   for(const match of part.matchAll(/(?<!!)(!?)\[([^\]\n]*)\]\((<[^>\n]+>|[^()\s]+)\)/g)){if((part.slice(0,match.index).match(/\\+$/)?.[0].length??0)%2)continue;allowed(file,match[3]);}
-   for(const match of part.matchAll(WIKILINK_RE)){if((part.slice(0,match.index).match(/\\+$/)?.[0].length??0)%2)continue;const link=parseWikilink(match[1],match[2],match[3],match[4]);if(link?.target)allowed(file,link.target);}
+   for(const match of part.matchAll(/(?<!!)(!?)\[([^\]\n]*)\]\((<[^>\n]+>|[^()\s]+)\)/g)){if((part.slice(0,match.index).match(/\\+$/)?.[0].length??0)%2)continue;allowed(file,match[3],!match[1]);}
+   for(const match of part.matchAll(WIKILINK_RE)){if((part.slice(0,match.index).match(/\\+$/)?.[0].length??0)%2)continue;const link=parseWikilink(match[1],match[2],match[3],match[4]);if(link?.target)allowed(file,link.target,!link.embed);}
    return part;
   };
   mapMarkdownText(text,scan,html=>scan(html.replace(/<!--[\s\S]*?-->|<(script|style|pre|code)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,'')));
-  const inspect=(tokens:any[])=>{for(const token of tokens){if(token.type==='image')allowed(file,token.attrGet('src')??'');if(token.type==='link_open')allowed(file,token.attrGet('href')??'');if(token.children)inspect(token.children);
-   if(token.type==='html_block'||token.type==='html_inline')for(const node of Array.from(createDocument(token.content).querySelectorAll('[href], [src]')))allowed(file,node.getAttribute('href')??node.getAttribute('src')??'');
+  const inspect=(tokens:any[])=>{for(const token of tokens){if(token.type==='image')allowed(file,token.attrGet('src')??'');if(token.type==='link_open')allowed(file,token.attrGet('href')??'',true);if(token.children)inspect(token.children);
+   if(token.type==='html_block'||token.type==='html_inline')for(const node of Array.from(createDocument(token.content).querySelectorAll('[href], [src]'))){if(node.hasAttribute('href'))allowed(file,node.getAttribute('href')??'',node.localName==='a');if(node.hasAttribute('src'))allowed(file,node.getAttribute('src')??'');}
   }};inspect(parser.parse(text,{}));
  }
 }

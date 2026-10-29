@@ -5,6 +5,7 @@ import { resolve, relative, dirname, join } from 'node:path';
 import { renderPdfPages, type PdfPageJob } from './pdf-renderer.js';
 import MarkdownIt from 'markdown-it';
 import { collectHeadings } from '../documents/anchors.js';
+import { isConfluenceWebPath } from '../confluence/links.js';
 
 const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64');
 const decode = <T>(value: string): T => JSON.parse(Buffer.from(value, 'base64').toString());
@@ -87,7 +88,7 @@ export async function extractPdfPages(text: string, file: string, base: string, 
     if ((part.slice(0, offset).match(/\\+$/)?.[0].length ?? 0) % 2) return all;
     let dest: string;
     try { dest = decodeURIComponent(raw.replace(/^<(.*)>$/, '$1')); } catch { return all; }
-    if (/^[a-z][a-z\d+.-]*:/i.test(dest)) return all;
+    if (/^[a-z][a-z\d+.-]*:/i.test(dest)||isConfluenceWebPath(dest)) return all;
     const m = dest.match(/^(.*\.pdf)#page=(\d+)$/i);
     if (!m) return all;
     const local = resolve(dirname(file), m[1]);

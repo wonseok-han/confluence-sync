@@ -11,6 +11,16 @@ const {createStandaloneEngine}=await import('data:text/javascript;base64,'+Buffe
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const env='CONFLUENCE_BASE_URL=https://example.atlassian.net/wiki\nCONFLUENCE_EMAIL=demo@example.com\nCONFLUENCE_API_TOKEN=synthetic-secret\nCONFLUENCE_SPACE_KEY=TEST\n';
 const workspace={version:2,connection:{baseUrl:'https://example.atlassian.net/wiki',spaceKey:'TEST',spaceId:'space',homepageId:'100'},remoteRoot:{id:'100',type:'page',path:'/'}};
+test('local staging accepts exported Confluence page and profile links in README',async t=>{
+ const c=await client(),text='# Recent updates\n\n[Report](/wiki/spaces/TEST/pages/201/report.pdf#page=1 "Space")\n\n[Author](/wiki/display/~712020%3Auser)\n\n[Next](/wiki/plugins/recently-updated/changes.action?startIndex=10)\n\n<table><tr><td><a href="/wiki/spaces/TEST/pages/201/Report">Page</a></td></tr></table>';
+ await c.mirror({'.env':env,'.csync/workspace.json':JSON.stringify(workspace),'README.md':text});
+ t.mock.method(globalThis,'fetch',async()=>{throw Error('Local staging must remain offline')});
+ const staged=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(staged.status,200,staged.error);assert.equal(staged.rows[0].path,'README.md');assert.equal(staged.rows[0].localUnverified,undefined);assert.equal(await c.read(c.session.base+'/README.md'),text);
+ for(const invalid of ['![Image](/wiki/spaces/TEST/pages/201/image.png)','<img src="/wiki/spaces/TEST/pages/201/image.png">','[Bad](/wiki/spaces/TEST/%252e%252e/private)','[File](/Users/example/private.pdf)']){
+  await c.mirror({'.env':env,'.csync/workspace.json':JSON.stringify(workspace),'README.md':invalid});
+  const result=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(result.status,400,invalid);assert.match(result.error,/절대 경로/);
+ }
+});
 test('Fetch ignores document link targets while retaining env and mapping validation',async t=>{
  const c=await client(),files={'.env':env,'.csync/workspace.json':JSON.stringify(workspace),'a.md':'[Attachment](/Users/example/private.pdf)'};
  await c.mirror(files);const calls=[];

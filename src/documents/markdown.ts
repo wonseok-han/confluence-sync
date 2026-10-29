@@ -8,6 +8,7 @@
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { resolve, relative, dirname, basename, extname } from 'node:path';
 import { createHash } from 'node:crypto';
+import { isConfluenceWebPath } from '../confluence/links.js';
 import { htmlTableMarkdown } from './html-tables.js';
 import Token from 'markdown-it/lib/token.mjs';
 import { footnotesToStorage, footnoteStorageComments } from './footnote-roundtrip.js';
@@ -146,6 +147,10 @@ function addAttachment(abs: string): string {
 
 md.renderer.rules.link_open = (tokens, idx, opts, _env, self) => {
   const originalHref = tokens[idx].attrGet('href') || '';
+  if(isConfluenceWebPath(originalHref)){
+    ctx.linkStack.push(false);
+    return self.renderToken(tokens,idx,opts);
+  }
   const href = ctx.rewriteHref?.(originalHref) ?? originalHref;
   tokens[idx].attrSet('href', href);
   const t = resolveInternalLink(href);
