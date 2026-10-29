@@ -40,7 +40,7 @@ body { margin: 0; }
 .app-version { margin-left: 12px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .local-status { margin-left: auto; }
 .brand-light { font-weight: 400; color: var(--muted); margin-left: 4px; }
-.brand-symbol { width: 30px; height: 30px; display: grid; place-items: center; margin-right: 10px; background: var(--accent); color: white; border-radius: 8px; font-size: 23px; font-weight: 400; }
+.brand-symbol { width: 30px; height: 30px; display: block; flex-shrink: 0; margin-right: 10px; }
 .local-status { display: flex; align-items: center; gap: 7px; color: #66716f; font-size: 11px; }
 .local-status i, footer i { width: 6px; height: 6px; background: #6caa8c; border-radius: 50%; display: inline-block; }
 .app-main { max-width: 1640px; margin: auto; padding: 24px 32px 0; }
@@ -53,7 +53,6 @@ h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -1px; font-we
 .panel { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius); overflow: hidden; min-width: 0; box-shadow: 0 2px 3px #202c4003; }
 .panel-heading { height: 54px; padding: 0 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 h2 { margin: 0; display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 650; white-space: nowrap; }
-.section-number { color: #8c95a6; font-size: 10px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .count, .subtle-label { font-size: 10px; color: var(--muted); white-space: nowrap; }
 .count { padding: 4px 7px; background: var(--soft); border-radius: 5px; }
 .explorer { display: flex; flex-direction: column; min-height: 0; contain: size; }
@@ -442,3 +441,50 @@ button.is-loading{opacity:1;cursor:progress}button.is-loading::before{content:""
 .sync-stage-row .stage-restore .stage-action-icon{display:inline-flex;width:16px;height:16px;flex:0 0 16px}
 .stage-action-icon svg{display:block;width:16px;height:16px}
 .sync-stage-row .stage-restore>span{flex:none}
+
+.env-help-actions{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:10px}
+.env-help-actions .hint{margin:0}
+.env-template-download{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:var(--control-height);padding:0 14px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);font-size:12px;font-weight:550;text-decoration:none}
+.env-template-download:hover{background:var(--soft);border-color:#bdc5d7}
+.env-template-download:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.env-template-download svg,#sync-log-download svg{display:block;width:16px;height:16px;flex:0 0 16px}
+
+.sync-log-actions{align-items:center;gap:10px}
+.sync-job-status{display:inline-flex;align-items:center;align-self:center;line-height:1.4;padding:4px 8px}
+.sync-job-status[data-state="running"]{background:#eef0fe;color:#4054a5}
+.sync-job-status[data-state="succeeded"]{background:#edf7f0;color:#2d6c46}
+.sync-job-status[data-state="warning"]{background:#fff6e5;color:#8b5d10}
+.sync-job-status[data-state="failed"]{background:#fff0ee;color:#9f352e}
+
+.sync-workbench-toolbar>.actions{align-items:center;flex-wrap:wrap}
+.sync-pull-format{display:inline-flex;align-items:center;gap:8px;color:var(--muted);font-size:11px}
+.sync-pull-format select{height:var(--control-height);padding:0 30px 0 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);cursor:pointer;max-width:100%}
+.sync-pull-format-help{margin:12px 0 0;line-height:1.7}
+
+.local-connect-dialog{width:min(560px,calc(100vw - 32px));border:1px solid var(--border);border-radius:16px;padding:28px;color:var(--text);background:var(--surface);box-shadow:0 24px 80px #172b4d30}
+.local-connect-dialog::backdrop{background:#172b4d66}
+.local-connect-dialog h2{margin:0 0 16px;font-size:20px}
+.local-connect-dialog p,.local-connect-dialog li{font-size:12px;line-height:1.9;color:var(--muted)}
+.local-connect-dialog ol{padding-left:20px;margin:16px 0}
+.local-connect-dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:14px;background:var(--soft);border:1px solid var(--border);border-radius:8px;font-size:12px;line-height:1.7}
+.local-connect-dialog form{display:grid;gap:10px;margin-top:22px}
+.local-connect-dialog label{font-size:12px;font-weight:600;margin-top:6px}
+.local-connect-dialog input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text)}
+.local-connect-dialog form p{margin:4px 0}
+.local-connect-dialog #local-connect-note{color:var(--danger,#b42318)}
+.local-connect-dialog button{margin-top:6px;min-height:40px}
+.local-connect-dialog button.primary{font:inherit;font-size:12px;font-weight:600;padding:10px 16px;border:1px solid var(--accent);border-radius:7px;background:var(--accent);color:white;cursor:pointer}
+.local-connect-dialog button:disabled{opacity:.6;cursor:wait}
+.app-header #local-disconnect{margin-left:16px;padding:7px 11px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);font:inherit;font-size:11px;cursor:pointer}
+.app-header #local-disconnect:disabled{opacity:.6;cursor:wait}
+
+.convert-target-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:18px 0 12px;padding-top:16px;border-top:1px solid var(--border)}
+.convert-target-actions .hint{margin:0;flex:1;min-width:180px;line-height:1.7}
+
+.output-field .path-row{flex-wrap:wrap}
+.output-field .path-row input{min-width:160px}
+
+.overwrite-dialog{max-height:calc(100dvh - 40px);overflow:auto;background:var(--surface)}
+.overwrite-path{padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--soft)}
+.overwrite-files{max-height:240px;overflow:auto;padding:12px 12px 12px 30px;border:1px solid var(--border);border-radius:8px;font-size:12px;line-height:1.8;overflow-wrap:anywhere}
+.overwrite-files li+li{margin-top:6px}

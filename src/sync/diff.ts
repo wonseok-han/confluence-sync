@@ -22,14 +22,14 @@ export async function documentDiff(base:string,input:string,options:{remote?:boo
   const pageId=splitFrontmatter(after).data.pageId;
   const entry=mapping[path]??Object.values(mapping).find(e=>e.pageId===String(pageId));
   if(options.remote) {
-    if(!entry?.pageId)throw new Error('원격 연결이 없는 새 문서입니다. 로컬 비교를 사용하세요.');
+    if(!entry?.pageId)return {path,before:'',after,source:'new',canRemote:false,note:'원격 연결이 없는 새 문서입니다. 전체 내용이 추가로 표시됩니다.'};
     const env=options.env??readEnv(base);assertWorkspaceConnection(workspace,env);
     const node=await scopeClient(env).getNode(entry.pageId);
     if(String(node.id)!==entry.pageId||node.type!=='page')throw new Error('연결된 원격 페이지를 확인하세요.');
     const localBody = splitFrontmatter(after).body;
     // buildFrontmatter adds one blank separator. Keep intentional body whitespace.
     const comparisonBody = localBody !== after ? localBody.replace(/^\r?\n/, '') : localBody;
-    return {path,before:htmlToMarkdown(node.html,{storage:node.storage,codeLangs:codeLanguagesFromStorage(node.storage)}),after:comparisonBody,
+    return {path,before:htmlToMarkdown(node.html,{obsidian:/^ {0,3}(?:> ?)+\[![\w-]+\]|\[\^[^\]\s]+\]:|(?<!\\)\^\[/m.test(comparisonBody),pageId:entry.pageId,storage:node.storage,codeLangs:codeLanguagesFromStorage(node.storage)}),after:comparisonBody,
       source:'remote',canRemote:true,note:`현재 원격 v${node.version??'?'} → 로컬 본문 비교입니다. 원격 HTML의 근사 변환이며 frontmatter는 제외합니다. 과거 동기화 기준과의 비교는 아닙니다. 변경 목록에는 본문 외 제목·원격 위치 변경도 포함됩니다.`};
   }
   if(entry?.sourceObject)return {path,before:readBaseline(base,entry.sourceObject),after,source:'baseline',canRemote:true,note:'마지막 Pull·Push 성공 시 저장한 Markdown → 현재 로컬 문서입니다. 첨부 파일의 바이트 차이는 본문 diff에 표시하지 않습니다.'};

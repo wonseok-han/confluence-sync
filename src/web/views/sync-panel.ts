@@ -3,9 +3,11 @@ export const syncPanel = `
   <section class="panel env-settings" aria-labelledby="sync-env-heading">
         <div class="panel-heading"><h2 id="sync-env-heading"><button id="sync-env-toggle" class="preview-disclosure" type="button" aria-expanded="false" aria-controls="sync-env-body"><span id="sync-env-chevron" aria-hidden="true">▸</span>.env 연결 설정<span id="sync-env-toggle-label" class="preview-disclosure-label">펼치기</span></button></h2><div class="actions"><button id="sync-load" type="button">설정 확인</button><button id="sync-connect" type="button" disabled>스페이스 연결</button></div></div>
     <div id="sync-env-body" class="env-settings-body" hidden>
-        <p class="hint">API 토큰이 없나요? <button id="open-token-guide" class="quiet" type="button" aria-haspopup="dialog" aria-controls="help-dialog">API 토큰 발급 가이드</button></p>
+        <div class="env-help-actions"><a class="env-template-download" href="/assets/confluence-env-example.txt" download="confluence.env.example"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"/></svg>.env 샘플 다운로드</a>
+        <p class="hint">API 토큰이 없나요? <button id="open-token-guide" class="quiet" type="button" aria-haspopup="dialog" aria-controls="help-dialog">API 토큰 발급 가이드</button></p></div>
+        <p class="hint">샘플의 빈 값을 채운 뒤 .env 가져오기로 선택하거나, 이름을 .env로 바꿔 기준 폴더에 저장하세요.</p>
         <fieldset class="env-source-options"><legend class="sr-only">환경변수 설정 방식</legend>
-          <label><input type="radio" name="sync-env-source" id="sync-env-base-mode" checked><span><strong>기준 폴더의 .env 사용</strong><small>01에서 선택한 폴더의 설정을 읽습니다.</small></span></label>
+          <label><input type="radio" name="sync-env-source" id="sync-env-base-mode" checked><span><strong>기준 폴더의 .env 사용</strong><small>로컬 문서에서 선택한 폴더의 설정을 읽습니다.</small></span></label>
           <label><input type="radio" name="sync-env-source" id="sync-env-import-mode"><span><strong>.env 가져오기</strong><small>파일을 선택해 현재 웹 작업에 적용합니다.</small></span></label>
         </fieldset>
         <div id="sync-env-import-controls" class="env-import-controls" hidden>
@@ -13,7 +15,7 @@ export const syncPanel = `
           <div class="env-file-row"><button id="sync-env-choose" type="button">.env 파일 선택…</button><span id="sync-env-file-name">선택한 파일 없음</span></div>
           <button id="sync-env-save" type="button" disabled>기준 폴더에 .env 저장</button>
         </div>
-        <p id="sync-env-source-note" class="hint">01에서 선택한 기준 폴더의 .env만 읽습니다. 파일이 없으면 .env를 가져오세요.</p>
+        <p id="sync-env-source-note" class="hint">로컬 문서에서 선택한 기준 폴더의 .env만 읽습니다. 파일이 없으면 .env를 가져오세요.</p>
         <div class="env-config-summary"><h4>적용된 연결 정보</h4>
       <dl id="sync-config" class="sync-config"><dt>연결 설정</dt><dd>설정 확인을 누르면 서버·계정·스페이스를 볼 수 있습니다.</dd></dl>
       <p id="sync-config-status" class="hint" role="status"></p>
@@ -21,13 +23,14 @@ export const syncPanel = `
     </div>
   </section>
   <section class="panel sync-workbench" aria-label="Confluence 작업 설정">
-    <div class="panel-heading"><h2><span class="section-number">02</span>Confluence</h2><span id="sync-stage-count" class="count">0개 업로드 예정</span></div>
+    <div class="panel-heading"><h2>Confluence</h2><span id="sync-stage-count" class="count">0개 업로드 예정</span></div>
     <div class="sync-workbench-body">
-      <p id="sync-target" class="sync-target">01에서 스페이스 전체를 보관할 기준 폴더를 선택하세요.</p>
+      <p id="sync-target" class="sync-target">로컬 문서에서 스페이스 전체를 보관할 기준 폴더를 선택하세요.</p>
       <div class="sync-workbench-toolbar">
         <div class="actions" aria-label="원격 변경 확인 및 가져오기">
           <button id="sync-fetch" type="button" title="스페이스의 새 문서와 버전·위치 변경을 확인합니다. 2분 이내 결과는 재사용합니다." disabled>원격 변경 확인 (Fetch)</button>
           <button id="sync-pull-remote" type="button" disabled>↓ 원격 변경 가져오기 (Pull)</button>
+          <label class="sync-pull-format" for="sync-pull-format">가져오기 형식<select id="sync-pull-format" aria-describedby="sync-pull-format-help"><option value="markdown">Markdown</option><option value="obsidian">Obsidian</option></select></label>
           <button hidden id="sync-stage-scan" type="button">↻ 로컬 다시 확인</button>
         </div>
         <div class="actions" aria-label="업로드 대상 일괄 선택">
@@ -35,6 +38,7 @@ export const syncPanel = `
           <button id="sync-stage-remove" type="button" disabled><span aria-hidden="true">−</span> 모두 제외</button>
         </div>
       </div>
+      <p id="sync-pull-format-help" class="hint sync-pull-format-help">일반 Markdown 링크와 제목이 있는 인용문으로 받습니다. 이 설정은 새로 받는 문서와 복구·원복에 적용하며 기존 파일을 일괄 변환하지 않습니다.</p>
       <div class="sync-observation"><span id="sync-stage-checking" class="stage-checking" aria-hidden="true"><i class="activity-spinner" aria-hidden="true"></i>로컬 확인 중…</span><span>로컬 자동 확인 · 5초 간격 · API 호출 없음</span><span id="sync-stage-remote-note">원격 상태 미확인 · Fetch로 갱신하세요.</span></div>
       <div class="sync-change-heading"><h3 id="sync-stage-heading">변경사항</h3><span>받을 문서는 Pull · 보낼 변경은 체크 후 Push</span></div>
       <p id="sync-stage-note" class="hint" role="status">로컬 변경을 자동으로 확인합니다. 원격 상태는 Fetch를 눌러 확인하세요.</p>
@@ -87,7 +91,7 @@ export const syncPanel = `
     <div class="actions"><button id="sync-env-confirm-cancel" type="button">취소</button><button id="sync-env-confirm-save" type="button" class="primary">연결 설정 교체 후 저장</button></div>
   </dialog>
   <section id="sync-results" class="panel sync-results" aria-label="Confluence 작업 내역">
-    <div class="panel-heading"><h2><span class="section-number">03</span>대상 및 실행 내역</h2><span id="sync-job-state" class="count">대기</span></div>
+    <div class="panel-heading"><h2>대상 및 실행 내역</h2><div class="actions sync-log-actions"><span id="sync-job-state" class="count sync-job-status" role="status" hidden></span><button id="sync-log-download" type="button" disabled title="현재 작업의 실행 내역을 내려받습니다. 실행 중에도 현재까지의 로그를 저장할 수 있습니다."><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"/></svg>로그 다운로드</button></div></div>
     <div class="sync-result-body"><p id="sync-job-summary" class="hint" hidden></p><p id="sync-log-empty" class="empty">미리보기하면 문서별 신규·변경·동일 상태와 부모 계층을 확인할 수 있습니다.</p><pre id="sync-log" tabindex="0" aria-label="Confluence 작업 로그" hidden></pre></div>
   </section>
 </div>`;

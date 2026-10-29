@@ -1,3 +1,4 @@
+import { downloadText, formatJobLog, jobLogFilename } from './download.js';
 import { createRestore } from './restore.js';
 import { createSyncDiff } from './sync-diff.js';
 import { createStaging } from './staging.js';
@@ -7,7 +8,7 @@ import { renderSyncLog } from './sync-log.js';
 export function initSync({ api, monaco, context, setBusy, showSync, refresh = async () => {}, notify = () => {}, activity }) {
   const $ = id => document.getElementById(id);
   let busy = false, planId = null, previewJobId = null, preparedKey = '', loadedKey = '', timer, configured = false, credentialsReady = false, remotePath = '', workspaceLabel = '스페이스 전체';
-  let jobActivity;
+  let jobActivity,currentJob;
   const jobLabels = {restore:'선택한 문서를 원격 최신으로 복구하는 중',preview:'업로드 미리보기를 계산하는 중',fetch:'원격 변경을 확인하는 중',pull:'Confluence에서 가져오는 중',push:'Confluence에 업로드하는 중'};
   const jobButtons = {restore:'sync-restore-confirm',preview:'sync-preview',fetch:'sync-fetch',pull:'sync-pull-remote',push:'sync-push'};
   function beginJobActivity(kind, button) {
@@ -21,6 +22,7 @@ export function initSync({ api, monaco, context, setBusy, showSync, refresh = as
     const ctx = context();
     return { base: ctx.base || '', target: '', envId: envSettings.request().envId, verify: $('sync-verify').checked, referenceRoots: $('sync-references').value.split(/\r?\n/).map(path => path.trim()).filter(Boolean) };
   }
+  const pullFormat=()=>$('sync-pull-format').value==='obsidian'?'obsidian':'markdown';
   const key = () => JSON.stringify(selection());
   const configKey = () => JSON.stringify([context().base, envSettings.identity()]);
   const hasTarget = () => !!context().base;
@@ -31,11 +33,14 @@ export function initSync({ api, monaco, context, setBusy, showSync, refresh = as
     if (!transient && loadedKey && loadedKey !== configKey()) {
       loadedKey = ''; configured = false; credentialsReady = false; remotePath = ''; $('sync-config').replaceChildren(); $('sync-config-status').textContent = '설정 확인 또는 .env 가져오기로 연결 정보를 불러오세요.';
     }
+    $('sync-log-download').disabled=!currentJob?.log?.trim();
+    $('sync-job-state').hidden=!currentJob;
     envSettings.update(busy);
     $('sync-connect').disabled = busy || !context().base || !credentialsReady || configured;
     $('sync-connect').textContent = configured ? '스페이스 연결됨' : '스페이스 연결';
     staging.update(busy);
-    for (const id of ['sync-load', 'sync-verify', 'sync-references', 'sync-add-reference']) $(id).disabled = busy;
+    for (const id of ['sync-pull-format', 'sync-load', 'sync-verify', 'sync-references', 'sync-add-reference']) $(id).disabled = busy;
+    $('sync-pull-format-help').textContent=pullFormat()==='obsidian'?'위키링크([[문서|이름]])·콜아웃·각주 문법으로 복원합니다. 파일명이 겹치거나 HTML 표 안의 링크는 호환되는 상대 경로 링크를 유지합니다. 새로 받는 문서와 복구·원복에 적용합니다.':'Markdown 링크([이름](문서.md))·제목이 있는 인용문·위첨자 각주 목록으로 받습니다. 새로 받는 문서와 복구·원복에 적용하며 기존 파일을 일괄 변환하지 않습니다.';
     const receive=$('sync-pull-remote');
     if(receive){const count=staging.remoteOnlyCount();receive.disabled=busy||!configured||!credentialsReady||!count;receive.textContent=`↓ 원격 문서 ${count}개 가져오기 (Pull)`;}
     $('sync-fetch').disabled = busy || !context().base || !configured || !credentialsReady;
@@ -45,7 +50,7 @@ export function initSync({ api, monaco, context, setBusy, showSync, refresh = as
     $('sync-push').disabled = busy || !configured || !credentialsReady || !planId || !previewJobId || preparedKey !== key();
     $('sync-push').title = planId ? '미리보기한 범위를 업로드합니다.' : '현재 선택과 설정으로 업로드 미리보기를 먼저 완료하세요.';
     const request = selection();
-    $('sync-target').textContent = hasTarget() ? `기준 폴더 ${request.base} ↔ ${workspaceLabel} · Push는 체크한 문서만` : '01에서 기준 폴더를 선택하세요.';
+    $('sync-target').textContent = hasTarget() ? `기준 폴더 ${request.base} ↔ ${workspaceLabel} · Push는 체크한 문서만` : '로컬 문서에서 기준 폴더를 선택하세요.';
   }
   function renderConfig(config) {
     loadedKey = configKey(); configured = !!config.connected; credentialsReady = !config.missing.length; workspaceLabel = config.rootPath && config.rootPath !== '/' ? `기존 원격 루트 ${config.rootPath}` : '스페이스 전체'; remotePath = configured ? `${config.baseUrl}/${config.spaceKey}/${config.rootPath || '/'}` : ''; $('sync-config').replaceChildren();
@@ -55,6 +60,7 @@ export function initSync({ api, monaco, context, setBusy, showSync, refresh = as
     $('sync-config-status').textContent = config.missing.length ? `설정 필요: ${config.missing.join(', ')}. 미리보기는 인증 없이 사용할 수 있습니다.` : configured ? '접속 설정과 스페이스 연결을 불러왔습니다.' : '스페이스 연결을 눌러 기준 폴더와 연결하세요.';
   }
   function renderJob(job) {
+    currentJob=job;$('sync-log-download').disabled=!job.log?.trim();
     if(job.state==='running'&&!jobActivity)beginJobActivity(job.kind);
     if(jobActivity) {
       const latest=(job.log||'').split(/\r?\n/).filter(line=>line.trim()&&!/^\s*(?:✓|완료|진행 ·)/.test(line)).at(-1);
@@ -62,10 +68,13 @@ export function initSync({ api, monaco, context, setBusy, showSync, refresh = as
     }
     $('sync-job-summary').hidden = false;
     $('sync-job-summary').textContent = `${job.kind === 'restore' ? '문서 복구' : job.kind === 'preview' ? '업로드 미리보기' : job.kind === 'fetch' ? '원격 변경 확인' : job.kind === 'pull' ? '가져오기' : '업로드'} · ${['pull','fetch','restore'].includes(job.kind) ? `${job.config.spaceKey || '스페이스 미설정'} → ${job.selection.base}` : `${job.selection.target || job.selection.base} → ${job.config.spaceKey || '스페이스 미설정'}`} (${job.config.baseUrl || '서버 미설정'})`;
+    if(['pull','restore'].includes(job.kind))$('sync-job-summary').textContent+=` · 가져오기 형식: ${job.selection.format==='obsidian'?'Obsidian':'Markdown'}`;
     $('sync-log-empty').hidden = true; $('sync-log').hidden = false;
     const log = $('sync-log'), following = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     renderSyncLog(log, job.log || '작업을 준비하는 중입니다…');
     if (following) log.scrollTop = log.scrollHeight;
+    $('sync-job-state').hidden=false;
+    $('sync-job-state').setAttribute('data-state',job.state==='succeeded'&&job.warningCount?'warning':job.state);
     $('sync-job-state').textContent = job.state === 'succeeded' && job.warningCount ? '완료 (경고)' : { running: '진행 중', succeeded: '완료', failed: '실패' }[job.state];
     const announce = !announcedJobs.has(job.id);
     if (job.state !== 'running') announcedJobs.add(job.id);
@@ -74,7 +83,7 @@ export function initSync({ api, monaco, context, setBusy, showSync, refresh = as
     else if (job.kind === 'preview') {
       if (job.id === previewJobId && preparedKey === key() && !job.config.missing.length && job.config.connected) planId = job.planId;
       status(job.config.missing.length ? '미리보기 완료. 접속 설정을 채운 뒤 다시 미리보기해 주세요.' : planId ? '미리보기 완료. 대상과 업로드 위치를 확인하고 Confluence에 업로드를 누르세요.' : '미리보기 내역을 불러왔습니다. 현재 선택으로 다시 미리보기해 주세요.', false, announce ? (job.config.missing.length ? 'warning' : 'success') : null);
-    } else if (job.kind === 'fetch') status('Fetch를 완료했습니다. 변경 문서 목록에 원격 상태를 반영합니다. 상세 조회 내역은 03에서 확인할 수 있으며 문서와 동기화 기준은 유지됩니다.', false, announce ? 'success' : null);
+    } else if (job.kind === 'fetch') status('Fetch를 완료했습니다. 변경 문서 목록에 원격 상태를 반영합니다. 상세 조회 내역은 대상 및 실행 내역에서 확인할 수 있으며 문서와 동기화 기준은 유지됩니다.', false, announce ? 'success' : null);
     else if (job.warningCount) status(`가져오기를 완료했습니다. 첨부 ${job.warningCount}개를 저장하지 못해 원격 참조를 유지했습니다. 실행 내역을 확인하세요.`, false, announce ? 'warning' : null);
     else status(job.kind === 'restore' ? '원격 최신으로 복구했습니다. 복구 문서는 업로드 선택에서 제외했습니다.' : job.kind === 'pull' ? '가져오기가 완료되었습니다. 기준 폴더에서 문서를 확인하세요.' : '업로드가 완료되었습니다. 다른 대상을 선택해 계속 작업할 수 있습니다.', false, announce ? 'success' : null);
   }
@@ -105,7 +114,7 @@ export function initSync({ api, monaco, context, setBusy, showSync, refresh = as
     setBusy(true);
     status(kind === 'restore' ? '선택한 문서를 복구합니다…' : kind === 'preview' ? '동기화 대상을 확인하고 있습니다…' : kind === 'fetch' ? '원격 변경 확인을 시작합니다…' : kind === 'pull' ? 'Confluence에서 가져오기를 시작합니다…' : '업로드를 시작합니다…', false, null);
     try {
-      const { job } = await api('/api/sync/' + kind, kind === 'restore' ? restoreRequest : kind === 'preview' ? request : kind === 'pull' ? {...envSettings.request(),remoteOnly:true} : kind === 'fetch' ? envSettings.request() : { planId: id });
+      const { job } = await api('/api/sync/' + kind, kind === 'restore' ? restoreRequest : kind === 'preview' ? request : kind === 'pull' ? {...envSettings.request(),remoteOnly:true,format:pullFormat()} : kind === 'fetch' ? envSettings.request() : { planId: id });
       if (kind === 'preview') previewJobId = job.id;
       renderConfig(job.config); renderJob(job);
       if (kind === 'fetch') $('sync-stage-heading').scrollIntoView({ block: 'start' });
@@ -134,7 +143,7 @@ export function initSync({ api, monaco, context, setBusy, showSync, refresh = as
     finally { setBusy(false); }
   };
   const comparison = createSyncDiff({api,selection,monaco,notify});
-  const restoration = createRestore({api,selection,setBusy,isBusy:()=>busy,status,start});
+  const restoration = createRestore({api,selection:()=>({...selection(),format:pullFormat()}),setBusy,isBusy:()=>busy,status,start});
   const staging = createStaging({restore:restoration.open,canRestore:()=>configured&&credentialsReady,scopeKey:() => remotePath, compare:comparison.open,api, selection, changed:invalidatePreview, busy:setBusy, status, update:() => update(busy)});
   const envSettings = createEnvSettings({ api, context, setBusy, changed: () => { invalidatePreview(); update(busy); }, renderConfig: config => { invalidatePreview(); renderConfig(config); }, status });
   $('sync-connect').onclick = async () => {
@@ -147,11 +156,17 @@ export function initSync({ api, monaco, context, setBusy, showSync, refresh = as
     } catch (error) { status(error.message, true); }
     finally { setBusy(false); }
   };
+  $('sync-pull-format').onchange=()=>update(busy);
   $('sync-fetch').onclick = () => start('fetch');
   if($('sync-pull-remote'))$('sync-pull-remote').onclick=()=>start('pull-remote');
   $('sync-preview').onclick = () => start('preview');
   $('sync-push').onclick = () => start('push');
   $('sync-reconnect').onclick = poll;
+  $('sync-log-download').onclick=()=>{
+    if(!currentJob?.log?.trim())return;
+    try{downloadText(jobLogFilename(currentJob),formatJobLog(currentJob));notify('로그 다운로드를 시작했습니다.','success');}
+    catch(error){status('로그 다운로드를 시작하지 못했습니다. '+error.message,true);}
+  };
   $('sync-load').onclick = async () => {
     if (busy) return;
     invalidatePreview(); setBusy(true);

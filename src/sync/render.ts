@@ -19,7 +19,7 @@ export type TreeRenderer = {
   titles: Record<string, string>;
   /** base 상대 경로 → 문서(제목·본문·frontmatter·헤딩) */
   docs: Record<string, Doc>;
-  render: (rel: string, body: string, title: string, legacyCallouts?: boolean) => Rendered & { linkWarnings: string[]; referenceLinks: string[] };
+  render: (rel: string, body: string, title: string, legacyCallouts?: boolean | 'panels') => Rendered & { linkWarnings: string[]; referenceLinks: string[] };
 };
 
 export function buildTreeRenderer(baseDir: string, rels: string[], options?: { referenceRoots: string[]; baseUrl?: string; referenceBase?: string }): TreeRenderer {
@@ -30,7 +30,7 @@ export function buildTreeRenderer(baseDir: string, rels: string[], options?: { r
   const lookup = options ? buildReferenceLookup(options.referenceBase ?? baseDir, rels, options.referenceRoots, options.baseUrl) : null;
   const anchorTargets = resolveAnchorTargets(docs, vault, lookup?.localTarget);
 
-  const render = (rel: string, body: string, title: string, legacyCallouts = false) => {
+  const render = (rel: string, body: string, title: string, legacyCallouts: boolean | 'panels' = false) => {
     const warnings = new Set<string>(), references = new Set<string>();
     const linked = (message: string) => references.add(message);
     const warn = (message: string) => warnings.add(message);

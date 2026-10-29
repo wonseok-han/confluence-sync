@@ -15,6 +15,7 @@ export function createRestore({api,selection,setBusy,isBusy,status,start}) {
       $('sync-restore-title').textContent=overwrite?'로컬 수정을 버리고 원격 최신으로 되돌릴까요?':'누락된 문서를 원격에서 다시 받을까요?';
       $('sync-restore-path').textContent=result.path;
       $('sync-restore-warning').textContent=overwrite?'이 문서와 원격에서 참조하는 첨부의 로컬 수정이 사라집니다. 원격 최신 내용으로 교체하며 다른 문서는 유지합니다.':'지정한 문서와 참조 첨부만 다시 받습니다. 기존 파일과 내용이 다른 기존 첨부는 덮어쓰지 않습니다.';
+      $('sync-restore-warning').textContent+=` 가져오기 형식: ${request.format==='obsidian'?'Obsidian':'Markdown'}.`;
       $('sync-restore-confirm').textContent=overwrite?'로컬 수정 버리고 원복':'원격에서 복구';
       dialog.showModal();$('sync-restore-cancel').focus();
     }catch(error){status(error.message,true);}finally{setBusy(false);}

@@ -23,7 +23,7 @@ import { loadWorkspace, findSyncBase, resolveSyncBase, inScope, inNestedWorkspac
 import { readEnv, requireEnv } from '../confluence/config.js';
 import { createClient, ConfluenceDownloadError, type ContentNode } from '../confluence/client.js';
 import { htmlToMarkdown, codeLanguagesFromStorage } from '../documents/html-to-markdown.js';
-import { buildFrontmatter, splitFrontmatter } from '../documents/obsidian.js';
+import { buildFrontmatter, splitFrontmatter, wikilinkDisplayText } from '../documents/obsidian.js';
 import { collectHeadings, matchConfluenceAnchor, type Heading } from '../documents/anchors.js';
 import { collectMarkdown } from '../documents/catalog.js';
 import { preparePushTree } from './prepare.js';
@@ -136,6 +136,7 @@ async function pullPage(ctx: Ctx, node: ContentNode, destDir: string): Promise<C
 
   const referenced = new Set<string>();
   let body = htmlToMarkdown(html, {
+    obsidian: ctx.obsidian, pageId: id,
     onImage: (f) => referenced.add(f),
     assetPrefix,
     codeLangs: codeLanguagesFromStorage(storage), // 코드블록 언어는 storage 가 진짜
@@ -166,7 +167,7 @@ async function pullPage(ctx: Ctx, node: ContentNode, destDir: string): Promise<C
       writeFileSync(assetPath, bytes);
     }
     if (unavailable.size) body = htmlToMarkdown(html, {
-      assetPrefix, codeLangs: codeLanguagesFromStorage(storage), storage,
+      obsidian: ctx.obsidian, pageId: id, assetPrefix, codeLangs: codeLanguagesFromStorage(storage), storage,
       attachmentDestination: (name, source) => {
         if (!unavailable.has(name)) return `${assetPrefix}/${name}`;
         if (/^https?:\/\//i.test(source)) return source;
@@ -344,8 +345,9 @@ export function relinkPass(
       if (wikilinks && nameCount.get(name) === 1) {
         // Obsidian 은 슬러그가 아니라 헤딩 텍스트로 섹션을 가리킨다: [[문서#헤딩 텍스트]]
         const heading = slug ? info?.get(target)?.textBySlug.get(slug) : undefined;
-        if (!heading) return label === name ? `[[${name}]]` : `[[${name}|${label}]]`;
-        return `[[${name}#${heading}|${label}]]`;
+        const display = wikilinkDisplayText(label);
+        if (!heading) return display === name ? `[[${name}]]` : `[[${name}|${display}]]`;
+        return `[[${name}#${heading}|${display}]]`;
       }
       const rel = relative(dirname(file), target).split('\\').join('/');
       return `[${label}](${dest(rel + (slug ? `#${slug}` : ''))})`;
@@ -366,7 +368,7 @@ export function relinkPass(
         const heading = info?.get(file)?.textBySlug.get(frag);
         if (!heading) return whole;
         count++;
-        const label = text.trim();
+        const label = wikilinkDisplayText(text.trim());
         return label && label !== heading ? `[[#${heading}|${label}]]` : `[[#${heading}]]`;
       });
     }
@@ -597,7 +599,9 @@ export async function runPull(argv: string[], options: {restorePaths?: string[];
         ? entry.localHash === localStateHash(baseDir, rel, rendered)
         : !!entry?.hash && (entry.hash === docHash(doc.title, rendered)
           || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title))
+          || entry.hash === docHash(doc.title, tree.render(rel, doc.body, doc.title, 'panels'))
           || entry.hash === docHash(doc.title, tree.render(rel, doc.body, doc.title, true))
+          || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title, 'panels'))
           || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title, true)));
       if (clean) localClean.add(rel);
     }

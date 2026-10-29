@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
-import { readdir, realpath, stat, readFile, mkdtemp, rm } from 'node:fs/promises';
+import { randomBytes, createHash } from 'node:crypto';
+import { readdir, realpath, stat, lstat, readFile, mkdtemp, rm } from 'node:fs/promises';
 import { resolve, dirname, basename, join, relative, extname } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -13,11 +13,19 @@ import { previewDocument } from './preview.js';
 import { createTableFormatting } from './table-format.js';
 
 import { chooseFolder } from './folder-dialog.js';
+import { readPkgVersion } from '../shared/version.js';
 import { within, canonical, publishOutput, OverwriteRequired } from './output.js';
 const execute = promisify(execFile);
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export async function startWeb(options: { start?: string; port?: number; pickFolder?: typeof chooseFolder; syncRunner?: SyncRunner } = {}) {
+export function deployedUi(value: string): URL {
+  const url = new URL(value);
+  if (url.username || url.password || url.pathname !== '/' || url.search || url.hash || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1','localhost','[::1]'].includes(url.hostname)))) throw new Error('--ui에는 경로·쿼리 없는 HTTPS 웹 주소를 지정하세요. 로컬 개발 주소는 HTTP도 가능합니다.');
+  return url;
+}
+export async function startWeb(options: { start?: string; port?: number; ui?: string; pickFolder?: typeof chooseFolder; syncRunner?: SyncRunner } = {}) {
+  const ui = options.ui ? deployedUi(options.ui) : undefined;
+  const remoteToken = ui ? randomBytes(32).toString('hex') : undefined;
   const start = await realpath(resolve(options.start ?? homedir()));
   if (!(await stat(start)).isDirectory()) throw new Error('시작 경로가 폴더가 아닙니다.');
   const token = randomBytes(32).toString('hex');
@@ -44,9 +52,24 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', `default-src 'self'; script-src 'self' 'nonce-${previewNonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; font-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`);
+    const remote = !!req.headers.origin && req.headers.origin === ui?.origin;
     if (!req.headers.host || !allowedHosts.has(req.headers.host)
-      || (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`)) {
+      || (req.headers.origin && !remote && req.headers.origin !== `http://${req.headers.host}`)) {
       json(403, { error: '이 웹 화면에서만 요청할 수 있습니다.' }); return;
+    }
+    if (remote) {
+      res.setHeader('Access-Control-Allow-Origin', ui!.origin);
+      res.setHeader('Vary', 'Origin');
+      if (!req.url?.startsWith('/api/')) { json(403, {error:'로컬 API만 연결할 수 있습니다.'}); return; }
+      if (req.method === 'OPTIONS') {
+        const headers = String(req.headers['access-control-request-headers'] ?? '').toLowerCase().split(',').map(s=>s.trim()).filter(Boolean);
+        if (!['GET','POST'].includes(String(req.headers['access-control-request-method'])) || headers.some(h=>!['x-csync-token','content-type'].includes(h))) { json(403, {error:'허용되지 않은 연결 요청입니다.'}); return; }
+        res.setHeader('Access-Control-Allow-Methods','GET, POST');
+        res.setHeader('Access-Control-Allow-Headers','X-Csync-Token, Content-Type');
+        if (req.headers['access-control-request-private-network'] === 'true') res.setHeader('Access-Control-Allow-Private-Network','true');
+        res.writeHead(204); res.end(); return;
+      }
+      if (req.headers['x-csync-token'] !== remoteToken) { json(403, {error:'로컬 실행기 연결이 만료되었습니다. 실행기의 연결 링크로 다시 연결하세요.'}); return; }
     }
     try {
       const url = new URL(req.url ?? '/', origin);
@@ -56,12 +79,13 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
       if (req.method === 'GET' && url.pathname.startsWith('/assets/')) {
         const path = resolve(assetsRoot, decodeURIComponent(url.pathname.slice('/assets/'.length)));
         if (!within(assetsRoot, path)) { json(403, { error: '잘못된 파일 경로입니다.' }); return; }
-        const types: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/css', '.ttf': 'font/ttf', '.png': 'image/png', '.svg': 'image/svg+xml' };
+        const types: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/css', '.ttf': 'font/ttf', '.png': 'image/png', '.svg': 'image/svg+xml', '.txt': 'text/plain; charset=utf-8' };
         if (!types[extname(path)]) { json(404, { error: '없는 파일입니다.' }); return; }
         res.setHeader('Content-Type', types[extname(path)]);
         res.end(await readFile(path)); return;
       }
-      if (req.headers['x-csync-token'] !== token) { json(403, { error: '페이지를 새로고침해 주세요.' }); return; }
+      if (!remote && req.headers['x-csync-token'] !== token) { json(403, { error: '페이지를 새로고침해 주세요.' }); return; }
+      if (req.method === 'GET' && url.pathname === '/api/connection') { json(200, {version:readPkgVersion(), mode:remote?'connector':'local'}); return; }
       if (req.method === 'GET' && url.pathname === '/api/sync/job') { json(200, { job: sync.current() }); return; }
       if (req.method === 'GET' && url.pathname === '/api/browse') {
         const path = await realpath(url.searchParams.get('path') || start);
@@ -214,7 +238,9 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
       if (!approved || typeof approved !== 'object' || Array.isArray(approved)
         || Object.values(approved).some(value => typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value))) throw new Error('덮어쓰기 확인 정보를 확인해 주세요.');
       const requestedOut = body.out?.trim() ? await canonical(resolve(body.out.trim())) : null;
-      if (requestedOut && (within(base, requestedOut) || within(requestedOut, base))) {
+      const inPlace = requestedOut !== null && (requestedOut === browseBase || requestedOut === base);
+      const effectiveOut = inPlace ? base : requestedOut;
+      if (requestedOut && !inPlace && (within(base, requestedOut) || within(requestedOut, base))) {
         throw new Error('출력 폴더는 기준 폴더와 겹치지 않는 별도 경로로 지정해 주세요.');
       }
       // Validation above awaits filesystem reads; another request may have acquired the slot.
@@ -226,7 +252,20 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
       let response: unknown;
       let responseStatus = 200;
       let saved: Awaited<ReturnType<typeof publishOutput>> | undefined;
+      const verifySourceApproval = async () => {
+        if (!inPlace) return;
+        for (const [rel, hash] of Object.entries(approved)) {
+          const path = resolve(base, rel);
+          if (!within(base, path)) throw new Error('덮어쓰기 확인 경로를 확인하세요.');
+          try {
+            const info = await lstat(path);
+            if (info.isFile() && !info.isSymbolicLink() && createHash('sha256').update(await readFile(path)).digest('hex') === hash) continue;
+          } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+          throw Object.assign(new Error(`확인 이후 원본 파일이 변경되었거나 삭제되었습니다: ${rel}. 미리보기부터 다시 진행하세요.`), { code: 'SOURCE_CHANGED' });
+        }
+      };
       try {
+        await verifySourceApproval();
         out = await mkdtemp(join(tmpdir(), 'csync-preview-'));
         const args = ['--base', base, file, '--out', out];
         if (body.to !== 'repair') args.push('--to', body.to);
@@ -245,17 +284,23 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
         })));
         const { before, after } = previews[0];
         if (!body.preview) {
-          destination = requestedOut ?? await mkdtemp(join(dirname(base), `${basename(base)}-converted-`));
-          generatedDestination = !requestedOut;
+          await verifySourceApproval();
+          destination = effectiveOut ?? await mkdtemp(join(dirname(base), `${basename(base)}-converted-`));
+          generatedDestination = !effectiveOut;
           saved = await publishOutput(out, destination, approved);
           results.add(destination);
         }
-        response = { before, after, previews, saved, documentCount: documents.length, log: stdout.split(out).join(destination ?? '(미리보기)'), output: destination };
+        response = { before, after, previews, saved, inPlace, documentCount: documents.length, log: stdout.split(out).join(destination ?? '(미리보기)'), output: destination };
       } catch (error) {
         if (destination && generatedDestination) await rm(destination, { recursive: true, force: true });
-        if (error instanceof OverwriteRequired) {
+        if ((error as {code?:string}).code === 'SOURCE_CHANGED') {
           responseStatus = 409;
-          response = { error: error.message, code: 'OVERWRITE_REQUIRED', conflicts: error.conflicts };
+          response = { error: message(error), code: 'SOURCE_CHANGED' };
+        } else if (error instanceof OverwriteRequired) {
+          responseStatus = 409;
+          const stale = inPlace && error.conflicts.some(item => approved[item.path] && approved[item.path] !== item.hash);
+          response = stale ? { error: '확인 이후 원본 파일이 변경되었습니다. 미리보기부터 다시 진행하세요.', code: 'SOURCE_CHANGED' }
+            : { error: error.message, code: 'OVERWRITE_REQUIRED', conflicts: error.conflicts, inPlace, output: destination };
         } else {
           const failure = error as Error & { stderr?: string; killed?: boolean };
           throw new Error(failure.killed ? '변환 시간이 2분을 초과했습니다.' : failure.stderr?.trim() || message(error));
@@ -292,19 +337,24 @@ export async function startWeb(options: { start?: string; port?: number; pickFol
       server.close(); throw error;
     }
   }
-  return { server, url: origin };
+  if (ui) ui.hash = new URLSearchParams({csyncEndpoint:origin, csyncToken:remoteToken!}).toString();
+  return { server, url: origin, token, isRunning:()=>Boolean(busy || sync.running()), connectUrl:ui?.href };
 }
 
 export async function runWeb(argv: string[]) {
+  if(argv.includes('--hosted')){const {runHostedWeb}=await import('./hosted.js');return runHostedWeb(argv);}
   const value = (name: string) => { const i = argv.indexOf(name); return i < 0 ? undefined : argv[i + 1]; };
   const port = Number(value('--port') ?? 4318);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('--port는 1~65535 사이의 숫자여야 합니다.');
-  const { url, server } = await startWeb({ start: value('--base'), port });
+  const ui = value('--ui');
+  if (argv.includes('--ui') && !ui) throw new Error('--ui 뒤에 배포 웹 주소를 지정하세요.');
+  const { url, server, connectUrl } = await startWeb({ start: value('--base'), port, ui });
   console.log(`문서 웹: ${url}\n로컬 주소: ${url.replace('127.0.0.1', 'localhost')}\n종료: Ctrl+C`);
+  if (connectUrl) console.log(`배포 웹 연결: ${connectUrl}\n이 웹에 로컬 파일 작업 권한을 부여합니다. 연결 링크는 공유하지 마세요. csync 종료 시 연결 권한도 만료됩니다.`);
   if (!argv.includes('--no-open')) {
     const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer.exe' : 'xdg-open';
-    const child = spawn(command, [url], { stdio: 'ignore' });
-    child.on('error', () => console.log(`브라우저에서 ${url} 을 열어 주세요.`));
+    const child = spawn(command, [connectUrl ?? url], { stdio: 'ignore' });
+    child.on('error', () => console.log('브라우저 자동 열기에 실패했습니다. 위 주소로 접속해 주세요.'));
     child.unref();
   }
   await new Promise<void>(done => server.once('close', done));

@@ -50,3 +50,32 @@ test('automatic preparation and HTML preview both handle callouts without editin
  try{assert.equal((tree.render('doc.md',tree.docs['doc.md'].body,'Doc').storage.match(/ac:name="panel"/g)||[]).length,2)}finally{tree.dispose()}
  const preview=await previewDocument(root,join(root,'doc.md'));assert.doesNotMatch(preview.html,/\[!summary\]|\[!danger\]/);assert.match(preview.html,/background-color:#e6fcff/);assert.match(preview.html,/<strong>요약<\/strong>/);assert.equal(readFileSync(join(root,'doc.md'),'utf8'),before);
 });
+
+const {htmlToMarkdown}=await import('../dist/documents/html-to-markdown.js');
+const {panelExport}=await import('./helpers/callout-export.mjs');
+for(const type of ['summary','abstract','tldr','CUSTOM-kind','__proto__'])for(const fold of ['','+','-'])test(`callout round trip preserves type and fold: ${type}${fold}`,()=>{
+ const source=`> [!${type}]${fold}\n> **Body**\n>\n> - First\n> - Second\n`;
+ const saved=storage(source),html=panelExport(saved);
+ const obsidian=htmlToMarkdown(html,{storage:saved,obsidian:true});assert.equal(obsidian,source.replace(/> - /g,'> -   '));assert.equal(storage(obsidian),saved);assert.doesNotMatch(obsidian,/csync-callout|panelHeader/);
+ const markdown=htmlToMarkdown(html,{storage:saved});assert.match(markdown,/^> \*\*/);assert.match(markdown,/> \*\*Body\*\*/);assert.doesNotMatch(markdown,/\[!|csync-callout/);
+});
+test('nested panels, explicit default title, title-only, escaped custom title and code survive recovery',()=>{
+ const source='> [!summary]- 요약\n> Intro\n>\n> > [!warning]+ Inner & <title>\n> > ```md\n> > [!summary] example\n> > ```\n\n> [!note] Title only\n';
+ const saved=storage(source),html=panelExport(saved),result=htmlToMarkdown(html,{storage:saved,obsidian:true});
+ assert.match(result,/^> \[!summary\]- 요약/);assert.match(result,/> > \[!warning\]\+ Inner & <title>/);assert.match(result,/> > \[!summary\] example/);assert.match(result,/> \[!note\] Title only/);assert.doesNotMatch(result,/csync-callout/);
+});
+test('old panels infer a canonical type, remote titles win, and ordinary quotes stay ordinary',()=>{
+ const old=storage('> [!summary]\n> Body').replace(/<ac:structured-macro ac:name="anchor">[\s\S]*?<\/ac:structured-macro>/,'');
+ assert.match(htmlToMarkdown(panelExport(old),{storage:old,obsidian:true}),/^> \[!abstract\] 요약/);
+ const saved=storage('> [!summary]\n> Body'),edited=saved.replace('>요약</ac:parameter>','>Remote title</ac:parameter>');
+ assert.match(htmlToMarkdown(panelExport(edited),{storage:edited,obsidian:true}),/^> \[!summary\] Remote title/);
+ assert.equal(htmlToMarkdown('<blockquote><p>Ordinary</p></blockquote>',{obsidian:true}),'> Ordinary\n');
+});
+test('missing, malformed or misaligned metadata never leaks or shifts onto unrelated panels',()=>{
+ const saved=storage('> [!summary]- Private\n> Body');
+ const html=panelExport(saved);assert.doesNotMatch(htmlToMarkdown(html,{obsidian:true}),/csync-callout|\[!summary\]/);
+ const extra='<div class="panel"><div class="panelHeader">Other</div><div class="panelContent"><p>Other body</p></div></div>';
+ const result=htmlToMarkdown(extra+html,{storage:saved,obsidian:true});assert.match(result,/> \[!note\] Other/);assert.doesNotMatch(result,/\[!summary\]|csync-callout/);
+ const malformed=saved.replace(/csync-callout-v1-[A-Za-z0-9_-]+/,'csync-callout-v1-invalid');assert.doesNotThrow(()=>htmlToMarkdown(panelExport(malformed),{storage:malformed,obsidian:true}));
+ assert.equal(htmlToMarkdown('<div data-csync-callout="malformed"><p>Safe</p></div>'),'Safe\n');
+});

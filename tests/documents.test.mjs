@@ -147,3 +147,18 @@ test('missing attachment destinations preserve remote references in images and m
  const md=htmlToMarkdown(html,{assetPrefix:'attachments/doc',attachmentDestination:(_name,url)=>url});
  assert.match(md,/https:\/\/example.invalid\/wiki\/download\/attachments\/1\/missing.png/);assert.match(md,/href="\/download\/attachments\/1\/missing.pdf"/);assert.doesNotMatch(md,/attachments\/doc/);
 });
+
+test('Korean intraword underscores stay literal while actual emphasis, code and backslashes are preserved',()=>{
+ const name='제안요청서_재생원료생산인증제_정리';
+ const result=htmlToMarkdown(`<p><a href="https://example.com">${name}</a> 한글__이름 Latin_word</p><p>_강조_</p><p><code>한글\\_코드</code></p>`);
+ assert.match(result,new RegExp('\\['+name+'\\]\\(https://example.com\\)'));assert.match(result,/한글__이름 Latin_word/);assert.match(result,/\\_강조\\_/);assert.match(result,/`한글\\_코드`/);
+ const literal=htmlToMarkdown('<p>한글\\_이름</p>');assert.equal(literal,String.raw`한글\\\_이름`+'\n');
+ const repaired=repairMarkdown('한글\\_제목 `한글\\_코드`\n\n```md\n한글\\_코드\n```\n\n    한글\\_코드\n').text;assert.match(repaired,/^한글_제목 `한글\\_코드`/);assert.match(repaired,/```md\n한글\\_코드\n```/);assert.match(repaired,/    한글\\_코드/);
+});
+test('only successful wiki conversion decodes escaped underscores in aliases and keeps destinations intact',()=>{
+ const source=String.raw`[표시\_이름](문서_이름.md) [외부\_이름](https://example.com/a_b) ![그림\_이름](a_b.png)`;
+ const result=linksToWikilinks(source,(path,label)=>path==='문서_이름.md'?`[[문서_이름|${label}]]`:null);
+ assert.equal(result,String.raw`[[문서_이름|표시_이름]] [외부\_이름](https://example.com/a_b) ![그림\_이름](a_b.png)`);
+ const literal=String.raw`[표시\\\_이름](문서.md)`;assert.equal(linksToWikilinks(literal,(_path,label)=>`[[문서|${label}]]`),String.raw`[[문서|표시\_이름]]`);
+ const back=resolveWikilinks('[[문서|_이름_]]',()=> '문서.md');assert.equal(back,String.raw`[\_이름\_](문서.md)`);assert.match(toStorage(back,'a.md',{},'/tmp').storage,/_이름_/);assert.doesNotMatch(toStorage(back,'a.md',{},'/tmp').storage,/<em>/);
+});

@@ -1,4 +1,7 @@
 import type MarkdownIt from 'markdown-it';
+import { anchorMacro } from './anchors.js';
+
+export const calloutMarker = 'csync-callout-v1-';
 
 const styles: Record<string, { title: string; color: string; background: string }> = {
   note: { title: '노트', color: '#526078', background: '#f4f5f7' },
@@ -16,19 +19,27 @@ const styles: Record<string, { title: string; color: string; background: string 
   quote: { title: '인용', color: '#526078', background: '#f4f5f7' },
 };
 const aliases: Record<string, string> = { summary: 'abstract', tldr: 'abstract', hint: 'tip', important: 'tip', check: 'success', done: 'success', help: 'question', faq: 'question', caution: 'warning', attention: 'warning', fail: 'failure', missing: 'failure', error: 'danger', cite: 'quote' };
+export function calloutStyle(raw: string) {
+  const type = Object.hasOwn(aliases, raw.toLowerCase()) ? aliases[raw.toLowerCase()] : raw.toLowerCase();
+  return Object.hasOwn(styles, type) ? styles[type] : styles.note;
+}
+export function inferCallout(title: string, background: string): string {
+  return Object.entries(styles).find(([, style]) => style.title === title && style.background === background.toLowerCase())?.[0] ?? 'note';
+}
 const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /** Transform actual quote tokens, leaving code examples and ordinary quotes untouched. */
 export function installCallouts(md: MarkdownIt, format: 'html' | 'storage') {
   md.core.ruler.after('inline', 'obsidian_callouts', state => {
     // Compatibility rendering is read-only and only used to verify older baselines.
-    if (state.env?.legacyCallouts) return;
+    if (state.env?.legacyCallouts === true) return;
     const tokens = state.tokens;
+    let serial = 0;
     for (let i = 0; i < tokens.length; i++) {
       if (tokens[i].type !== 'blockquote_open' || tokens[i + 1]?.type !== 'paragraph_open' || tokens[i + 2]?.type !== 'inline' || tokens[i + 3]?.type !== 'paragraph_close') continue;
       const inline = tokens[i + 2], newline = inline.content.indexOf('\n');
       const header = newline < 0 ? inline.content : inline.content.slice(0, newline);
-      const match = header.match(/^\[!([a-z\d_-]+)\][+-]?(?:[ \t]+(.*))?[ \t]*$/i);
+      const match = header.match(/^\[!([a-z\d_-]+)\]([+-]?)(?:[ \t]+(.*))?[ \t]*$/i);
       if (!match) continue;
       let end = i + 1, depth = 1;
       for (; end < tokens.length; end++) {
@@ -36,10 +47,9 @@ export function installCallouts(md: MarkdownIt, format: 'html' | 'storage') {
         if (tokens[end].type === 'blockquote_close' && --depth === 0) break;
       }
       if (end === tokens.length) continue;
-      const raw = match[1].toLowerCase();
-      const type = Object.hasOwn(aliases, raw) ? aliases[raw] : raw;
-      const style = Object.hasOwn(styles, type) ? styles[type] : styles.note;
-      tokens[i].type = 'callout_open'; tokens[i].meta = { ...style, title: match[2]?.trim() || style.title };
+      const style = calloutStyle(match[1]);
+      const marker = format === 'html' || state.env?.legacyCallouts === 'panels' ? '' : anchorMacro(calloutMarker + Buffer.from(JSON.stringify({ type: match[1], fold: match[2], explicit: !!match[3]?.trim(), index: serial++ })).toString('base64url'));
+      tokens[i].type = 'callout_open'; tokens[i].meta = { ...style, title: match[3]?.trim() || style.title, marker };
       tokens[end].type = 'callout_close';
       if (newline < 0) tokens.splice(i + 1, 3);
       else {
@@ -50,10 +60,10 @@ export function installCallouts(md: MarkdownIt, format: 'html' | 'storage') {
     }
   });
   md.renderer.rules.callout_open = (tokens, idx) => {
-    const { title, color, background } = tokens[idx].meta;
+    const { title, color, background, marker } = tokens[idx].meta;
     if (format === 'html') return `<blockquote style="background-color:${background};color:${color}"><p><strong>${escape(title)}</strong></p>\n`;
     const parameter = (name: string, value: string) => `<ac:parameter ac:name="${name}">${escape(value)}</ac:parameter>`;
-    return '<ac:structured-macro ac:name="panel">' + parameter('title', title) + parameter('borderColor', color) + parameter('titleColor', color) + parameter('titleBGColor', background) + parameter('bgColor', background) + '<ac:rich-text-body>\n';
+    return '<ac:structured-macro ac:name="panel">' + parameter('title', title) + parameter('borderColor', color) + parameter('titleColor', color) + parameter('titleBGColor', background) + parameter('bgColor', background) + '<ac:rich-text-body>\n' + marker;
   };
   md.renderer.rules.callout_close = () => format === 'html' ? '</blockquote>\n' : '</ac:rich-text-body></ac:structured-macro>\n';
 }

@@ -4,10 +4,18 @@
  * storage/export_view 는 무손실 역변환이 아니므로 근사 결과다.
  */
 import TurndownService from 'turndown';
+import { restoreFootnoteAnchors, installFootnoteRules } from './footnote-roundtrip.js';
+import { linksToFootnotes } from '../conversion/footnotes.js';
+import { mapMarkdownText } from '../conversion/pdf-pages.js';
+import { restoreCalloutPanels, installPanelRule } from './callout-roundtrip.js';
 import MarkdownIt from 'markdown-it';
 import { applyTableWidths, hasWidths, tableWidths, restoreTableWidths } from './tables.js';
 
 export type Html2MdOpts = {
+  /** Restore Confluence panels as Obsidian callouts instead of titled quotes. */
+  obsidian?: boolean;
+  /** Used to distinguish same-page footnote references from external page links. */
+  pageId?: string;
   /** 본문에서 참조된 로컬 첨부 파일명을 통지(다운로드 대상 수집용) */
   onImage?: (filename: string) => void;
   /** 로컬 첨부 이미지 링크에 붙일 상대 경로 접두사(예: 'attachments/문서명'). 없으면 파일명만 */
@@ -44,15 +52,9 @@ const linkDest = (p: string) => (/\s/.test(p) ? `<${p}>` : p);
  * 줄 맨 앞의 진짜 마커 이스케이프는 보존하고, 그 뒤(줄 중간)의 것만 되돌린다. 코드블록은 건드리지 않는다.
  */
 export function relaxEscapes(md: string): string {
-  let inFence = false;
-  return md
+  return mapMarkdownText(md, prose => prose
     .split('\n')
     .map((line) => {
-      if (/^\s*```/.test(line)) {
-        inFence = !inFence;
-        return line;
-      }
-      if (inFence) return line;
       // 들여쓰기 + (줄 맨 앞의 이스케이프된 마커) 까지는 그대로 두고 이후만 완화
       const head = line.match(/^\s*(?:\\[-+>#]|\d+\\\.)?/)?.[0] ?? '';
       const rest = line
@@ -60,16 +62,16 @@ export function relaxEscapes(md: string): string {
         // 줄 중간의 - + . > 는 마커가 아니므로 이스케이프 불필요
         .replace(/\\([-+.>])/g, '$1')
         // 단어 내부 밑줄은 CommonMark 에서 강조가 아니다 (:11_eleven_square_blue: 같은 이모지 코드)
-        .replace(/(\w)\\_(?=\w)/g, '$1_')
+        .replace(/(?<=[\p{L}\p{N}\p{M}_])(?:\\_)+(?=[\p{L}\p{N}\p{M}_])/gu, run => run.replace(/\\/g, ''))
         // 링크가 아닌 대괄호 쌍(뒤에 ( 나 [ 가 오지 않음)은 이스케이프 불필요
         .replace(/\\\[([^[\]\n]*)\\\](?!\s*[([])/g, '[$1]');
       return head + rest;
     })
-    .join('\n');
+    .join('\n'));
 }
 
 export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
-  html = restoreTableWidths(html, opts.storage);
+  html = restoreFootnoteAnchors(restoreCalloutPanels(restoreTableWidths(html, opts.storage), opts.storage), opts.storage, opts.pageId);
   const cellRenderer = new MarkdownIt({ html: true });
   const td = new TurndownService({
     headingStyle: 'atx',
@@ -79,6 +81,9 @@ export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
     emDelimiter: '_',
   });
 
+  installPanelRule(td, opts.obsidian ?? false);
+  installFootnoteRules(td);
+
   // Confluence export_view 는 색상 텍스트용 인라인 <style> 을 본문(제목 안까지) 끼워 넣는다.
   // turndown 은 기본적으로 이런 요소의 텍스트를 그대로 뱉으므로 통째로 제거한다.
   td.remove(['style', 'script', 'noscript', 'head', 'meta', 'link']);
@@ -87,7 +92,7 @@ export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
   // 그러나 단어 내부 밑줄은 CommonMark 에서 강조가 아니므로(:11_eleven_square_blue: 같은 이모지 코드)
   // 양쪽이 단어 문자인 경우만 이스케이프를 되돌린다.
   const baseEscape = td.escape.bind(td);
-  td.escape = (s: string) => baseEscape(s).replace(/(\w)\\_(?=\w)/g, '$1_');
+  td.escape = (s: string) => baseEscape(s).replace(/(?<=[\p{L}\p{N}\p{M}_])(?:\\_)+(?=[\p{L}\p{N}\p{M}_])/gu, run => run.replace(/\\/g, ''));
 
   // Confluence 는 리스트 항목 내용을 <li><p>…</p></li> 로 감싼다.
   // 기본 규칙대로면 문단으로 취급돼 항목마다 빈 줄이 생기므로(loose list),
@@ -193,5 +198,6 @@ export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
     },
   });
 
-  return relaxEscapes(td.turndown(html)).trim() + '\n';
+  const result = relaxEscapes(td.turndown(html)).trim() + '\n';
+  return opts.obsidian ? linksToFootnotes(result) : result;
 }

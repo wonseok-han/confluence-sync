@@ -48,6 +48,10 @@ export type LinkResolver = (target: string, embed: boolean) => string | null;
 /** 공백이 있으면 <...> 로 감싼다(markdown-it 이 목적지를 통째로 파싱하도록). */
 const dest = (p: string) => (/\s/.test(p) ? `<${p}>` : p);
 
+/** Wiki aliases display underscores literally; Markdown's escape must not leak. */
+export const wikilinkDisplayText = (text: string): string => text.replace(/\\([\\_])/g, '$1');
+const markdownDisplayText = (text: string): string => text.replace(/[\\_]/g, '\\$&');
+
 /**
  * 마크다운 본문에서 "산문" 부분에만 변환을 적용한다.
  * 코드블록(``` / ~~~)과 인라인 코드(`...`) 안은 그대로 둔다 — 링크처럼 생긴 예제 코드를
@@ -90,12 +94,12 @@ export function resolveWikilinks(md: string, resolve: LinkResolver): string {
       // [[#헤딩]] — 대상이 없으면 "이 문서의 이 섹션"이다. vault 조회 없이 앵커 링크가 된다.
       if (!w.target) {
         if (!slug) return whole; // 블록 참조뿐 → 갈 곳이 없으므로 원문 보존
-        return `[${w.alias ?? w.fragment}](#${slug})`;
+        return `[${markdownDisplayText(w.alias ?? w.fragment ?? '')}](#${slug})`;
       }
 
       const found = resolve(w.target, w.embed);
       if (!found) return whole; // 해석 실패 → 원문 보존
-      const label = w.alias ?? w.target;
+      const label = markdownDisplayText(w.alias ?? w.target);
       if (w.embed) return `![${label}](${dest(found + (/\.pdf$/i.test(w.target) && slug ? `#${slug}` : ''))})`;
       return `[${label}](${dest(found + (slug ? `#${slug}` : ''))})`;
     }),
@@ -118,7 +122,7 @@ export function linksToWikilinks(
     s.replace(MD_LINK, (whole, bang: string, label: string, rawDest: string) => {
       if (bang === '!') return whole; // 이미지는 표준 링크 유지
       const d = rawDest.replace(/^<(.*)>$/, '$1');
-      return toWikilink(d, label) ?? whole;
+      return toWikilink(d, wikilinkDisplayText(label)) ?? whole;
     }),
   );
 }

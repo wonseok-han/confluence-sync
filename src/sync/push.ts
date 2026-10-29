@@ -144,7 +144,9 @@ export async function runPush(argv: string[]): Promise<void> {
       const entry = mapping[rel];
       return entry?.localHash ? entry.localHash === localHashes[rel] : !!entry?.hash && (entry.hash === hashes[rel]
         || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title))
+        || entry.hash === docHash(docs[rel].title, render(rel, docs[rel].body, docs[rel].title, 'panels'))
         || entry.hash === docHash(docs[rel].title, render(rel, docs[rel].body, docs[rel].title, true))
+        || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title, 'panels'))
         || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title, true)));
     };
     const unchanged = (rel: string) => !FORCE && !VERIFY && locallyClean(rel) && !mapping[rel]?.pendingMove;

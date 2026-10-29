@@ -135,3 +135,18 @@ test('forced upgrade of a pre-callout baseline uploads the modern panel format',
  const steps=[{path:'/wiki/api/v2/pages/201',method:'PUT',body:{id:'201',version:{number:2}},check:init=>{const body=JSON.parse(init.body);assert.match(body.body.value,/ac:name="panel"/);assert.doesNotMatch(body.body.value,/\[!summary\]/);}}];
  mockFetch(t,steps,scopeResponder(root,steps));await runPush(['--base',root,'--force']);assert.deepEqual(loadIndex(root).entries,{});
 });
+
+test('panel-era baseline remains clean after metadata support and still detects edits',async t=>{
+ configure(t);const {toStorage,hashOf}=await import('../dist/documents/markdown.js');const source='> [!summary]\n> Original';const {root,put}=workspace(t,{'a.md':'---\ntitle: A\n---\n'+source});bindScope(root);
+ const old=toStorage(source,'a.md',{},root,{legacyCallouts:'panels'}).storage;
+ saveMapping(mappingPath(root),{'a.md':{pageId:'201',title:'A',hash:hashOf('A\0'+old),remoteVersion:1}});assert.equal((await inspectStaging(root,options))[0].status,'same');
+ await changeStaging(root,['a.md'],'add',options);mockFetch(t,[]);await runPush(['--base',root]);assert.deepEqual(loadIndex(root).entries,{});
+ put('a.md','---\ntitle: A\n---\n> [!summary]\n> Real edit');assert.equal((await inspectStaging(root,options))[0].status,'changed');
+});
+
+test('footnote comment-era baseline stays clean after anchor metadata support',async t=>{
+ configure(t);const {hashOf}=await import('../dist/documents/markdown.js');const {footnoteStorageComments}=await import('../dist/documents/footnote-roundtrip.js');const {preparePushTree}=await import('../dist/sync/prepare.js');
+ const {root,put}=workspace(t,{'a.md':'---\ntitle: A\n---\nText[^law]\n\n[^law]: Original'});bindScope(root);const tree=await preparePushTree(root,['a.md'],['a.md']);let old;try{const d=tree.docs['a.md'];old=footnoteStorageComments(tree.render('a.md',d.body,d.title).storage);}finally{tree.dispose()}
+ saveMapping(mappingPath(root),{'a.md':{pageId:'201',title:'A',hash:hashOf('A\0'+old),remoteVersion:1}});assert.equal((await inspectStaging(root,options))[0].status,'same');await changeStaging(root,['a.md'],'add',options);mockFetch(t,[]);await runPush(['--base',root]);assert.deepEqual(loadIndex(root).entries,{});
+ put('a.md','---\ntitle: A\n---\nText[^law]\n\n[^law]: Edited');assert.equal((await inspectStaging(root,options))[0].status,'changed');
+});

@@ -13,13 +13,13 @@ function setup(t,api){
 const unavailable={before:null,after:'Local',canRemote:true,source:'unavailable',note:'No stored baseline'};
 const remote={before:'Remote',after:'Local',canRemote:true,source:'remote',note:'Current remote comparison'};
 
-test('opening a diff automatically reads the selected remote body once when no baseline exists',async t=>{
+test('opening a diff immediately reads the current remote body once',async t=>{
  const calls=[];const s=setup(t,async(path,body)=>{calls.push(body);return body.remote?remote:unavailable});await s.ui.open('a.md');
- assert.deepEqual(calls.map(c=>[c.path,c.remote]),[['a.md',false],['a.md',true]]);assert.equal(s.nodes.get('sync-diff-editor').hidden,false);assert.deepEqual(s.models.map(m=>m.value),['Remote','Local']);assert.match(s.nodes.get('sync-diff-before-label').textContent,/현재 원격/);
+ assert.deepEqual(calls.map(c=>[c.path,c.remote]),[['a.md',true]]);assert.equal(s.nodes.get('sync-diff-editor').hidden,false);assert.deepEqual(s.models.map(m=>m.value),['Remote','Local']);assert.match(s.nodes.get('sync-diff-before-label').textContent,/현재 원격/);
 });
 
-test('saved baselines and new documents display immediately without a remote request',async t=>{
- for(const source of ['baseline','new']){let calls=0;const s=setup(t,async(_path,body)=>{calls++;assert.equal(body.remote,false);return {...remote,source,before:source==='new'?'':'Original',canRemote:source==='baseline'}});await s.ui.open('a.md');assert.equal(calls,1);assert.equal(s.nodes.get('sync-diff-editor').hidden,false);}
+test('explicit baseline comparison stays offline and new documents display an empty remote',async t=>{
+ for(const source of ['baseline','new']){let calls=0;const s=setup(t,async(_path,body)=>{calls++;assert.equal(body.remote,false);return {...remote,source,before:source==='new'?'':'Original',canRemote:source==='baseline'}});await s.ui.open('a.md',false);assert.equal(calls,1);assert.equal(s.nodes.get('sync-diff-editor').hidden,false);}
 });
 
 test('failed automatic comparison shows an error and allows one explicit retry',async t=>{
@@ -30,4 +30,9 @@ test('failed automatic comparison shows an error and allows one explicit retry',
 
 test('closing before the local lookup finishes never starts a remote request',async t=>{
  let finish,calls=0;const s=setup(t,()=>{calls++;return new Promise(resolve=>{finish=resolve})});const pending=s.ui.open('a.md');s.nodes.get('sync-diff-close').onclick();finish(unavailable);await pending;assert.equal(calls,1);assert.equal(s.models.length,0);
+});
+
+test('default diff compares current remote even when a saved baseline exists',async t=>{
+ const calls=[];const s=setup(t,async(_path,body)=>{calls.push(body);return body.remote?{...remote,before:'한글_제목',after:'한글_제목'}:{...remote,source:'baseline',before:'한글\\_제목',after:'한글_제목'}});
+ await s.ui.open('a.md');assert.deepEqual(calls.map(c=>c.remote),[true]);assert.deepEqual(s.models.map(m=>m.value),['한글_제목','한글_제목']);
 });

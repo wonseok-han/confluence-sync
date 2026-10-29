@@ -23,7 +23,13 @@ const keys = connectionKeys;
 type Imported = { env: Settings; content: string; source: string };
 type Imports = Map<string, Imported>;
 type Settings = Record<string, string>;
-type Selection = { restorePaths?: string[]; restoreOverwrite?: boolean; remoteOnly?: boolean; full?: boolean; base: string; target: string; envId: string; verify: boolean; referenceRoots: string[] };
+type ReceiveFormat='markdown'|'obsidian';
+function receiveFormat(input:unknown):ReceiveFormat{
+  const format=(input as {format?:unknown})?.format;
+  if(format!==undefined&&format!=='markdown'&&format!=='obsidian')throw new Error('내부 링크 형식을 확인하세요. Markdown 또는 Obsidian을 선택하세요.');
+  return format??'markdown';
+}
+type Selection = { format?:ReceiveFormat; restorePaths?: string[]; restoreOverwrite?: boolean; remoteOnly?: boolean; full?: boolean; base: string; target: string; envId: string; verify: boolean; referenceRoots: string[] };
 type Prepared = { selection: Selection; env: Settings; config: ReturnType<typeof publicConfig>; fingerprint: string };
 export type SyncRunner = (args: string[], env: Settings, log: (text: string) => void) => Promise<number>;
 type Job = { warningCount?: number; id: string; kind: 'preview' | 'push' | 'pull' | 'fetch' | 'restore'; state: 'running' | 'succeeded' | 'failed'; log: string; selection: Selection; config: ReturnType<typeof publicConfig>; planId: string | null; startedAt: string; finishedAt?: string };
@@ -155,6 +161,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
     if (target && kind !== 'pull') args.push(target);
     if (kind === 'preview') args.push('--dry-run');
     if (kind === 'restore') {args.push(...prepared.selection.restorePaths!); if(prepared.selection.restoreOverwrite)args.push('--overwrite');}
+    if (['pull','restore'].includes(kind) && prepared.selection.format==='obsidian') args.push('--obsidian');
     if (kind === 'pull' && prepared.selection.full) args.push('--full');
     if (kind === 'pull' && prepared.selection.remoteOnly) args.push('--remote-only');
     if (verify && kind !== 'pull') args.push('--verify');
@@ -303,6 +310,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
       try {
         const {base, body} = await connectionSettings(input);
         const request = input as {path?:unknown; overwrite?:unknown; confirmationId?:unknown};
+        const format=receiveFormat(input);
         const workspace = loadWorkspace(base); requireScope(workspace);
         const {env,source} = await settings(base, body.envId!, imports);
         const config = publicConfig(env,source,workspace);
@@ -311,7 +319,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
         if(url.protocol!=='https:' || url.username || url.password || url.search || url.hash)throw new Error('Confluence BASE_URL은 인증정보·쿼리가 없는 HTTPS 주소여야 합니다.');
         if (request.confirmationId !== undefined) {
           const approved = restorePlan; restorePlan = null;
-          if (!approved || request.confirmationId !== approved.id || approved.prepared.selection.base !== base || approved.prepared.selection.envId !== body.envId) throw new Error('복구 대상을 다시 확인하세요.');
+          if (!approved || request.confirmationId !== approved.id || approved.prepared.selection.base !== base || approved.prepared.selection.envId !== body.envId || approved.prepared.selection.format !== format) throw new Error('복구 대상을 다시 확인하세요.');
           if (await fingerprint(base,env) !== approved.prepared.fingerprint) throw new Error('확인 이후 로컬 문서나 설정이 바뀌었습니다. 복구 대상을 다시 확인하세요.');
           validateRestorePaths(base,approved.prepared.selection.restorePaths!,approved.prepared.selection.restoreOverwrite);
           return {job:launch('restore',approved.prepared)};
@@ -319,8 +327,8 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
         if (typeof request.path !== 'string' || typeof request.overwrite !== 'boolean') throw new Error('복구할 문서와 덮어쓰기 여부를 확인하세요.');
         const paths = validateRestorePaths(base,[request.path],request.overwrite);
         const id = randomUUID();
-        restorePlan = {id,prepared:{selection:{base,target:'',envId:body.envId!,verify:false,referenceRoots:[],restorePaths:paths,restoreOverwrite:request.overwrite},env,config,fingerprint:await fingerprint(base,env)}};
-        return {confirmationId:id,path:paths[0],overwrite:request.overwrite};
+        restorePlan = {id,prepared:{selection:{base,target:'',envId:body.envId!,verify:false,referenceRoots:[],format,restorePaths:paths,restoreOverwrite:request.overwrite},env,config,fingerprint:await fingerprint(base,env)}};
+        return {confirmationId:id,path:paths[0],overwrite:request.overwrite,format};
       } finally {locked=false;}
     },
     pull: async (input: unknown) => {
@@ -328,6 +336,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
       locked = true; plan = null;
       try {
         const { base, config, body } = await connectionSettings(input);
+        const format=receiveFormat(input);
         const full = (body as { full?: unknown }).full;
         const remoteOnly=(body as {remoteOnly?:unknown}).remoteOnly;
         if(remoteOnly!==undefined&&typeof remoteOnly!=='boolean'||remoteOnly&&full)throw new Error('원격 변경 가져오기 옵션을 확인하세요.');
@@ -338,7 +347,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
         if (visible.missing.length) throw new Error(`설정 누락: ${visible.missing.join(', ')}`);
         const url = new URL(config.baseUrl!);
         if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Confluence BASE_URL은 인증정보·쿼리가 없는 HTTPS 주소여야 합니다.');
-        return launch('pull', { selection: { base, target: '', envId: body.envId!, verify: false, referenceRoots: [], ...(full ? {full: true} : {}),...(remoteOnly?{remoteOnly:true}:{}) }, env, config: visible, fingerprint: '' });
+        return launch('pull', { selection: { base, target: '', envId: body.envId!, verify: false, referenceRoots: [], format, ...(full ? {full: true} : {}),...(remoteOnly?{remoteOnly:true}:{}) }, env, config: visible, fingerprint: '' });
       } finally { locked = false; }
     },
     preview: async (input: unknown) => {

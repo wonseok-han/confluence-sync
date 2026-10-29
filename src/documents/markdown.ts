@@ -10,6 +10,7 @@ import { resolve, relative, dirname, basename, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { htmlTableMarkdown } from './html-tables.js';
 import Token from 'markdown-it/lib/token.mjs';
+import { footnotesToStorage, footnoteStorageComments } from './footnote-roundtrip.js';
 import { createDocument } from '@mixmark-io/domino';
 import { applyTableWidths, hasWidths, tableWidths } from './tables.js';
 import { resolveWikilinks, type LinkResolver } from './obsidian.js';
@@ -251,8 +252,8 @@ export type Rendered = {
 };
 
 export type StorageOpts = {
-  /** Read-only baseline comparison for releases before callout support. */
-  legacyCallouts?: boolean;
+  /** Read-only baseline comparison: true = pre-callout quotes, panels = panels without metadata. */
+  legacyCallouts?: boolean | 'panels';
   rewriteHref?: (href: string) => string;
   /** Obsidian [[wikilink]] 해석기(주면 표준 링크로 먼저 정규화한다) */
   resolveLink?: LinkResolver;
@@ -289,7 +290,7 @@ export function toStorage(
     bodySlugs: opts.bodySlugs ?? [],
   };
   const src = opts.resolveLink ? resolveWikilinks(markdown, opts.resolveLink) : markdown;
-  const storage = md.render(src, { legacyCallouts: opts.legacyCallouts });
+  const storage = footnotesToStorage(md.render(src, { legacyCallouts: opts.legacyCallouts }));
   return {
     storage,
     images: ctx.images,
@@ -308,7 +309,7 @@ export function toStorage(
  * 첨부가 없으면 hashOf(title + '\0' + storage) 와 동일(첨부 없는 문서는 기존 해시 유지).
  */
 export function docHash(title: string, r: Rendered): string {
-  const parts = [title, r.storage];
+  const parts = [title, footnoteStorageComments(r.storage)];
   for (const img of r.attachments) {
     let digest = 'missing';
     try {

@@ -24,7 +24,7 @@ export function createEnvSettings({ api, context, setBusy, changed, renderConfig
     $('sync-env-file-name').textContent = filename || '선택한 파일 없음';
     $('sync-env-choose').disabled = busy || !base;
     $('sync-env-save').disabled = busy || !envId || !imported();
-    $('sync-env-source-note').textContent = imported() ? '가져온 설정은 현재 웹 작업에만 적용됩니다. 새로고침하면 다시 가져와야 합니다.' : '01에서 선택한 기준 폴더의 .env만 읽습니다. 파일이 없으면 .env를 가져오세요.';
+    $('sync-env-source-note').textContent = imported() ? '가져온 설정은 현재 웹 작업에만 적용됩니다. 새로고침하면 다시 가져와야 합니다.' : '로컬 문서에서 선택한 기준 폴더의 .env만 읽습니다. 파일이 없으면 .env를 가져오세요.';
   }
   for (const id of ['sync-env-base-mode', 'sync-env-import-mode']) $(id).onchange = () => { resetApproval(); changed(); update(busy); };
   $('sync-env-choose').onclick = () => { if (!busy) $('sync-env-file').click(); };

@@ -78,3 +78,37 @@ for(const [name,source,expected] of [
  mockFetch(t,[{path:'/wiki/rest/api/content/201?expand=body.export_view,body.storage,version',body:{id:'201',type:'page',title:'A',version:{number:1},body:{export_view:{value:'<h2>Heading</h2>'},storage:{value:'<h2>Heading</h2>'}}}}]);
  const result=await documentDiff(root,'a.md',{remote:true});assert.equal(result.after,expected);if(name==='generated separator')assert.equal(result.before,result.after);assert.equal(readFileSync(join(root,'a.md'),'utf8'),source);
 });
+
+for(const obsidian of [false,true])test(`remote diff uses the local callout representation: obsidian=${obsidian}`,async t=>{
+ configure(t);const {toStorage}=await import('../dist/documents/markdown.js');const {panelExport}=await import('./helpers/callout-export.mjs');const {htmlToMarkdown}=await import('../dist/documents/html-to-markdown.js');
+ const storage=toStorage('> [!summary]- Custom\n> Body','a.md',{},'/tmp').storage,html=panelExport(storage),body=htmlToMarkdown(html,{storage,obsidian});
+ const {root,put}=workspace(t,{'a.md':'---\npageId: 201\n---\n\n'+body});bindScope(root);put('.csync/mapping.json',JSON.stringify({'a.md':{pageId:'201',remoteVersion:1}}));
+ mockFetch(t,[{path:'/wiki/rest/api/content/201?expand=body.export_view,body.storage,version',body:{id:'201',type:'page',title:'A',version:{number:1},body:{export_view:{value:html},storage:{value:storage}}}}]);const result=await documentDiff(root,'a.md',{remote:true});assert.equal(result.before,result.after);
+});
+
+for(const inline of [false,true])test(`remote diff restores the local footnote notation: inline=${inline}`,async t=>{
+ configure(t);const {footnotesToLinks}=await import('../dist/conversion/footnotes.js');const {buildTreeRenderer}=await import('../dist/sync/render.js');const {panelExport}=await import('./helpers/callout-export.mjs');
+ const source=inline?'Text^[Inline note].\n':'Text[^law].\n\n[^law]: Note\n';const {root,put}=workspace(t,{'render.md':footnotesToLinks(source),'a.md':'---\npageId: 201\n---\n\n'+source});bindScope(root);put('.csync/mapping.json',JSON.stringify({'a.md':{pageId:'201',remoteVersion:1}}));const tree=buildTreeRenderer(root,['render.md']),d=tree.docs['render.md'],storage=tree.render('render.md',d.body,d.title).storage;
+ mockFetch(t,[{path:'/wiki/rest/api/content/201?expand=body.export_view,body.storage,version',body:{id:'201',type:'page',title:'A',version:{number:1},body:{export_view:{value:panelExport(storage)},storage:{value:storage}}}}]);const result=await documentDiff(root,'a.md',{remote:true});assert.equal(result.before,result.after);
+});
+
+for (const [name,html,local,equal] of [
+ ['repaired Korean underscores','<p>한글_제목 Latin_word</p>','한글_제목 Latin_word\n',true],
+ ['real content changes','<p>한글_제목</p>','한글_수정\n',false],
+ ['literal backslashes','<p>한글\\_제목</p>','한글_제목\n',false],
+ ['inline code','<p><code>한글\\_코드</code></p>','`한글_코드`\n',false],
+ ['emphasis boundaries','<p>_강조_</p>','_강조_\n',false],
+]) test(`current remote diff ignores no meaningful differences: ${name}`,async t=>{
+ configure(t);const {root,put}=workspace(t,{'a.md':'---\npageId: 201\n---\n\n'+local});bindScope(root);
+ const old='---\npageId: 201\n---\n\n한글\\_제목 Latin\\_word\n';
+ put('.csync/mapping.json',JSON.stringify({'a.md':{pageId:'201',sourceObject:storeBaseline(root,old),remoteVersion:1}}));
+ const source=readFileSync(join(root,'a.md'),'utf8'),mapping=readFileSync(mappingPath(root),'utf8');
+ mockFetch(t,[{path:'/wiki/rest/api/content/201?expand=body.export_view,body.storage,version',body:{id:'201',type:'page',title:'A',version:{number:2},body:{export_view:{value:html},storage:{value:html}}}}]);
+ const result=await documentDiff(root,'a.md',{remote:true});assert.equal(result.source,'remote');assert.equal(result.before===result.after,equal);
+ assert.equal(readFileSync(join(root,'a.md'),'utf8'),source);assert.equal(readFileSync(mappingPath(root),'utf8'),mapping);
+});
+
+test('remote diff on an unlinked new file needs no Confluence request',async t=>{
+ const {root}=workspace(t,{'new.md':'# New'});bindScope(root);mockFetch(t,[]);
+ const result=await documentDiff(root,'new.md',{remote:true});assert.equal(result.before,'');assert.equal(result.after,'# New');assert.equal(result.canRemote,false);
+});

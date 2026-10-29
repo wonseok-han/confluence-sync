@@ -1,4 +1,6 @@
 import { createActivity, describeRequest } from './activity.js';
+import { createConnection } from './connection.js';
+import { createOverwriteDialog } from './overwrite-dialog.js';
 import { initSnackbars } from './snackbar.js';
 import { initHelp } from './help.js';
 import * as monaco from 'monaco-editor/editor/editor.api.js';
@@ -12,7 +14,8 @@ self.MonacoEnvironment = { getWorker: () => new Worker('/assets/editor.worker.js
 const $ = id => document.getElementById(id);
 const notify = initSnackbars();
 const activity = createActivity();
-const token = document.querySelector('meta[name="csync-token"]').content;
+const connection = createConnection();
+const confirmOverwrite = createOverwriteDialog();
 let folder, parent, entries = [], base = null, file = null, output = null, busy = false, navigation = 0;
 let searchResults = null, searchRoot = null, searching = false, searchMessage = '';
 let searchTimer, searchController, searchVersion = 0;
@@ -42,7 +45,7 @@ function savePreferences() {
       workspaces, mode,
       referenceRoots: $('sync-references').value, out: $('out-input').value,
       convertScope: convertKind, direction: $('direction').value, fix: $('fix').checked,
-      verify: $('sync-verify').checked,
+      verify: $('sync-verify').checked, pullFormat: $('sync-pull-format').value,
       sideBySide: $('side-by-side').checked,
     }));
   } catch { /* Storage may be disabled; the workspace remains usable. */ }
@@ -64,7 +67,7 @@ function displayMode(next) {
   }
   $('choose-base').lastChild.textContent = '기준 폴더 변경…';
   $('base-input').setAttribute('aria-label', mode === 'sync' ? 'Confluence 작업 기준 폴더 경로' : '변환 기준 폴더 경로');
-  $('workspace-note').textContent = mode === 'sync' ? '원격 변경은 위에서 가져오고, 업로드할 문서는 체크 후 미리보기하세요.' : '변환은 이 컴퓨터에서 처리됩니다.';
+  $('workspace-note').textContent = connection.browser ? '파일은 브라우저에서 읽고 저장하며, 변환·Confluence 작업은 서버의 임시 공간에서 처리합니다.' : mode === 'sync' ? '원격 변경은 위에서 가져오고, 업로드할 문서는 체크 후 미리보기하세요.' : '변환은 이 컴퓨터에서 처리됩니다.';
   if (mode === 'convert') editor?.layout();
 }
 async function showMode(next) {
@@ -119,13 +122,13 @@ async function api(path, body, signal, options) {
   const description = describeRequest(path, body, options);
   const loading = description && activity.begin(description);
   try {
-    if(path!=='/api/sync/staging')await syncUI?.waitForLocalCheck();
-    const response = await fetch(path, {
-      signal, method: body ? 'POST' : 'GET', headers: { 'X-Csync-Token': token, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    if(path!=='/api/sync/staging' && !(connection.browser && path==='/api/pick-folder'))await syncUI?.waitForLocalCheck();
+    const response = await connection.request(path, {
+      signal, method: body ? 'POST' : 'GET', headers: { ...(body ? { 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     const data = await response.json();
-    if (!response.ok) throw Object.assign(new Error(data.error || '요청을 처리하지 못했습니다.'), { code: data.code, conflicts: data.conflicts });
+    if (!response.ok) throw Object.assign(new Error(data.error || '요청을 처리하지 못했습니다.'), { code: data.code, conflicts: data.conflicts, inPlace: data.inPlace, output: data.output });
     return data;
   } finally { loading?.end(); }
 }
@@ -146,11 +149,15 @@ function reset() {
 }
 const inside = (root, path) => path === root || path.startsWith(root.endsWith('/') ? root : root + '/') || path.startsWith(root.endsWith('\\') ? root : root + '\\');
 function controls() {
+  $('local-disconnect').disabled=busy;
   documentPreview.update();
   for (const id of ['preview', 'save', 'next-document']) $(id).disabled = busy || !file;
   for (const id of [ 'preview-document', 'tab-convert', 'tab-sync', 'choose-base', 'apply-base', 'base-input', 'base-home', 'up', 'choose-out', 'out-input', 'direction', 'fix', 'search']) $(id).disabled = busy;
   if (!busy) $('up').disabled = folder === parent || (base && !inside(base, parent));
   const root = base || folder;
+  const inPlace = !!root && $('out-input').value === root;
+  $('convert-save-mode').textContent=inPlace?'원본 덮어쓰기':'별도 폴더 저장';
+  $('out-mode-hint').textContent=inPlace?'원본 덮어쓰기 · 확인 후 저장':connection.browser?'별도 폴더 또는 원본 덮어쓰기':'선택 사항';
   $('root-name').textContent = root ? root.split(/[\\/]/).filter(Boolean).pop() || root : '폴더를 선택하세요';
   $('root-path').textContent = root || '아직 설정되지 않았습니다.';
   $('root-purpose').textContent = mode === 'sync' ? 'Push · Pull 기준' : '변환 기준';
@@ -164,9 +171,13 @@ function controls() {
   $('fix').disabled = busy || $('direction').value === 'repair';
   $('selected').textContent = file ? file.split(/[\\/]/).pop() : '변환할 문서를 선택하세요';
   const folderMode = convertKind === 'folder';
-  $('selected').textContent = file ? (folderMode && mode === 'convert' ? '폴더 · ' : '') + file.split(/[\\/]/).pop() : folderMode ? '변환할 폴더를 선택하세요' : '변환할 문서를 선택하세요';
+  const wholeBase = folderMode && !!base && file === base;
+  $('convert-select-all').disabled = busy || !base || wholeBase;
+  $('convert-select-all').textContent = wholeBase ? '기준 폴더 전체 선택됨' : '기준 폴더 전체 선택';
+  $('convert-target-note').textContent = wholeBase ? '기준 폴더와 모든 하위 폴더의 Markdown 문서를 변환합니다.' : '파일·폴더를 선택하거나 기준 폴더 전체를 선택하세요.';
+  $('selected').textContent = file ? (folderMode && mode === 'convert' ? wholeBase ? '전체 · ' : '폴더 · ' : '') + file.split(/[\\/]/).pop() : folderMode ? '변환할 폴더를 선택하세요' : '변환할 문서를 선택하세요';
   $('base').textContent = file || '왼쪽에서 대상을 선택하세요.';
-  $('convert-output-hint').textContent = folderMode ? '선택 폴더 안의 모든 Markdown을 변환합니다. 출력 폴더 아래에 선택 폴더 내부 구조만 유지합니다.' : '선택한 Markdown을 출력 폴더 바로 아래에 저장합니다. 링크는 해당 파일이 있는 폴더를 기준으로 해석합니다.';
+  $('convert-output-hint').textContent = inPlace ? '선택한 문서·첨부만 원래 위치에 저장합니다. 변경 파일 확인 후 덮어씁니다.' : folderMode ? '선택 폴더 안의 모든 Markdown을 변환합니다. 출력 폴더 아래에 선택 폴더 내부 구조만 유지합니다.' : '선택한 Markdown을 출력 폴더 바로 아래에 저장합니다. 링크는 해당 파일이 있는 폴더를 기준으로 해석합니다.';
   $('base').title = base || ''; $('selected').title = file || '';
   syncUI?.update(busy, restoring);
   savePreferences();
@@ -277,6 +288,11 @@ $('apply-base').onclick = () => browse($('base-input').value, true);
 $('base-input').onkeydown = event => { if (event.key === 'Enter') browse($('base-input').value, true); };
 $('up').onclick = () => browse(parent);
 $('base-home').onclick = () => { if (!busy && base) browse(base); };
+$('convert-select-all').onclick = () => {
+  if (busy || !base || mode !== 'convert') return;
+  convertKind = 'folder'; selectedDirectory = true; file = base;
+  reset(); controls(); render();
+};
 function clearSearch() {
   clearTimeout(searchTimer); searchController?.abort(); searchVersion++;
   searchResults = null; searchRoot = null; searching = false; searchMessage = '';
@@ -330,7 +346,7 @@ function showPreview(index) {
   $('preview-label').textContent = doc.before === doc.after ? '본문 변경 없음' : '변경된 부분 표시';
 }
 $('preview-document').onchange = () => showPreview(Number($('preview-document').value));
-$('fix').onchange = reset; $('out-input').oninput = reset;
+$('fix').onchange = reset; $('out-input').oninput = () => { reset(); controls(); };
 async function convert(preview) {
   if (busy || !file) return;
   busy = true;
@@ -343,9 +359,7 @@ async function convert(preview) {
       try { data = await api('/api/convert', { ...request, approvedOverwrites }); }
       catch (error) {
         if (preview || error.code !== 'OVERWRITE_REQUIRED') throw error;
-        const files = error.conflicts.map(item => item.path);
-        const list = files.slice(0, 20).join('\n') + (files.length > 20 ? `\n외 ${files.length - 20}개` : '');
-        if (!window.confirm(`출력 폴더의 기존 파일 ${files.length}개를 덮어쓸까요?\n${request.out}\n\n${list}\n\n기존 내용이 변환 결과로 교체됩니다. 취소하면 저장하지 않습니다.`)) {
+        if (!await confirmOverwrite({ conflicts: error.conflicts, inPlace: error.inPlace, output: error.output || request.out })) {
           status('덮어쓰기를 취소했습니다. 저장하지 않았습니다.'); return;
         }
         for (const item of error.conflicts) approvedOverwrites[item.path] = item.hash;
@@ -379,7 +393,7 @@ $('next-document').onclick = () => {
 };
 $('preview').onclick = () => convert(true); $('save').onclick = () => convert(false);
 $('open').onclick = async () => {
-  try { await api('/api/open', { path: output }); }
+  try { const result=await api('/api/open', { path: output }); if(connection.browser)status(`선택한 출력 폴더 (${result.name})에 저장했습니다.`); }
   catch (error) { status('폴더를 열 수 없습니다. 위 저장 경로를 이용해 주세요. ' + error.message, true); }
 };
 syncUI = initSync({ activity,
@@ -449,6 +463,7 @@ async function restoreWorkspace() {
   if (['file', 'folder'].includes(saved.convertScope)) convertKind = saved.convertScope;
   if (['markdown', 'obsidian', 'repair'].includes(saved.direction)) $('direction').value = saved.direction;
   if (typeof saved.fix === 'boolean') $('fix').checked = saved.fix;
+  if (['markdown','obsidian'].includes(saved.pullFormat)) $('sync-pull-format').value=saved.pullFormat;
   if (typeof saved.verify === 'boolean') $('sync-verify').checked = saved.verify;
   if (typeof saved.sideBySide === 'boolean') {
     $('side-by-side').checked = saved.sideBySide;
@@ -468,4 +483,4 @@ async function restoreWorkspace() {
   if (warning) status(warning, true);
 }
 
-restoreWorkspace().then(() => { const stop=syncUI.watch(); window.addEventListener('pagehide',stop,{once:true}); });
+connection.ready.then(restoreWorkspace).then(() => { const stop=syncUI.watch(); window.addEventListener('pagehide',stop,{once:true}); }).catch(error=>notify(error.message,'error'));

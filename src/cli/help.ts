@@ -157,15 +157,19 @@ csync convert [파일·폴더...] --fix [옵션]
   Push는 필요한 전처리를 내부 수행하므로 먼저 변환본을 만들 필요는 없습니다.
 
   예: csync convert --to markdown ./vault --out ./markdown`,
-  web: `csync web [--base <폴더>] [--port <번호>] [--no-open]
+  web: `csync web [--base <폴더>] [--port <번호>] [--no-open] [--ui <배포 웹 URL>] [--hosted]
 
   --base <폴더>    시작 폴더(기본: 홈 폴더, 화면에서 변경 가능)
   --port <번호>    웹 포트(기본: 4318)
   --no-open        브라우저 자동 열기 생략
+  --hosted         브라우저 폴더 접근을 사용하는 배포 서버 실행(기본 포트 8080)
+  --ui <URL>      배포 웹을 이 컴퓨터의 실행기에 연결(HTTPS, 로컬 개발은 HTTP 허용)
 
   localhost / 127.0.0.1에서 로컬 웹 화면을 실행합니다.
   문서 변환·표 서식·미리보기와 CLI와 같은 Fetch·Pull·업로드 선택·Push를 제공합니다.
-  접속 설정은 선택한 기준 폴더의 .env 또는 직접 가져온 .env를 사용합니다.`,
+  접속 설정은 선택한 기준 폴더의 .env 또는 직접 가져온 .env를 사용합니다.
+  --ui는 지정한 웹 출처만 허용하며 연결 키는 csync를 종료하면 만료됩니다.
+  예: csync web --ui https://csync.example.com --base ./vault`,
 };
 export function printHelp(command?: string): void {
   if (command) {

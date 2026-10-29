@@ -84,3 +84,20 @@ for (const status of [404,403,500]) test(`attachment download ${status}: only 40
  if(status===404){await runPull(['pull','--space','--out',root]);const md=readFileSync(join(root,'README.md'),'utf8');assert.match(md,/https:\/\/example.invalid\/wiki\/download\/attachments\/1\/missing.png\?version=2/);assert.match(md,/attachments\/README\/ok.png/);assert.equal(existsSync(join(root,'attachments/README/missing.png')),false);assert.ok(existsSync(join(root,'attachments/README/ok.png')));assert.match(logs.join('\n'),/\[경고 요약\] 원격 첨부 1개/);}
  else {await assert.rejects(runPull(['pull','--space','--out',root]),new RegExp('download '+status));assert.equal(existsSync(join(root,'README.md')),false);assert.equal(existsSync(mappingPath(root)),false);}
 });
+
+for(const obsidian of [false,true])test(`shared CLI Pull restores panel structure and attachment paths: obsidian=${obsidian}`,async t=>{
+ const {toStorage}=await import('../dist/documents/markdown.js');const {panelExport}=await import('./helpers/callout-export.mjs');
+ const {root,put}=workspace(t);configure(t);bindScope(root);put('.csync/mapping.json',JSON.stringify({'Proposal.md':{pageId:'123'}}));
+ const storage=toStorage('> [!summary]- Custom\n> Body','a.md',{},root).storage;
+ const html=panelExport(storage).replace('<p>Body</p>','<p>Body</p><img src="/download/attachments/123/screen.png"/>');
+ const steps=[{path:'/wiki/rest/api/content/123?expand=body.export_view,body.storage,version',body:{id:'123',type:'page',title:'Proposal',version:{number:1},body:{export_view:{value:html},storage:{value:storage}}}},{path:'/wiki/rest/api/content/123/child/folder?limit=100',body:{results:[]}},{path:'/wiki/rest/api/content/123/child/page?limit=100',body:{results:[]}},{path:'/wiki/rest/api/content/123/child/attachment?limit=100',body:{results:[{title:'screen.png',_links:{download:'/download/screen.png'}}]}},{path:'/wiki/download/screen.png',bytes:new Uint8Array([1,2,3])}];
+ mockFetch(t,steps,scopeResponder(root,steps));await runPull(['pull','123','--out',root,...(obsidian?['--obsidian']:[])]);
+ const text=readFileSync(join(root,'Proposal.md'),'utf8');assert.match(text,obsidian?/> \[!summary\]- Custom/:/> \*\*Custom\*\*/);assert.match(text,/> Body/);assert.match(text,/> !\[screen.png\]\(attachments\/Proposal\/screen.png\)/);assert.doesNotMatch(text,/csync-callout/);assert.equal(loadMapping(mappingPath(root))['Proposal.md'].pageId,'123');assert.deepEqual(readFileSync(join(root,'attachments/Proposal/screen.png')),Buffer.from([1,2,3]));
+});
+
+for(const wiki of [false,true])test(`Pull uses Unicode labels without visible Markdown escapes: wiki=${wiki}`,t=>{
+ const {put}=workspace(t);const a=put('a.md',htmlToMarkdownForTest()),b=put('문서_이름.md','## Section');
+ function htmlToMarkdownForTest(){return '[제안요청서\\_재생원료생산인증제\\_정리](https://example.invalid/wiki/spaces/TEST/pages/2/Doc)\n\n[자체\\_절](#section)';}
+ relinkPass([a],new Map([['1',a],['2',b]]),wiki,new Map([[a,{textBySlug:new Map([['section','Section']])}]]));const result=readFileSync(a,'utf8');
+ assert.ok(result.includes(wiki?'[[문서_이름|제안요청서_재생원료생산인증제_정리]]':'[제안요청서\\_재생원료생산인증제\\_정리](문서_이름.md)'));assert.ok(result.includes(wiki?'[[#Section|자체_절]]':'[자체\\_절](#section)'));
+});

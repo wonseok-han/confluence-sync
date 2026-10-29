@@ -247,6 +247,14 @@ test('web pull works with an empty local document folder and uses the shared CLI
  assert.equal(job.kind,'pull');assert.equal(job.state,'succeeded');assert.deepEqual(calls[0].args,['pull','--base',realpathSync(root)]);assert.equal(calls[0].settings.CONFLUENCE_SPACE_KEY,'TEST');assert.equal(job.planId,null);
 });
 
+test('web receive format uses the shared CLI flag and rejects unsupported formats',async t=>{
+ const {root,put}=workspace(t,{'.env':env,'a.md':'# Local'});bindScope(root);put('.csync/mapping.json',JSON.stringify({'a.md':{pageId:'456',remoteVersion:1}}));const calls=[];const sync=createWebSync(async args=>{calls.push(args);return 0}),body={base:root,envId:''};
+ await assert.rejects(sync.pull({...body,format:'html'}),/내부 링크/);assert.equal(calls.length,0);
+ await sync.pull({...body,format:'obsidian'});assert.equal((await finished(sync)).selection.format,'obsidian');assert.deepEqual(calls.at(-1),['pull','--base',realpathSync(root),'--obsidian']);
+ const approval=await sync.restore({...body,path:'a.md',overwrite:true,format:'obsidian'});assert.equal(approval.format,'obsidian');await assert.rejects(sync.restore({...body,confirmationId:approval.confirmationId,format:'markdown'}),/다시 확인/);assert.equal(calls.length,1);
+ const confirmed=await sync.restore({...body,path:'a.md',overwrite:true,format:'obsidian'});await sync.restore({...body,confirmationId:confirmed.confirmationId,format:'obsidian'});await finished(sync);assert.deepEqual(calls.at(-1),['restore','--base',realpathSync(root),'a.md','--overwrite','--obsidian']);assert.equal(readFileSync(join(root,'a.md'),'utf8'),'# Local');
+});
+
 test('web pull requires credentials and scope, excludes local selection, and invalidates push approval',async t=>{
  const {root}=workspace(t,{'.env':env,'a.md':'# A'});const calls=[];const sync=createWebSync(async args=>{calls.push(args);return 0;});
  await assert.rejects(sync.pull({base:root,envId:''}),/스페이스 연결/);const input=await request(root);await sync.preview(input);const preview=await finished(sync);assert.ok(preview.planId);
@@ -350,4 +358,12 @@ test('HTTP restore rejects unauthenticated requests and starts only after confir
  const {root,put}=workspace(t,{'.env':env,'a.md':'# Edits'});bindScope(root);put('.csync/mapping.json',JSON.stringify({'a.md':{pageId:'456'}}));let calls=0;const {server,url}=await startWeb({start:root,port:0,syncRunner:async()=>{calls++;return 0}});t.after(()=>{server.closeAllConnections();server.close()});
  const body={base:root,envId:'',path:'a.md',overwrite:true};const rejected=await fetch(url+'/api/sync/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});assert.equal(rejected.status,403);const html=await(await fetch(url)).text(),token=html.match(/name="csync-token" content="([^"]+)"/)[1],headers={'Content-Type':'application/json','X-Csync-Token':token};
  const first=await fetch(url+'/api/sync/restore',{method:'POST',headers,body:JSON.stringify(body)});assert.equal(first.status,200);assert.equal(calls,0);const {confirmationId}=await first.json();const second=await fetch(url+'/api/sync/restore',{method:'POST',headers,body:JSON.stringify({base:root,envId:'',confirmationId})});assert.equal(second.status,202);assert.equal((await second.json()).job.kind,'restore');
+});
+
+test('the downloadable env example contains blank configuration and never exports the workspace env',async t=>{
+ const {root}=workspace(t,{'.env':env});const {server,url}=await startWeb({start:root,port:0});t.after(()=>{server.closeAllConnections();server.close()});const before=readFileSync(join(root,'.env'),'utf8');const response=await fetch(url+'/assets/confluence-env-example.txt');assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/text\/plain/);const text=await response.text();assert.match(text,/CONFLUENCE_BASE_URL=\r?\n/);assert.match(text,/CONFLUENCE_EMAIL=\r?\n/);assert.match(text,/CONFLUENCE_API_TOKEN=\r?\n/);assert.match(text,/CONFLUENCE_SPACE_KEY=\r?\n/);assert.doesNotMatch(text,/synthetic-secret|demo@example.invalid|--scope|CONFLUENCE_PARENT_ID/);assert.equal(readFileSync(join(root,'.env'),'utf8'),before);const html=await(await fetch(url)).text();assert.match(html,/download="confluence.env.example"/);assert.match(html,/id="sync-log-download"/);
+});
+
+test('exported job logs retain server masking on errors, including Basic credentials',async t=>{
+ const {root}=workspace(t,{'.env':env});await request(root);const {formatJobLog}=await import('../src/web/client/download.js');const encoded=Buffer.from('demo@example.invalid:synthetic-secret').toString('base64');const sync=createWebSync(async(_args,_settings,log)=>{log('Token synthetic-secret\nBasic '+encoded+'\n');return 1});await sync.fetch({base:root,envId:''});const job=await finished(sync),output=formatJobLog(job);assert.equal(job.state,'failed');assert.match(output,/Token \[비공개\]/);assert.match(output,/Basic \[비공개\]/);assert.doesNotMatch(output,/synthetic-secret/);assert.equal(output.includes(encoded),false);
 });

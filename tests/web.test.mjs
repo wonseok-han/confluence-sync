@@ -128,7 +128,7 @@ test('output rejects source overlap, alias overlap and nested destination symlin
   const { post } = await app(t, root);
   const body = { base: join(root, 'vault'), file: join(root, 'vault/sub/a.md'), to: 'markdown', fix: false, preview: false };
   symlinkSync(join(root, 'vault'), join(root, 'alias'), 'junction');
-  for (const out of [root, join(root, 'vault'), join(root, 'vault/new'), join(root, 'alias/new')]) {
+  for (const out of [root, join(root, 'vault/new'), join(root, 'alias/new')]) {
     assert.equal((await post({ ...body, out })).status, 400);
   }
   symlinkSync(join(root, 'elsewhere'), join(root, 'output/sub'), 'junction');
@@ -285,4 +285,42 @@ test('document explorer and recursive search hide attachment directories without
  const result=await (await fetch(url+'/api/search?'+new URLSearchParams({path:root,q:'.md'}),{headers})).json();
  assert.deepEqual(result.entries.map(item=>item.relativePath).sort(),['attachments-notes/visible.md','doc.md','notes/doc.md']);
  const response=await fetch(url+'/api/document-preview',{method:'POST',headers,body:JSON.stringify({base:root,file:join(root,'doc.md')})});assert.equal(response.status,200);assert.match((await response.json()).html,/data:image\/png;base64,/);
+});
+
+for (const scope of ['folder-root', 'folder-sub', 'file']) {
+  test(`in-place conversion requires approval and preserves selection paths: ${scope}`, async t => {
+    const original = '# 한글\\_제목\n';
+    const { root } = workspace(t, { 'vault/sub/a.md': original, 'vault/other.md': original });
+    const base = join(root, 'vault'), file = scope === 'folder-root' ? base : join(base, scope === 'file' ? 'sub/a.md' : 'sub');
+    const { post } = await app(t, root);
+    const body = { base, file, scope: scope === 'file' ? 'file' : 'folder', out: base, to: 'repair', fix: false, preview: false };
+    const preview = await post({ ...body, preview: true });
+    assert.equal(preview.status, 200); assert.equal((await preview.json()).output, null);
+    assert.equal(readFileSync(join(base, 'sub/a.md'), 'utf8'), original);
+    const first = await post(body); assert.equal(first.status, 409);
+    const pending = await first.json(); assert.equal(pending.code, 'OVERWRITE_REQUIRED'); assert.equal(pending.inPlace, true);
+    assert.equal(pending.conflicts.length, scope === 'folder-root' ? 2 : 1);
+    assert.equal(readFileSync(join(base, 'sub/a.md'), 'utf8'), original);
+    const approvedOverwrites = Object.fromEntries(pending.conflicts.map(item => [item.path, item.hash]));
+    const saved = await post({ ...body, approvedOverwrites }); assert.equal(saved.status, 200, JSON.stringify(await saved.clone().json()));
+    assert.equal(readFileSync(join(base, 'sub/a.md'), 'utf8'), '# 한글_제목\n');
+    assert.equal(readFileSync(join(base, 'other.md'), 'utf8'), scope === 'folder-root' ? '# 한글_제목\n' : original);
+    assert.equal(existsSync(join(base, 'a.md')), false);
+    assert.deepEqual(readdirSync(root), ['vault']);
+    assert.equal(readdirSync(base).some(name => name.startsWith('.csync-backup-')), false);
+  });
+}
+
+test('in-place approval becomes invalid when the source is edited or deleted', async t => {
+  const { root, put } = workspace(t, { 'vault/a.md': '# 한글\\_제목' });
+  const base = join(root, 'vault'); const { post } = await app(t, root);
+  const body = { base, file: base, scope: 'folder', out: base, to: 'repair', fix: false, preview: false };
+  const pending = await (await post(body)).json();
+  const approvedOverwrites = Object.fromEntries(pending.conflicts.map(item => [item.path, item.hash]));
+  put('vault/a.md', 'external edit');
+  const changed = await post({ ...body, approvedOverwrites }); assert.equal(changed.status, 409);
+  assert.equal((await changed.json()).code, 'SOURCE_CHANGED'); assert.equal(readFileSync(join(base, 'a.md'), 'utf8'), 'external edit');
+  const { unlinkSync } = await import('node:fs'); unlinkSync(join(base, 'a.md')); put('vault/b.md', '# Keep');
+  const deleted = await post({ ...body, approvedOverwrites }); assert.equal(deleted.status, 409);
+  assert.equal((await deleted.json()).code, 'SOURCE_CHANGED'); assert.equal(existsSync(join(base, 'a.md')), false);
 });

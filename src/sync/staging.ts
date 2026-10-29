@@ -79,7 +79,9 @@ export async function inspectStaging(base: string, options: Options = {}, only?:
       const oldPath = doc.fm.pageId && Object.keys(mapping).find(key => mapping[key].pageId === doc.fm.pageId && !key.endsWith('/'));
       const prior = mapping[path] ?? (oldPath ? mapping[oldPath] : undefined);
       const clean = prior?.localHash ? prior.localHash === localStateHash(base, path, rendered) : !!prior?.hash && (prior.hash === hash || prior.hash === docHash(legacy.docs[path].title, legacy.render(path, legacy.docs[path].body, legacy.docs[path].title))
+        || prior.hash === docHash(doc.title, prepared.render(path, doc.body, doc.title, 'panels'))
         || prior.hash === docHash(doc.title, prepared.render(path, doc.body, doc.title, true))
+        || prior.hash === docHash(legacy.docs[path].title, legacy.render(path, legacy.docs[path].body, legacy.docs[path].title, 'panels'))
         || prior.hash === docHash(legacy.docs[path].title, legacy.render(path, legacy.docs[path].body, legacy.docs[path].title, true)));
       const status = !prior?.pageId ? 'new' : prior.pendingMove || oldPath && oldPath !== path ? 'moved' : clean ? 'same' : 'changed';
       const entry = { source: sources[path], hash };

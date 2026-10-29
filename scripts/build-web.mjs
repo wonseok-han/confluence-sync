@@ -17,3 +17,6 @@ await copyFile('node_modules/monaco-editor/ThirdPartyNotices.txt', 'dist/web/ass
 await cp(new URL('../docs/images/guide/', import.meta.url), new URL('../dist/web/assets/guide/', import.meta.url), { recursive: true });
 
 await copyFile('src/web/assets/favicon.svg', 'dist/web/assets/favicon.svg');
+
+// Ship only the blank, public example; never copy the workspace .env.
+await copyFile('.env.example', 'dist/web/assets/confluence-env-example.txt');
