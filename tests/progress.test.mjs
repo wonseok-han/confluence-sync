@@ -43,10 +43,20 @@ for(const signal of ['SIGINT','SIGTERM'])test(`${signal} clears terminal state b
  try{await ready;child.kill(signal);const result=await closed;assert.equal(result.signal,signal);assert.match(errors,/− 중단 · 중단 작업/);assert.doesNotMatch(errors,/✓ 완료/);}finally{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');}
 });
 
-test('long and multiline phase labels stay on one transient terminal line',()=>{
- const result=run(`await withProgress('단계',async()=>{progressStep('긴한글'.repeat(80)+'\\nnext\\x1b[2J');await new Promise(r=>setTimeout(r,110));});`,{tty:true});
- assert.equal(result.status,0,result.stderr);assert.doesNotMatch(result.stderr,/\x1b\[2J/);assert.match(result.stderr,/…/);
- for(const frame of result.stderr.split('\r\x1b[2K').slice(0,-1)){const visible=frame.replace(/\x1b\[[\d;]*m/g,'');assert.ok(visible.length<60);}
+test('long and multiline phase labels stay on one transient terminal line',async()=>{
+ const script=header(true)+`await withProgress('단계',async()=>{progressStep('긴한글'.repeat(80)+'\\nnext\\x1b[2J');await new Promise(resolve=>process.stdin.once('data',resolve));process.stdin.pause();});`;
+ const child=spawn(process.execPath,['--input-type=module','-e',script],{env:env(),stdio:['pipe','pipe','pipe']});
+ let errors='',acknowledged=false;child.stderr.setEncoding('utf8');child.stderr.on('data',text=>{
+  errors+=text;
+  // Finish only after the worker actually renders the updated label, regardless of scheduling speed.
+  if(!acknowledged&&errors.includes('…')){acknowledged=true;child.stdin.end('\n');}
+ });
+ const timeout=setTimeout(()=>child.kill('SIGKILL'),5000);
+ try{
+  const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve);});
+  assert.equal(code,0,errors);assert.doesNotMatch(errors,/\x1b\[2J/);assert.match(errors,/…/);
+  for(const frame of errors.split('\r\x1b[2K').slice(0,-1)){const visible=frame.replace(/\x1b\[[\d;]*m/g,'');assert.ok(visible.length<60);}
+ }finally{clearTimeout(timeout);if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');}
 });
 
 test('help, version and env template creation do not start background loading',t=>{
