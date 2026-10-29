@@ -7,6 +7,7 @@ import {createDocument} from '@mixmark-io/domino';
 import {parse} from 'dotenv';
 import {mapMarkdownText} from '../conversion/pdf-pages.js';
 import {WIKILINK_RE,parseWikilink} from '../documents/anchors.js';
+import {within} from '../sync/workspace.js';
 import {isConfluenceWebPath} from '../confluence/links.js';
 export const MAX_FILE=100*1024*1024, MAX_TOTAL=512*1024*1024, MAX_FILES=20000;
 export type FileEntry={path:string;hash:string;size:number};
@@ -24,7 +25,7 @@ export function pathIn(mounts:Mount[],path:string):string {
  const rel=path.slice(mount.virtual.length).replace(/^\//,'');if(rel)safeRelative(rel);return join(mount.root,rel);
 }
 export function virtualPath(mounts:Mount[],path:string):string {
- for(const mount of mounts){const rel=relative(mount.root,path);if(!rel)return mount.virtual;if(!rel.startsWith('..')&&!rel.startsWith('/'))return mount.virtual+'/'+rel.split('\\').join('/');}throw Error('작업공간 밖의 경로입니다.');
+ for(const mount of mounts){const rel=relative(mount.root,path);if(!rel)return mount.virtual;if(within(mount.root,path))return mount.virtual+'/'+rel.split('\\').join('/');}throw Error('작업공간 밖의 경로입니다.');
 }
 export async function snapshot(mounts:Mount[],cache=new Map<string,{stamp:string;hash:string}>()):Promise<FileEntry[]> {
  const files:FileEntry[]=[];let total=0;
@@ -48,9 +49,9 @@ export async function validateWorkspace(mounts:Mount[],checkEnv=true,checkDocume
   if(!target||target.startsWith('#')||/^(?:https?:|mailto:|data:)/i.test(target))return;
   if(webLink&&isConfluenceWebPath(target))return;
   if(/^[a-z][a-z\d+.-]*:|^\/\//i.test(target)||target.startsWith('/')||target.includes('\\'))throw Error(`${virtualPath(mounts,file)}: 서버의 절대 경로를 참조하는 문서는 처리할 수 없습니다.`);
-  const path=resolve(dirname(file),target.split(/[?#]/)[0]);if(!mounts.some(m=>path===m.root||path.startsWith(m.root+'/')))throw Error('선택한 폴더 밖의 첨부·문서를 참조합니다. 참조 폴더를 추가하거나 링크를 수정하세요.');
+  const path=resolve(dirname(file),target.split(/[?#]/)[0]);if(!mounts.some(m=>within(m.root,path)))throw Error('선택한 폴더 밖의 첨부·문서를 참조합니다. 참조 폴더를 추가하거나 링크를 수정하세요.');
  };
- for(const entry of entries){const file=pathIn(mounts,entry.path),rel=relative(mounts.find(m=>entry.path.startsWith(m.virtual+'/'))!.root,file);
+ for(const entry of entries){const file=pathIn(mounts,entry.path),rel=relative(mounts.find(m=>entry.path.startsWith(m.virtual+'/'))!.root,file).split('\\').join('/');
   if(rel==='.env'){if(checkEnv)validateEnv(await readFile(file,'utf8'));continue;}
   if(rel==='.csync/mapping.json'||rel==='.confluence-sync.json'||rel==='.csync/index.json'){
    const value=JSON.parse(await readFile(file,'utf8'));for(const key of Object.keys(rel.endsWith('index.json')?value.entries??{}:value))safeRelative(key.replace(/\/$/,''));

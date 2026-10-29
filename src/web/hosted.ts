@@ -2,17 +2,27 @@
 import {createServer,type IncomingMessage,type ServerResponse} from 'node:http';
 import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import {mkdtemp,mkdir,rm,readFile,writeFile,realpath} from 'node:fs/promises';
-import {join,resolve,dirname,extname} from 'node:path';
+import {join,resolve,dirname,extname,isAbsolute} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {startWeb,deployedUi} from './server.js';
 import {webPage} from './views/workspace.js';
 import {tableEditorBridge} from './table-editor-script.js';
 import {readPkgVersion} from '../shared/version.js';
+import {within} from '../sync/workspace.js';
 import {snapshot,pathIn,virtualPath,permitted,safeRelative,digest,validateWorkspace,validateEnv,commitMirror,MAX_FILE,MAX_TOTAL,MAX_FILES,type Mount,type FileEntry} from './hosted-files.js';
 import type {SyncRunner} from './sync.js';
 type Core=Awaited<ReturnType<typeof startWeb>>;
 type Session={id:string;token:string;root:string;mounts:Mount[];core:Core;baseline:FileEntry[];cache:Map<string,{stamp:string;hash:string}>;touched:number;busy:boolean;transaction?:{stage:string;manifest:FileEntry[];uploads:FileEntry[];received:Set<string>}};
+function publicValue(session:Session,value:unknown):unknown {
+ if(typeof value==='string'){
+  if(isAbsolute(value)&&session.mounts.some(m=>within(m.root,value)))return virtualPath(session.mounts,value);
+  return session.mounts.reduce((text,m)=>text.split(m.root).join(m.virtual),value).split(session.root).join('(임시 작업공간)');
+ }
+ if(Array.isArray(value))return value.map(item=>publicValue(session,item));
+ if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,publicValue(session,item)]));
+ return value;
+}
 const index=(files:FileEntry[])=>new Map(files.map(f=>[f.path,f]));
 async function body(req:IncomingMessage,max=16*1024*1024){let size=0;const chunks:Buffer[]=[];for await(const chunk of req){size+=chunk.length;if(size>max)throw Error('요청 크기 한도를 초과했습니다.');chunks.push(Buffer.from(chunk));}return Buffer.concat(chunks);}
 const jsonBody=async(req:IncomingMessage)=>{if(!req.headers['content-type']?.startsWith('application/json'))throw Error('JSON 요청이 필요합니다.');return JSON.parse((await body(req)).toString('utf8'));};
@@ -54,7 +64,7 @@ export async function startHostedWeb(options:{port?:number;host?:string;publicUr
    if(url.pathname==='/api/browser/mirror'&&req.method==='POST'){
     if(s.core.isRunning())throw Error('작업 중에는 파일을 다시 전송할 수 없습니다.');const pending=await changes(s);if(pending.files.length||pending.removed.length){send(409,{error:'서버 결과를 로컬에 먼저 반영하세요.',code:'APPLY_PENDING'});return;}
     const {files}=await jsonBody(req);if(!Array.isArray(files)||files.length>MAX_FILES)throw Error('파일 목록 한도를 확인하세요.');const seen=new Set<string>();let total=0;
-    for(const f of files){if(typeof f.path!=='string'||!Number.isSafeInteger(f.size)||f.size<0||f.size>MAX_FILE||typeof f.hash!=='string'||!/^[a-f0-9]{64}$/.test(f.hash)||seen.has(f.path))throw Error('파일 목록을 확인하세요.');const file=pathIn(s.mounts,f.path);const mount=s.mounts.find(m=>file.startsWith(m.root+'/'))!;if(!mount||!permitted(f.path.slice(mount.virtual.length+1)))throw Error('지원하지 않는 파일 경로입니다.');seen.add(f.path);total+=f.size;}if(total>MAX_TOTAL)throw Error('작업공간이 512MiB를 초과했습니다.');
+    for(const f of files){if(typeof f.path!=='string'||!Number.isSafeInteger(f.size)||f.size<0||f.size>MAX_FILE||typeof f.hash!=='string'||!/^[a-f0-9]{64}$/.test(f.hash)||seen.has(f.path))throw Error('파일 목록을 확인하세요.');const file=pathIn(s.mounts,f.path);const mount=s.mounts.find(m=>file!==m.root&&within(m.root,file))!;if(!mount||!permitted(f.path.slice(mount.virtual.length+1)))throw Error('지원하지 않는 파일 경로입니다.');seen.add(f.path);total+=f.size;}if(total>MAX_TOTAL)throw Error('작업공간이 512MiB를 초과했습니다.');
     if(s.transaction)await rm(s.transaction.stage,{recursive:true,force:true});const before=index(s.baseline),uploads=files.filter(f=>before.get(f.path)?.hash!==f.hash);s.transaction={stage:await mkdtemp(join(s.root,'mirror-')),manifest:files,uploads,received:new Set()};send(200,{uploads});return;
    }
    if(url.pathname==='/api/browser/file'&&req.method==='PUT'){
@@ -74,17 +84,17 @@ export async function startHostedWeb(options:{port?:number;host?:string;publicUr
     const input=await jsonBody(req);if(url.pathname==='/api/sync/env/import')validateEnv(String(input.text??''));
     for(const key of ['base','file','out','start'])if(typeof input[key]==='string'){if(!input[key]&&['base','file'].includes(key))throw Error('브라우저 폴더를 먼저 선택하세요.');if(input[key])input[key]=pathIn(s.mounts,input[key]);}
     if(typeof input.path==='string'&&input.path.startsWith('/'))input.path=pathIn(s.mounts,input.path);
-    if(input.base&&input.base!==s.mounts[0].root&&!input.base.startsWith(s.mounts[0].root+'/'))throw Error('문서 폴더를 기준으로 작업하세요.');
+    if(input.base&&!within(s.mounts[0].root,input.base))throw Error('문서 폴더를 기준으로 작업하세요.');
     if(input.referenceRoots)input.referenceRoots=input.referenceRoots.map((path:string)=>pathIn(s.mounts,path));
     if(url.pathname==='/api/convert'&&!input.out){input.out=s.mounts[1].root;}
     if(!['/api/sync/config'].includes(url.pathname))await validateWorkspace(s.mounts,url.pathname.startsWith('/api/sync/')&&!input.envId&&!url.pathname.endsWith('/env/import'),url.pathname!=='/api/sync/fetch'&&!(url.pathname==='/api/sync/staging'&&input?.remoteOnly===true));
     const response=await fetch(s.core.url+url.pathname,{method:'POST',headers:{'X-Csync-Token':s.core.token,'Content-Type':'application/json'},body:JSON.stringify(input)});const data=await response.json();
-    const mask=(value:any):any=>typeof value==='string'?s.mounts.reduce((v,m)=>v.split(m.root).join(m.virtual),value).split(s.root).join('(임시 작업공간)'):Array.isArray(value)?value.map(mask):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,mask(v)])):value;send(response.status,mask(data));return;
+    send(response.status,publicValue(s,data));return;
    }
    if(url.pathname==='/api/browse'||url.pathname==='/api/search')url.searchParams.set('path',pathIn(s.mounts,url.searchParams.get('path')||s.mounts[0].virtual));
    const response=await fetch(s.core.url+url.pathname+url.search,{headers:{'X-Csync-Token':s.core.token}});const data:any=await response.json();
-   const mask=(value:any):any=>typeof value==='string'?s.mounts.reduce((v,m)=>v.split(m.root).join(m.virtual),value).split(s.root).join('(임시 작업공간)'):Array.isArray(value)?value.map(mask):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,mask(v)])):value;
-   if(url.pathname==='/api/browse'){data.parent=data.path===s.mounts[0].root?s.mounts[0].root:data.parent;data.home=s.mounts[0].root;}send(response.status,mask(data));
+
+   if(url.pathname==='/api/browse'){data.parent=data.path===s.mounts[0].root?s.mounts[0].root:data.parent;data.home=s.mounts[0].root;}send(response.status,publicValue(s,data));
   }catch(error){if(!res.writableEnded){const value=String((error as Error).message);send(400,{error:session?value.split(session.root).join('(임시 작업공간)'):value});}}
   finally{if(locked&&session)session.busy=false;}
  });

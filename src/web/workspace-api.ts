@@ -67,7 +67,7 @@ export function createWorkspaceApi(options: {
             if (entry.isDirectory()) pending.push(path);
             else if (entry.isFile() && /\.md$/i.test(entry.name)
               && entry.name.normalize('NFC').toLocaleLowerCase().includes(query)) {
-              entries.push({ name: entry.name, path, relativePath: relative(root, path), directory: false });
+              entries.push({ name: entry.name, path, relativePath: relative(root, path).split('\\').join('/'), directory: false });
             }
           }
         }
