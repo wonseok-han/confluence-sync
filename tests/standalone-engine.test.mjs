@@ -11,6 +11,17 @@ const {createStandaloneEngine}=await import('data:text/javascript;base64,'+Buffe
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const env='CONFLUENCE_BASE_URL=https://example.atlassian.net/wiki\nCONFLUENCE_EMAIL=demo@example.com\nCONFLUENCE_API_TOKEN=synthetic-secret\nCONFLUENCE_SPACE_KEY=TEST\n';
 const workspace={version:2,connection:{baseUrl:'https://example.atlassian.net/wiki',spaceKey:'TEST',spaceId:'space',homepageId:'100'},remoteRoot:{id:'100',type:'page',path:'/'}};
+test('Fetch ignores document link targets while retaining env and mapping validation',async t=>{
+ const c=await client(),files={'.env':env,'.csync/workspace.json':JSON.stringify(workspace),'a.md':'[Attachment](/Users/example/private.pdf)'};
+ await c.mirror(files);const calls=[];
+ t.mock.method(globalThis,'fetch',async(input,options={})=>{const url=new URL(input);calls.push(options.method??'GET');if(url.pathname.endsWith('/api/v2/pages'))return Response.json({results:[]});throw Error('Unexpected request '+url);});
+ const fetched=await c.api('/api/sync/fetch',{base:c.session.base,envId:''});assert.equal(fetched.status,202,fetched.error);
+ const done=await c.finish();assert.equal(done.state,'succeeded',done.log);assert.ok(calls.length>0);assert.ok(calls.every(method=>method==='GET'));assert.equal(await c.read(c.session.base+'/a.md'),files['a.md']);await c.ack();
+ await c.mirror({...files,'.env':env.replace('https://example.atlassian.net/wiki','http://localhost/wiki')});
+ const unsafeEnv=await c.api('/api/sync/fetch',{base:c.session.base,envId:''});assert.equal(unsafeEnv.status,400);assert.match(unsafeEnv.error,/Atlassian/);
+ await c.mirror({...files,'.csync/mapping.json':JSON.stringify({'/etc/private':{pageId:'201'}})});
+ const unsafeMapping=await c.api('/api/sync/fetch',{base:c.session.base,envId:''});assert.equal(unsafeMapping.status,400);assert.match(unsafeMapping.error,/파일 경로/);
+});
 test('folder navigation lists documents with absolute links without following those links',async()=>{
  const c=await client();await c.mirror({'a.md':'[Local attachment](/Users/example/private.pdf)'});
  const listing=await c.api('/api/browse');assert.equal(listing.status,200,listing.error);assert.equal(listing.entries[0].name,'a.md');

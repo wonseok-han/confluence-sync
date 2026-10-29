@@ -1,6 +1,14 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {startHostedWeb} from '../dist/web/hosted.js';import {digest} from '../dist/web/hosted-files.js';
 async function hosted(t,options={}){const app=await startHostedWeb({port:0,host:'127.0.0.1',...options});t.after(()=>app.close());return app;}
+test('hosted Fetch does not validate unrelated document link targets',async t=>{
+ const commands=[],app=await hosted(t,{syncRunner:async args=>{commands.push(args[0]);return 0}}),c=await client(app);
+ await c.mirror({'.env':'CONFLUENCE_BASE_URL=https://example.atlassian.net/wiki\nCONFLUENCE_EMAIL=demo@example.com\nCONFLUENCE_API_TOKEN=test-token\nCONFLUENCE_SPACE_KEY=TEST\n','.csync/workspace.json':JSON.stringify({version:2,connection:{baseUrl:'https://example.atlassian.net/wiki',spaceKey:'TEST',spaceId:'space',homepageId:'100'},remoteRoot:{id:'100',type:'page',path:'/'}}),'a.md':'[Attachment](/Users/example/private.pdf)'});
+ const fetched=await c.api('/api/sync/fetch',{base:c.session.base,envId:''});assert.equal(fetched.status,202,fetched.error);
+ let job;for(let n=0;n<100;n++){job=(await c.api('/api/sync/job')).job;if(job?.state!=='running')break;await new Promise(resolve=>setTimeout(resolve,5));}
+ assert.equal(job.state,'succeeded',job.log);assert.deepEqual(commands,['fetch']);
+ const convert=await c.api('/api/convert',{base:c.session.base,file:c.session.base+'/a.md',to:'markdown',preview:true});assert.equal(convert.status,400);assert.match(convert.error,/절대 경로/);
+});
 async function client(app,name='docs'){
  const request=async(path,body,method=body?'POST':'GET',headers={})=>fetch(app.url+path,{method,headers:{...(body?{'Content-Type':'application/json'}:{}),...headers},...(body?{body:JSON.stringify(body)}:{})});
  const response=await request('/api/browser/session',{name});assert.equal(response.status,201);const session=await response.json(),headers={'X-Csync-Session':session.id,'X-Csync-Token':session.token};

@@ -37,8 +37,10 @@ export async function snapshot(mounts:Mount[],cache=new Map<string,{stamp:string
  for(const mount of mounts)await walk(mount,mount.root);return files.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);
 }
 export function validateEnv(text:string){const env=parse(text);const base=env.CONFLUENCE_BASE_URL;if(!base)return;const url=new URL(base);if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||!(url.hostname==='api.atlassian.com'||url.hostname.endsWith('.atlassian.net')))throw Error('배포 웹은 Atlassian Cloud의 HTTPS 주소만 지원합니다.');}
-/** Reject local link destinations that would make shared CLI code read server files. */
-export async function validateWorkspace(mounts:Mount[],checkEnv=true):Promise<void>{
+/** Reject local link destinations that would make shared CLI code read server files.
+ * Metadata-only Fetch does not follow document links; keep env/mapping checks.
+ */
+export async function validateWorkspace(mounts:Mount[],checkEnv=true,checkDocuments=true):Promise<void>{
  const parser=new MarkdownIt({html:true});const entries=await snapshot(mounts);
  const allowed=(file:string,target:string)=>{
   try{target=target.replace(/^<(.*)>$/,'$1');for(let i=0;i<4;i++){const decoded=decodeURIComponent(target);if(decoded===target)break;target=decoded;}}catch{throw Error('해석할 수 없는 링크 경로입니다.');}
@@ -51,7 +53,7 @@ export async function validateWorkspace(mounts:Mount[],checkEnv=true):Promise<vo
   if(rel==='.csync/mapping.json'||rel==='.confluence-sync.json'||rel==='.csync/index.json'){
    const value=JSON.parse(await readFile(file,'utf8'));for(const key of Object.keys(rel.endsWith('index.json')?value.entries??{}:value))safeRelative(key.replace(/\/$/,''));
   }
-  if(!/\.md$/i.test(file)||rel.startsWith('.csync/'))continue;
+  if(!checkDocuments||!/\.md$/i.test(file)||rel.startsWith('.csync/'))continue;
   const text=await readFile(file,'utf8');
   const scan=(part:string)=>{
    for(const match of part.matchAll(/(?<!!)(!?)\[([^\]\n]*)\]\((<[^>\n]+>|[^()\s]+)\)/g)){if((part.slice(0,match.index).match(/\\+$/)?.[0].length??0)%2)continue;allowed(file,match[3]);}

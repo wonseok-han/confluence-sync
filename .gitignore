@@ -2,6 +2,7 @@ node_modules/
 .env
 dist/
 .npmrc
+.playwright-mcp/
 
 # macOS Finder metadata
 .DS_Store
