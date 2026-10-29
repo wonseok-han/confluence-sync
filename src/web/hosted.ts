@@ -44,7 +44,7 @@ export async function startHostedWeb(options:{port?:number;host?:string;publicUr
    if(req.method==='GET'&&url.pathname==='/'){res.setHeader('Content-Type','text/html; charset=utf-8');res.end(webPage('browser','browser'));return;}
    if(req.method==='GET'&&url.pathname==='/healthz'){send(200,{ok:true});return;}
    if(req.method==='GET'&&url.pathname.startsWith('/assets/')){
-    const file=resolve(assets,decodeURIComponent(url.pathname.slice(8)));if(!file.startsWith(assets+'/'))throw Error('잘못된 파일 경로입니다.');const types:Record<string,string>={'.js':'text/javascript','.css':'text/css','.ttf':'font/ttf','.png':'image/png','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8'};if(!types[extname(file)]){send(404,{});return;}res.setHeader('Content-Type',types[extname(file)]);res.end(await readFile(file));return;
+    const file=resolve(assets,decodeURIComponent(url.pathname.slice(8)));if(file===assets||!within(assets,file))throw Error('잘못된 파일 경로입니다.');const types:Record<string,string>={'.js':'text/javascript','.css':'text/css','.ttf':'font/ttf','.png':'image/png','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8'};if(!types[extname(file)]){send(404,{});return;}res.setHeader('Content-Type',types[extname(file)]);res.end(await readFile(file));return;
    }
    if(url.pathname==='/api/browser/session'&&req.method==='POST'){
     const input=await jsonBody(req);if(sessions.size+creating>=(options.maxSessions??8)){send(503,{error:'현재 작업공간이 가득 찼습니다. 잠시 후 다시 시도하세요.'});return;}

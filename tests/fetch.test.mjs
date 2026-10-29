@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,existsSync,writeFileSync,symlinkSync} from 'node:fs';
-import {join,resolve} from 'node:path';
+import {join,resolve,basename} from 'node:path';
+import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {workspace} from './helpers/fixtures.mjs';
 import {bindScope} from './helpers/scope.mjs';
 import {mappingPath,workspacePath} from '../dist/sync/metadata.js';
-import {fetchRemote,FETCH_TTL_MS} from '../dist/sync/fetch.js';
+import {fetchRemote,readFetchSnapshot,FETCH_TTL_MS} from '../dist/sync/fetch.js';
 const env={baseUrl:'https://example.invalid/wiki',email:'demo@example.invalid',token:'synthetic-secret',spaceKey:'TEST'};
 const page=(id,number=1,extra={})=>({id:String(id),spaceId:'space',title:`Page ${id}`,parentId:'100',version:{number},...extra});
 function setup(t,entries){
@@ -100,4 +101,14 @@ test('explicit refresh bypasses a fresh cache and a failed refresh preserves the
  await fetchRemote(root,env);assert.equal((await fetchRemote(root,env)).cached,true);assert.equal(calls.length,1);
  const updated=await fetchRemote(root,env,{refresh:true});assert.equal(updated.cached,false);assert.equal(calls.length,2);assert.equal(updated.snapshot.items[0].remoteVersion,2);
  const saved=readFileSync(cache,'utf8');fail=true;await assert.rejects(fetchRemote(root,env,{refresh:true}),/Offline/);assert.equal(readFileSync(cache,'utf8'),saved);
+});
+
+
+test('native and temporary-directory aliases share one Fetch observation without another API call',async t=>{
+ const {root}=setup(t,{'doc.md':{pageId:'1',remoteVersion:1}});
+ const alias=join(tmpdir(),basename(root));
+ const calls=intercept(t,()=>response([page(1)]));
+ const first=await fetchRemote(alias,env),again=await fetchRemote(root,env);
+ assert.equal(first.cached,false);assert.equal(again.cached,true);assert.equal(calls.length,1);
+ assert.deepEqual(readFetchSnapshot(root,env).items,first.snapshot.items);
 });

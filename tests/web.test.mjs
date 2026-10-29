@@ -167,7 +167,7 @@ test('recursive filename search finds deepest documents, normalizes Korean and s
   };
   const found = await search(join(root, 'vault'), '안내'.normalize('NFD'));
   assert.equal(found.entries.length, 3);
-  assert.ok(found.entries.some(e => e.relativePath === join('a', 'b', 'c', '안내.MD')));
+  assert.ok(found.entries.some(e => e.relativePath === 'a/b/c/안내.MD'));
   assert.equal((await search(join(root, 'vault/a'), '안내')).entries.length, 1);
   assert.equal((await search(join(root, 'vault'), 'no-match')).entries.length, 0);
   assert.equal((await search(join(root, 'vault'), ' ')).entries.length, 0);

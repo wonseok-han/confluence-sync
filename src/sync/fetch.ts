@@ -27,7 +27,7 @@ function cachePath(base: string) {
 }
 
 function fetchContext(baseInput: string, env: Env, options: {mappingFile?:string} = {}) {
-  const base = realpathSync(baseInput), workspace = loadWorkspace(base), root = requireScope(workspace);
+  const base = realpathSync.native?.(baseInput) ?? realpathSync(baseInput), workspace = loadWorkspace(base), root = requireScope(workspace);
   assertWorkspaceConnection(workspace, env);
   const mapping = loadMapping(options.mappingFile ?? mappingPath(base)), ignore = buildIgnorer(base, []);
   const scoped = Object.entries(mapping).filter(([path]) => inScope(path.replace(/\/$/, ''), workspace) && !ignore.ignores(path) && !inNestedWorkspace(base, path));

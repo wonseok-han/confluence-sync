@@ -3,7 +3,7 @@ import {join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import assert from 'node:assert/strict';
 export function workspace(t,files={}) {
- const root=realpathSync(mkdtempSync(join(tmpdir(),'csync-tests-')));
+ const root=realpathSync.native(mkdtempSync(join(tmpdir(),'csync-tests-')));
  t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(rel,content)=>{const path=join(root,rel);mkdirSync(dirname(path),{recursive:true});writeFileSync(path,content);return path;};
  for(const [rel,content] of Object.entries(files))put(rel,content);
