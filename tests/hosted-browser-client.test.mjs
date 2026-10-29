@@ -11,7 +11,7 @@ class Dir{
  async isSameEntry(other){return this===other}async resolve(other){return this===other?[]:null}async queryPermission(){return 'granted'}async requestPermission(){return 'granted'}
 }
 function browser(app,pickers,options={}){
- const ids=['browser-folder-dialog','browser-folder-status','browser-folder-open','browser-folder-resume','browser-apply-dialog','browser-apply-status','browser-apply-retry','workspace-interface','local-disconnect','local-connection-status','root-path-editor','out-input','open'];const nodes=new Map(ids.map(id=>[id,{hidden:false,disabled:false,open:false,value:'',showModal(){this.open=true},close(){this.open=false},addEventListener(){}}]));const values=new Map(),states=options.states??new Map(),calls=[],optionsHook=options.afterFetch;
+ const ids=['browser-folder-dialog','browser-folder-status','browser-folder-open','browser-folder-resume','browser-apply-dialog','browser-apply-status','browser-apply-retry','workspace-interface','local-disconnect','local-connection-status','root-path-editor','out-input','open'];const nodes=new Map(ids.map(id=>[id,{hidden:false,disabled:false,open:false,value:'',shown:0,showModal(){this.shown++;this.open=true},close(){this.open=false},addEventListener(){}}]));const values=options.values??new Map(),states=options.states??new Map(),calls=[],optionsHook=options.afterFetch;
  const storage={getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},location={reload(){this.reloaded=true}};
  const api=createBrowserWorkspace({document:{getElementById:id=>nodes.get(id)},window:{isSecureContext:true,showDirectoryPicker(){},addEventListener(){}},location,storage,remember:async(value,key)=>{if(value===undefined)return states.get(key);if(value===null)states.delete(key);else states.set(key,value)},pickDirectory:async()=>pickers.shift(),fetch:async(path,options)=>{calls.push(path);const response=await fetch(app.url+path,options);await optionsHook?.(path,options,response);return response;}});
  return {api,nodes,location,states,calls,async choose(){await new Promise(r=>setImmediate(r));await nodes.get('browser-folder-open').onclick();await api.ready;},async request(path,body){const response=await api.request(path,{method:body?'POST':'GET',...(body?{body:JSON.stringify(body)}:{})});const value=await response.json();assert.equal(response.status,200,JSON.stringify(value));return value;}};
@@ -66,4 +66,25 @@ test('folder selection and background browsing never overlap mirror transactions
  const timer=setTimeout(()=>release(),100);browsing.finally(()=>release());
  const responses=await Promise.all([picked,browsing]);clearTimeout(timer);
  for(const response of responses)assert.equal(response.status,200,JSON.stringify(await response.json()));
+});
+
+
+test('refresh silently restores a saved folder without opening the picker dialog', {timeout:2000},async t=>{
+ const app=await startHostedWeb({port:0,host:'127.0.0.1'});t.after(()=>app.close());
+ const source=new Dir('docs');source.put('a.md','# Saved');const states=new Map(),values=new Map();
+ const initial=browser(app,[source],{states,values});await initial.choose();
+ const restored=browser(app,[],{states,values});assert.equal(restored.nodes.get('browser-folder-dialog').open,false);
+ await restored.api.ready;assert.equal(restored.nodes.get('browser-folder-dialog').shown,0);assert.equal(restored.nodes.get('workspace-interface').inert,false);
+ assert.equal((await restored.request('/api/browse')).entries[0].name,'a.md');
+});
+
+test('revoked folder permission offers the saved handle instead of requiring another picker', {timeout:2000},async t=>{
+ const app=await startHostedWeb({port:0,host:'127.0.0.1'});t.after(()=>app.close());
+ const source=new Dir('docs');source.put('a.md','# Saved');const states=new Map(),values=new Map();
+ const initial=browser(app,[source],{states,values});await initial.choose();
+ let permission='prompt',grants=0;source.queryPermission=async()=>permission;source.requestPermission=async()=>{grants++;return permission='granted'};
+ const restored=browser(app,[],{states,values});await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(restored.nodes.get('browser-folder-dialog').open,true);assert.equal(restored.nodes.get('browser-folder-resume').hidden,false);assert.equal(grants,0);
+ await restored.nodes.get('browser-folder-resume').onclick();await restored.api.ready;
+ assert.equal(grants,1);assert.equal(restored.nodes.get('browser-folder-dialog').open,false);assert.equal(restored.nodes.get('workspace-interface').inert,false);
 });

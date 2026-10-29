@@ -77,7 +77,7 @@ export async function startHostedWeb(options:{port?:number;host?:string;publicUr
     if(input.base&&input.base!==s.mounts[0].root&&!input.base.startsWith(s.mounts[0].root+'/'))throw Error('문서 폴더를 기준으로 작업하세요.');
     if(input.referenceRoots)input.referenceRoots=input.referenceRoots.map((path:string)=>pathIn(s.mounts,path));
     if(url.pathname==='/api/convert'&&!input.out){input.out=s.mounts[1].root;}
-    if(!['/api/sync/config'].includes(url.pathname))await validateWorkspace(s.mounts,url.pathname.startsWith('/api/sync/')&&!input.envId&&!url.pathname.endsWith('/env/import'),url.pathname!=='/api/sync/fetch');
+    if(!['/api/sync/config'].includes(url.pathname))await validateWorkspace(s.mounts,url.pathname.startsWith('/api/sync/')&&!input.envId&&!url.pathname.endsWith('/env/import'),url.pathname!=='/api/sync/fetch'&&!(url.pathname==='/api/sync/staging'&&input?.remoteOnly===true));
     const response=await fetch(s.core.url+url.pathname,{method:'POST',headers:{'X-Csync-Token':s.core.token,'Content-Type':'application/json'},body:JSON.stringify(input)});const data=await response.json();
     const mask=(value:any):any=>typeof value==='string'?s.mounts.reduce((v,m)=>v.split(m.root).join(m.virtual),value).split(s.root).join('(임시 작업공간)'):Array.isArray(value)?value.map(mask):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,mask(v)])):value;send(response.status,mask(data));return;
    }

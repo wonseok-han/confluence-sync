@@ -73,3 +73,15 @@ test('browser pull writes shared baseline and restore requires an explicit overw
  const r=await c.api('/api/sync/pull',{base:c.session.base,envId:'',remoteOnly:true});assert.equal(r.status,202,r.error);const done=await c.finish();assert.equal(done.state,'succeeded',done.log);assert.match(await c.read(c.session.base+'/New.md'),/Remote/);const map=JSON.parse(await c.read(c.session.base+'/.csync/mapping.json'));assert.equal(map['New.md'].pageId,'201');assert.ok(map['New.md'].localHash);await c.ack();assert.ok(calls.every(method=>method==='GET'));
  const restore=await c.api('/api/sync/restore',{base:c.session.base,envId:'',path:'New.md',overwrite:true});assert.equal(restore.status,200,restore.error);assert.ok(restore.confirmationId);
 });
+
+
+test('remote changes remain readable when local document validation blocks staging',async t=>{
+ const c=await client(),mapping={},files={'.env':env,'.csync/workspace.json':JSON.stringify(workspace)};
+ for(let i=0;i<5;i++){const path=`doc${i}.md`;mapping[path]={pageId:String(201+i),remoteVersion:1,title:`Doc ${i}`};files[path]=i?'# Local':'[Attachment](/Users/example/private.pdf)';}
+ files['.csync/mapping.json']=JSON.stringify(mapping);await c.mirror(files);let requests=0;
+ t.mock.method(globalThis,'fetch',async input=>{requests++;const url=new URL(input);if(url.pathname.endsWith('/api/v2/pages'))return Response.json({results:Array.from({length:6},(_,i)=>({id:String(201+i),title:i===5?'New':`Doc ${i}`,spaceId:'space',parentId:'100',version:{number:2}}))});throw Error('Unexpected request '+url);});
+ assert.equal((await c.api('/api/sync/fetch',{base:c.session.base,envId:''})).status,202);assert.equal((await c.finish()).state,'succeeded');await c.ack();
+ const blocked=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(blocked.status,400);assert.match(blocked.error,/doc0.md/);
+ const before=requests,remote=await c.api('/api/sync/staging',{base:c.session.base,envId:'',remoteOnly:true});assert.equal(remote.status,200,remote.error);assert.equal(requests,before);assert.equal(remote.rows.length,6);assert.equal(remote.rows.filter(row=>row.remoteState==='changed').length,5);assert.equal(remote.rows.filter(row=>row.remoteState==='new').length,1);assert.ok(remote.rows.filter(row=>row.remoteState==='changed').every(row=>row.localUnverified));
+ const rejected=await c.api('/api/sync/staging',{base:c.session.base,envId:'',remoteOnly:true,action:'add',paths:['doc0.md']});assert.equal(rejected.status,400);assert.match(rejected.error,/업로드 선택/);
+});

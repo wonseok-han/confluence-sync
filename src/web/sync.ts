@@ -208,7 +208,14 @@ export function createWebSync(runner: SyncRunner = runSyncCLI, initialImports: [
       locked = true;
       try {
         const { base, config } = await connectionSettings(input);
-        const body = input as { paths?: unknown; action?: unknown; referenceRoots?: unknown };
+        const body = input as { paths?: unknown; action?: unknown; referenceRoots?: unknown; remoteOnly?: unknown };
+        if(body.remoteOnly!==undefined&&typeof body.remoteOnly!=='boolean')throw new Error('원격 목록 조회 옵션을 확인하세요.');
+        if(body.remoteOnly){
+          if(body.action!==undefined)throw new Error('원격 목록 조회에서는 업로드 선택을 변경할 수 없습니다.');
+          const view=observeChanges(base,[],config);
+          const rows=view.rows.filter(row=>row.remoteState&&row.remoteState!=='unchanged').map(row=>({...row,localUnverified:!(row.remoteState==='new'&&row.status==='unavailable')}));
+          return {...view,rows,revision:JSON.stringify([view.remoteCheckedAt,rows])};
+        }
         if (body.referenceRoots !== undefined && (!Array.isArray(body.referenceRoots) || body.referenceRoots.some(p => typeof p !== 'string'))) throw new Error('참조 폴더를 확인하세요.');
         const options = {referenceRoots: body.referenceRoots as string[] ?? [], baseUrl:config.baseUrl};
         const cacheKey=JSON.stringify([base,options,loadWorkspace(base)]);

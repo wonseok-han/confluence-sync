@@ -7,6 +7,8 @@ test('hosted Fetch does not validate unrelated document link targets',async t=>{
  const fetched=await c.api('/api/sync/fetch',{base:c.session.base,envId:''});assert.equal(fetched.status,202,fetched.error);
  let job;for(let n=0;n<100;n++){job=(await c.api('/api/sync/job')).job;if(job?.state!=='running')break;await new Promise(resolve=>setTimeout(resolve,5));}
  assert.equal(job.state,'succeeded',job.log);assert.deepEqual(commands,['fetch']);
+ const metadata=await c.api('/api/sync/staging',{base:c.session.base,envId:'',remoteOnly:true});assert.equal(metadata.status,200,metadata.error);assert.deepEqual(metadata.rows,[]);
+ const rejected=await c.api('/api/sync/staging',{base:c.session.base,envId:'',remoteOnly:true,action:'add',paths:['a.md']});assert.equal(rejected.status,400);assert.match(rejected.error,/업로드 선택/);
  const convert=await c.api('/api/convert',{base:c.session.base,file:c.session.base+'/a.md',to:'markdown',preview:true});assert.equal(convert.status,400);assert.match(convert.error,/절대 경로/);
 });
 async function client(app,name='docs'){

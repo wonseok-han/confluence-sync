@@ -98,10 +98,23 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
  window.addEventListener('beforeunload',event=>{if(running||pending){event.preventDefault();event.returnValue='';}});
  if(!window.isSecureContext||!window.showDirectoryPicker){note.textContent='폴더 읽기·쓰기를 지원하는 데스크톱 Chrome 또는 Edge에서 HTTPS 주소로 접속하세요.';$('browser-folder-open').disabled=true;dialog.showModal();}
  else{
-  dialog.showModal();enqueue(async()=>{let stored;try{session=JSON.parse(storage.getItem(sessionKey));stored=session?await remember(undefined,session.id):undefined;}catch{}if(!session||!stored?.mounts?.length)return;mounts=stored.mounts;baseline=stored.baseline??[];let granted=true;for(const mount of mounts)if(await mount.handle.queryPermission({mode:mount.readonly?'read':'readwrite'})!=='granted')granted=false;
-   if(granted)try{await resume();}catch(error){if([401,410].includes(error.status)){await remember(null,session.id);session=undefined;baseline=[];storage.removeItem(sessionKey);note.textContent='작업공간을 다시 연결해야 합니다. 폴더를 다시 선택하세요.';}else note.textContent=error.message;}
-   else{$('browser-folder-resume').hidden=false;note.textContent='이전에 선택한 폴더에 다시 접근하려면 권한을 허용하세요.';}
-  }).catch(error=>{note.textContent=error.message;});
+  $('local-connection-status').textContent='저장된 폴더 연결을 확인하는 중…';
+  enqueue(async()=>{
+   let stored;
+   try{session=JSON.parse(storage.getItem(sessionKey));stored=session?await remember(undefined,session.id):undefined;}
+   catch{note.textContent='저장된 폴더 연결 정보를 확인할 수 없습니다. 폴더를 다시 선택하세요.';}
+   if(!session||!stored?.mounts?.length){$('local-connection-status').textContent='브라우저 폴더 선택 필요';dialog.showModal();return;}
+   mounts=stored.mounts;baseline=stored.baseline??[];
+   let granted=true;for(const mount of mounts)if(await mount.handle.queryPermission({mode:mount.readonly?'read':'readwrite'})!=='granted')granted=false;
+   if(!granted){$('local-connection-status').textContent='폴더 접근 권한 확인 필요';$('browser-folder-resume').hidden=false;note.textContent='이전에 선택한 폴더가 저장되어 있습니다. 다시 선택할 필요 없이 접근 권한을 허용하세요.';dialog.showModal();return;}
+   $('local-connection-status').textContent=mounts[0].handle.name+' · 연결을 복원하는 중…';
+   try{await resume();}
+   catch(error){
+    if([401,410].includes(error.status)){await remember(null,session.id);session=undefined;baseline=[];storage.removeItem(sessionKey);note.textContent='작업공간을 다시 연결해야 합니다. 폴더를 다시 선택하세요.';}
+    else note.textContent='이전 폴더 연결을 복원하지 못했습니다: '+error.message;
+    $('local-connection-status').textContent='폴더 연결 확인 필요';dialog.showModal();
+   }
+  }).catch(error=>{note.textContent=error.message;$('local-connection-status').textContent='폴더 연결 확인 필요';dialog.showModal();});
  }
  return {ready,request,browser:true,remote:false};
 }

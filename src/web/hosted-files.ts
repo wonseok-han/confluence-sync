@@ -45,7 +45,7 @@ export async function validateWorkspace(mounts:Mount[],checkEnv=true,checkDocume
  const allowed=(file:string,target:string)=>{
   try{target=target.replace(/^<(.*)>$/,'$1');for(let i=0;i<4;i++){const decoded=decodeURIComponent(target);if(decoded===target)break;target=decoded;}}catch{throw Error('해석할 수 없는 링크 경로입니다.');}
   if(!target||target.startsWith('#')||/^(?:https?:|mailto:|data:)/i.test(target))return;
-  if(/^[a-z][a-z\d+.-]*:|^\/\//i.test(target)||target.startsWith('/')||target.includes('\\'))throw Error('서버의 절대 경로를 참조하는 문서는 처리할 수 없습니다.');
+  if(/^[a-z][a-z\d+.-]*:|^\/\//i.test(target)||target.startsWith('/')||target.includes('\\'))throw Error(`${virtualPath(mounts,file)}: 서버의 절대 경로를 참조하는 문서는 처리할 수 없습니다.`);
   const path=resolve(dirname(file),target.split(/[?#]/)[0]);if(!mounts.some(m=>path===m.root||path.startsWith(m.root+'/')))throw Error('선택한 폴더 밖의 첨부·문서를 참조합니다. 참조 폴더를 추가하거나 링크를 수정하세요.');
  };
  for(const entry of entries){const file=pathIn(mounts,entry.path),rel=relative(mounts.find(m=>entry.path.startsWith(m.virtual+'/'))!.root,file);

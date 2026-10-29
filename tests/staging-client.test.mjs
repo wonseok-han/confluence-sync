@@ -89,3 +89,12 @@ test('remote recovery has a separate row action, excludes new and moved document
 test('interrupted Pull documents appear once as incomplete recovery, never as uploadable local new files',async t=>{
  const s=setup(t);const control=s.make(async()=>({rows:[{path:'partial.md',pageId:'101',status:'new',unmapped:true,recoverable:true,remoteState:'new',staged:false,stale:false}]}));await control.reload();assert.equal(s.nodes.get('sync-stage-list').querySelectorAll('input').length,1);assert.equal(s.nodes.get('sync-stage-list').querySelectorAll('input')[0].disabled,true);assert.equal(s.nodes.get('sync-stage-add').disabled,true);assert.equal(control.remoteOnlyCount(),1);assert.equal(control.ready(),false);assert.match(s.nodes.get('sync-stage-note').textContent,/받기 미완료/);
 });
+
+
+test('failed local inspection displays cached remote changes without granting upload approval',async t=>{
+ const s=setup(t),calls=[];let fail=true;
+ const remoteRows=[{path:'a.md',pageId:'201',status:'unavailable',staged:false,stale:false,remoteState:'changed',localUnverified:true},{path:'new.md',pageId:'202',status:'unavailable',staged:false,stale:false,remoteState:'new',localUnverified:false}];
+ const control=s.make(async(path,body)=>{calls.push(body);if(body.remoteOnly)return {rows:remoteRows,remoteCheckedAt:'2026-10-29T06:04:29.298Z',revision:'remote'};if(fail)throw Error('a.md: absolute link');return {rows,revision:'local'};});
+ await control.reload(true);assert.deepEqual(calls.map(body=>!!body.remoteOnly),[false,true]);assert.equal(s.nodes.get('sync-stage-list').querySelectorAll('input').length,2);assert.match(s.nodes.get('sync-stage-note').textContent,/a.md: absolute link/);assert.equal(control.ready(),false);assert.equal(control.remoteOnlyCount(),1);assert.ok(s.nodes.get('sync-stage-list').querySelectorAll('input').every(input=>input.disabled));
+ fail=false;await control.reload(true);assert.equal(control.ready(),true);assert.doesNotMatch(s.nodes.get('sync-stage-note').textContent,/absolute link/);
+});
