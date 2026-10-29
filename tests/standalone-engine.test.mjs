@@ -2,15 +2,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import {browserPlatform} from '../scripts/browser-platform.mjs';
 import {tableEditorBridge} from '../dist/web/table-editor-script.js';
 import {workspace as diskWorkspace} from './helpers/fixtures.mjs';
-import {inspectStaging} from '../dist/sync/staging.js';
+import {inspectStaging,changeStaging} from '../dist/sync/staging.js';
 const result=await build({entryPoints:['src/runtime/browser/engine.js'],bundle:true,platform:'browser',format:'esm',write:false,logLevel:'silent',plugins:[browserPlatform()],inject:['src/runtime/browser/globals.js'],define:{__CSYNC_VERSION__:'"2.0.0"',__CSYNC_TABLE_BRIDGE__:JSON.stringify(tableEditorBridge.toString())}});
 const {createStandaloneEngine}=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].text).toString('base64'));
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const env='CONFLUENCE_BASE_URL=https://example.atlassian.net/wiki\nCONFLUENCE_EMAIL=demo@example.com\nCONFLUENCE_API_TOKEN=synthetic-secret\nCONFLUENCE_SPACE_KEY=TEST\n';
 const workspace={version:2,connection:{baseUrl:'https://example.atlassian.net/wiki',spaceKey:'TEST',spaceId:'space',homepageId:'100'},remoteRoot:{id:'100',type:'page',path:'/'}};
+test('browser reads a legacy empty local-path index without modifying it',async()=>{
+ const c=await client(),index=JSON.stringify({version:1,binding:'0'.repeat(64),entries:{}});
+ await c.mirror({'.env':env,'.csync/workspace.json':JSON.stringify(workspace),'.csync/index.json':index,'a.md':'# A'});
+ const rows=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(rows.status,200,rows.error);assert.equal(rows.rows[0].stale,false);assert.equal(await c.read(c.session.base+'/.csync/index.json'),index);
+});
+test('CLI and browser share portable upload selection without assuming the same absolute path',async t=>{
+ const files={'.env':env,'.csync/workspace.json':JSON.stringify(workspace),'a.md':'# A'},disk=diskWorkspace(t,files);
+ await changeStaging(disk.root,['a.md'],'add',{baseUrl:workspace.connection.baseUrl});
+ const index=readFileSync(disk.root+'/.csync/index.json','utf8');assert.equal(JSON.parse(index).version,2);
+ const c=await client();await c.mirror({...files,'.csync/index.json':index});
+ const rows=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(rows.status,200,rows.error);assert.equal(rows.rows[0].staged,true);assert.equal(rows.rows[0].stale,false);assert.equal(await c.read(c.session.base+'/.csync/index.json'),index);
+});
 test('local staging accepts exported Confluence page and profile links in README',async t=>{
  const c=await client(),text='# Recent updates\n\n[Report](/wiki/spaces/TEST/pages/201/report.pdf#page=1 "Space")\n\n[Author](/wiki/display/~712020%3Auser)\n\n[Next](/wiki/plugins/recently-updated/changes.action?startIndex=10)\n\n<table><tr><td><a href="/wiki/spaces/TEST/pages/201/Report">Page</a></td></tr></table>';
  await c.mirror({'.env':env,'.csync/workspace.json':JSON.stringify(workspace),'README.md':text});

@@ -1,15 +1,48 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync, symlinkSync} from 'node:fs';
+import {readFileSync, symlinkSync, cpSync, realpathSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {join} from 'node:path';
 import {workspace, configure, mockFetch} from './helpers/fixtures.mjs';
 import {bindScope, scopeResponder} from './helpers/scope.mjs';
-import {changeStaging, inspectStaging, loadIndex} from '../dist/sync/staging.js';
+import {changeStaging, inspectStaging, loadIndex, stagedPaths, assertStaged} from '../dist/sync/staging.js';
 import {runPush} from '../dist/sync/push.js';
 import {saveMapping, loadMapping} from '../dist/sync/mapping.js';
 import {mappingPath} from '../dist/sync/metadata.js';
 import {createWebSync} from '../dist/web/sync.js';
 const options={baseUrl:'https://example.invalid/wiki'};
+function oldIndex(root,entries={}){
+ const w=JSON.parse(readFileSync(join(root,'.csync/workspace.json'),'utf8'));
+ const binding=createHash('sha256').update(JSON.stringify([realpathSync(root),w.connection?.baseUrl,w.connection?.spaceKey,w.connection?.spaceId,w.remoteRoot?.id,w.remoteRoot?.type])).digest('hex');
+ return {version:1,binding,entries};
+}
+test('portable upload selection survives copying the workspace to another local path',async t=>{
+ const source=workspace(t,{'a.md':'# A'});bindScope(source.root);await changeStaging(source.root,['a.md'],'add',options);
+ const target=workspace(t);cpSync(source.root,target.root,{recursive:true});
+ assert.equal(loadIndex(target.root).version,2);assert.deepEqual(loadIndex(target.root),loadIndex(source.root));assert.deepEqual(stagedPaths(target.root),['a.md']);
+ assert.equal((await inspectStaging(target.root,options))[0].stale,false);
+});
+test('empty legacy selections can be read after relocation without rewriting the source index',t=>{
+ const source=workspace(t);bindScope(source.root);source.put('.csync/index.json',JSON.stringify(oldIndex(source.root)));
+ const target=workspace(t);cpSync(source.root,target.root,{recursive:true});const before=readFileSync(join(target.root,'.csync/index.json'),'utf8');
+ assert.deepEqual(loadIndex(target.root).entries,{});assert.equal(readFileSync(join(target.root,'.csync/index.json'),'utf8'),before);
+});
+test('legacy selections at their original path retain approval, while relocated selections need explicit re-add',async t=>{
+ const source=workspace(t,{'a.md':'# A','b.md':'# B'});bindScope(source.root);await changeStaging(source.root,['.'],'add',options);
+ source.put('.csync/index.json',JSON.stringify(oldIndex(source.root,loadIndex(source.root).entries)));
+ assert.deepEqual(stagedPaths(source.root),['a.md','b.md']);
+ const target=workspace(t);cpSync(source.root,target.root,{recursive:true});
+ assert.ok((await inspectStaging(target.root,options)).every(row=>row.staged&&row.stale));assert.throws(()=>stagedPaths(target.root),/다시 추가/);
+ assert.throws(()=>assertStaged(target.root,'a.md',loadIndex(target.root).entries['a.md'].hash,loadIndex(target.root).entries['a.md']),/다시 추가/);
+ await changeStaging(target.root,['a.md'],'add',options);assert.equal(loadIndex(target.root).entries['a.md'].reviewRequired,undefined);assert.equal(loadIndex(target.root).entries['b.md'].reviewRequired,true);
+ await changeStaging(target.root,['b.md'],'remove');assert.deepEqual(stagedPaths(target.root),['a.md']);
+});
+test('changing the Confluence identity invalidates upload approval without losing selections',async t=>{
+ const source=workspace(t,{'a.md':'# A'});bindScope(source.root);await changeStaging(source.root,['a.md'],'add',options);
+ const w=JSON.parse(readFileSync(join(source.root,'.csync/workspace.json'),'utf8'));w.connection.spaceId='different-space';source.put('.csync/workspace.json',JSON.stringify(w));
+ assert.equal(loadIndex(source.root).entries['a.md'].reviewRequired,true);assert.throws(()=>stagedPaths(source.root),/다시 추가/);
+ source.put('.csync/index.json',JSON.stringify({...loadIndex(source.root),entries:{'../escape.md':{source:'0'.repeat(64),hash:'0'.repeat(64)}}}));assert.throws(()=>loadIndex(source.root),/손상/);
+});
 
 test('bare Push with an empty index fails closed without remote calls',async t=>{
  configure(t);const {root}=workspace(t,{'a.md':'# A'});bindScope(root);mockFetch(t,[]);

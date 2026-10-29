@@ -16,9 +16,9 @@ import { loadWorkspace, requireScope, inScope, inNestedWorkspace, resolveSyncBas
 import { readEnv } from '../confluence/config.js';
 import { positionalArgs } from '../cli/args.js';
 
-type Entry = { source: string; hash: string };
+type Entry = { source: string; hash: string; reviewRequired?: boolean };
 export type StagingRow = { renamed?: boolean; unmapped?: boolean; recoverable?: boolean;path:string;status:string;staged:boolean;stale:boolean;entry:Entry;pageId?:string};
-type Index = { version: 1; binding: string; entries: Record<string, Entry> };
+type Index = { version: 2; binding: string; entries: Record<string, Entry> };
 type Options = { referenceRoots?: string[]; baseUrl?: string };
 const digest = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
 export const sourceHash = (base: string, rel: string) => digest(readFileSync(resolve(base, rel)));
@@ -31,16 +31,21 @@ function location(base: string) {
 }
 function binding(base: string) {
   const workspace = loadWorkspace(base); requireScope(workspace);
-  return digest(JSON.stringify([realpathSync(base), workspace.connection?.baseUrl, workspace.connection?.spaceKey, workspace.connection?.spaceId, workspace.remoteRoot?.id, workspace.remoteRoot?.type]));
+  const identity=[workspace.connection?.baseUrl, workspace.connection?.spaceKey, workspace.connection?.spaceId, workspace.remoteRoot?.id, workspace.remoteRoot?.type];
+  return {portable:digest(JSON.stringify(identity)),legacy:digest(JSON.stringify([realpathSync(base),...identity]))};
 }
 function validPath(rel: string) { return !!rel && !rel.startsWith('/') && !rel.includes('\\') && rel.split('/').every(p => p && p !== '.' && p !== '..') && /\.md$/i.test(rel); }
 export function loadIndex(base: string): Index {
   const path = location(base), expected = binding(base);
-  if (!existsSync(path)) return { version: 1, binding: expected, entries: {} };
-  const index = JSON.parse(readFileSync(path, 'utf8')) as Index;
-  if (index?.version !== 1 || index.binding !== expected || !index.entries || Array.isArray(index.entries) || typeof index.entries !== 'object'
-    || Object.entries(index.entries).some(([rel, entry]) => !validPath(rel) || !entry || !/^[a-f0-9]{64}$/.test(entry.source) || !/^[a-f0-9]{64}$/.test(entry.hash))) throw new Error('.csync/index.json이 손상되었거나 다른 작업공간의 업로드 대상입니다.');
-  return index;
+  if (!existsSync(path)) return { version: 2, binding: expected.portable, entries: {} };
+  const index = JSON.parse(readFileSync(path, 'utf8')) as Omit<Index,'version'> & {version:1|2};
+  if (![1,2].includes(index?.version) || typeof index.binding!=='string' || !/^[a-f0-9]{64}$/.test(index.binding) || !index.entries || Array.isArray(index.entries) || typeof index.entries !== 'object'
+    || Object.entries(index.entries).some(([rel, entry]) => !validPath(rel) || !entry || !/^[a-f0-9]{64}$/.test(entry.source) || !/^[a-f0-9]{64}$/.test(entry.hash) || entry.reviewRequired!==undefined&&typeof entry.reviewRequired!=='boolean')) throw new Error('.csync/index.json이 손상되었습니다. 업로드 선택 정보를 확인하세요.');
+  const verified=index.binding===(index.version===1?expected.legacy:expected.portable);
+  // Reading never rewrites the index. An unverifiable old selection remains
+  // visible, but requires an explicit add before it can authorize any upload.
+  const entries=Object.fromEntries(Object.entries(index.entries).map(([rel,entry])=>[rel,verified?entry:{...entry,reviewRequired:true}]));
+  return {version:2,binding:expected.portable,entries};
 }
 function saveIndex(base: string, index: Index) {
   const path = location(base); mkdirSync(dirname(path), { recursive: true });
@@ -52,10 +57,12 @@ export function stagedPaths(base: string) {
   const index = loadIndex(base), workspace = loadWorkspace(base);
   const paths = Object.keys(index.entries);
   if (!paths.length) throw new Error('업로드 대상이 없습니다. csync add <파일·폴더>로 문서를 추가하세요.');
+  if(paths.some(path=>index.entries[path].reviewRequired))throw new Error('작업공간 연결 또는 이전 업로드 선택을 다시 확인해야 합니다. csync add로 문서를 다시 추가하세요.');
   for (const rel of paths) if (!inScope(rel, workspace)) throw new Error(`업로드 대상이 작업공간 밖입니다: ${rel}. unstage로 해제하고 기준 폴더를 확인하세요.`);
   return paths;
 }
 export function assertStaged(base: string, rel: string, hash: string, entry: Entry) {
+  if(entry.reviewRequired)throw new Error(`업로드 선택을 다시 확인해야 합니다: ${rel}. csync add로 다시 추가하세요.`);
   if (sourceHash(base, rel) !== entry.source || hash !== entry.hash) throw new Error(`추가 후 문서·첨부·링크가 변경되었습니다: ${rel}. csync add로 다시 추가하세요.`);
 }
 export function completeStaged(base: string, rel: string, expected?: Entry) {
@@ -90,7 +97,7 @@ export async function inspectStaging(base: string, options: Options = {}, only?:
       const status = !prior?.pageId ? 'new' : reconciled?.pendingMove ? 'moved' : renamed || !clean ? 'changed' : 'same';
       const entry = { source: sources[path], hash };
       const unmapped=!prior?.pageId&&!!doc.fm.pageId;
-      const staged = !!index.entries[path], stale = staged && (unmapped || JSON.stringify(index.entries[path]) !== JSON.stringify(entry));
+      const staged = !!index.entries[path], stale = staged && (unmapped || !!index.entries[path].reviewRequired || JSON.stringify(index.entries[path]) !== JSON.stringify(entry));
       return { path, status, staged, stale, entry, ...(renamed && clean ? {renamed:true} : {}), pageId: prior?.pageId ?? doc.fm.pageId, ...(!prior?.pageId && doc.fm.pageId ? {unmapped:true,recoverable:doc.fm.spaceKey===workspace.connection?.spaceKey} : {}) };
     });
     for (const path of Object.keys(index.entries)) if (!rows.some(row => row.path === path)) rows.push({ path, status: 'unavailable', staged: true, stale: true, entry: index.entries[path], pageId: mapping[path]?.pageId });
