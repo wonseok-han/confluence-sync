@@ -8,7 +8,12 @@
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { resolve, relative, dirname, basename, extname } from 'node:path';
 import { createHash } from 'node:crypto';
-import MarkdownIt from 'markdown-it';
+import { isConfluenceWebPath } from '../confluence/links.js';
+import { htmlTableMarkdown } from './html-tables.js';
+import Token from 'markdown-it/lib/token.mjs';
+import { footnotesToStorage, footnoteStorageComments } from './footnote-roundtrip.js';
+import { createDocument } from '@mixmark-io/domino';
+import { applyTableWidths, hasWidths, tableWidths } from './tables.js';
 import { resolveWikilinks, type LinkResolver } from './obsidian.js';
 import { decodeAnchor, anchorMacro } from './anchors.js';
 import { mermaidMacro } from './mermaid.js';
@@ -44,7 +49,7 @@ type RenderCtx = {
   linkedTitles: Set<string>; // 이 문서가 내부 링크로 가리키는 대상 제목들
 };
 
-const md = new MarkdownIt({ html: true, linkify: true, breaks: false });
+const md = htmlTableMarkdown('storage');
 
 const emptyCtx = (): RenderCtx => ({
   fileDir: '', titleIndex: {}, anchorIndex: {}, selfRel: '', selfTitle: '',
@@ -142,6 +147,10 @@ function addAttachment(abs: string): string {
 
 md.renderer.rules.link_open = (tokens, idx, opts, _env, self) => {
   const originalHref = tokens[idx].attrGet('href') || '';
+  if(isConfluenceWebPath(originalHref)){
+    ctx.linkStack.push(false);
+    return self.renderToken(tokens,idx,opts);
+  }
   const href = ctx.rewriteHref?.(originalHref) ?? originalHref;
   tokens[idx].attrSet('href', href);
   const t = resolveInternalLink(href);
@@ -194,6 +203,37 @@ md.renderer.rules.image = (tokens, idx) => {
   return `<ac:image${widthAttr}><ri:attachment ri:filename="${escapeXml(filename)}" /></ac:image>`;
 };
 
+// Raw HTML tables share the normal link/image rules (including attachment collection).
+md.renderer.rules.html_block = (tokens, idx) => {
+  const html = tokens[idx].content;
+  if (!/<table[\s>]/i.test(html)) return html;
+  const doc = createDocument(html);
+  for (const table of Array.from(doc.querySelectorAll('table'))) {
+    const widths = tableWidths(table);
+    if (hasWidths(widths)) applyTableWidths(table, widths, true);
+  }
+  let output = doc.body.innerHTML;
+  for (const anchor of Array.from(doc.querySelectorAll('table a[href]'))) {
+    const token = new Token('link_open', 'a', 1);
+    token.attrs = Array.from(anchor.attributes).map(a => [a.name, a.value]);
+    const open = md.renderer.rules.link_open!([token], 0, md.options, {}, md.renderer);
+    const close = md.renderer.rules.link_close!([new Token('link_close', 'a', -1)], 0, md.options, {}, md.renderer);
+    output = output.replace(anchor.outerHTML, open + anchor.innerHTML + close);
+  }
+  for (const image of Array.from(doc.querySelectorAll('table img[src]'))) {
+    const token = new Token('image', 'img', 0);
+    token.attrs = Array.from(image.attributes).map(a => [a.name, a.value]);
+    const width = image.getAttribute('width') ?? image.getAttribute('style')?.match(/(?:^|;)\s*width:\s*(\d+(?:\.\d+)?)px/i)?.[1];
+    if (width && /^\d+$/.test(width)) token.attrSet('title', `width=${width}`);
+    output = output.replace(image.outerHTML, md.renderer.rules.image!([token], 0, md.options, {}, md.renderer));
+  }
+  // Storage is XHTML; HTML's void elements need a closing slash.
+  for (const element of Array.from(doc.querySelectorAll('col, br, hr, img, input, wbr'))) {
+    output = output.split(element.outerHTML).join(element.outerHTML.slice(0, -1) + ' />');
+  }
+  return output + '\n';
+};
+
 /** 첫 H1(`# 제목`)을 제목으로 추출하고 본문에서 제거 */
 export function splitTitleAndBody(markdown: string, fallback: string): { title: string; body: string } {
   const lines = markdown.split('\n');
@@ -217,6 +257,8 @@ export type Rendered = {
 };
 
 export type StorageOpts = {
+  /** Read-only baseline comparison: true = pre-callout quotes, panels = panels without metadata. */
+  legacyCallouts?: boolean | 'panels';
   rewriteHref?: (href: string) => string;
   /** Obsidian [[wikilink]] 해석기(주면 표준 링크로 먼저 정규화한다) */
   resolveLink?: LinkResolver;
@@ -253,7 +295,7 @@ export function toStorage(
     bodySlugs: opts.bodySlugs ?? [],
   };
   const src = opts.resolveLink ? resolveWikilinks(markdown, opts.resolveLink) : markdown;
-  const storage = md.render(src);
+  const storage = footnotesToStorage(md.render(src, { legacyCallouts: opts.legacyCallouts }));
   return {
     storage,
     images: ctx.images,
@@ -272,7 +314,7 @@ export function toStorage(
  * 첨부가 없으면 hashOf(title + '\0' + storage) 와 동일(첨부 없는 문서는 기존 해시 유지).
  */
 export function docHash(title: string, r: Rendered): string {
-  const parts = [title, r.storage];
+  const parts = [title, footnoteStorageComments(r.storage)];
   for (const img of r.attachments) {
     let digest = 'missing';
     try {

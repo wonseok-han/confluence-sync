@@ -19,23 +19,24 @@ export type TreeRenderer = {
   titles: Record<string, string>;
   /** base 상대 경로 → 문서(제목·본문·frontmatter·헤딩) */
   docs: Record<string, Doc>;
-  render: (rel: string, body: string, title: string) => Rendered & { linkWarnings: string[]; referenceLinks: string[] };
+  render: (rel: string, body: string, title: string, legacyCallouts?: boolean | 'panels') => Rendered & { linkWarnings: string[]; referenceLinks: string[] };
 };
 
-export function buildTreeRenderer(baseDir: string, rels: string[], options?: { referenceRoots: string[]; baseUrl?: string }): TreeRenderer {
+export function buildTreeRenderer(baseDir: string, rels: string[], options?: { referenceRoots: string[]; baseUrl?: string; referenceBase?: string }): TreeRenderer {
   const { titles, anchors, docs } = buildDocIndex(rels, baseDir);
   // Obsidian [[wikilink]] 해석용 이름 인덱스
   const vault = buildVault(rels, collectAssets(baseDir).map((f) => relative(baseDir, f)));
   // 누가 어느 헤딩을 가리키는지 먼저 모은다 — 그 헤딩에만 Anchor 매크로를 심는다.
-  const lookup = options ? buildReferenceLookup(baseDir, rels, options.referenceRoots, options.baseUrl) : null;
+  const lookup = options ? buildReferenceLookup(options.referenceBase ?? baseDir, rels, options.referenceRoots, options.baseUrl) : null;
   const anchorTargets = resolveAnchorTargets(docs, vault, lookup?.localTarget);
 
-  const render = (rel: string, body: string, title: string) => {
+  const render = (rel: string, body: string, title: string, legacyCallouts: boolean | 'panels' = false) => {
     const warnings = new Set<string>(), references = new Set<string>();
     const linked = (message: string) => references.add(message);
     const warn = (message: string) => warnings.add(message);
     const ordinary = vaultResolver(rel, vault);
     const result = toStorage(body, rel, titles, baseDir, {
+      legacyCallouts,
       resolveLink: (target, embed) => {
         if (!lookup || embed || !!vault.assets[target.toLowerCase()]) return ordinary(target, embed);
         return lookup.resolve(rel, target, true, warn, linked);

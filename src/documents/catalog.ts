@@ -205,7 +205,7 @@ const parentDirOf = (dir: string) => (dir.includes('/') ? dir.slice(0, dir.lastI
 
 /**
  * dir 의 직계 자식을 담는 "컨테이너"의 mapping 키.
- * - 루트('') → null (CONFLUENCE_PARENT_ID)
+ * - 루트('') → null (저장된 원격 스코프)
  * - README 가 있는 폴더 → 그 README 페이지 키
  * - README 가 없는 폴더 → 폴더 노드 키(`<dir>/`, 끝에 슬래시로 구분)
  */
@@ -266,7 +266,7 @@ export function resolveSelection(rels: string[], positionals: string[], baseDir:
       console.error(`  ⚠ base 밖 경로 무시: ${p}`);
       continue;
     }
-    const matched = rels.filter((r) => r === relToBase || r.startsWith(relToBase + '/'));
+    const matched = rels.filter((r) => !relToBase || r === relToBase || r.startsWith(relToBase + '/'));
     if (matched.length === 0) console.error(`  ⚠ 매칭되는 문서 없음: ${p}`);
     matched.forEach((m) => set.add(m));
   }

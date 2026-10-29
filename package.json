@@ -1,6 +1,6 @@
 {
   "name": "@wonseok-han/confluence-sync",
-  "version": "1.8.0",
+  "version": "2.0.0",
   "type": "module",
   "description": "Confluence Cloud ↔ Markdown 양방향 동기화 CLI — 마크다운을 Confluence 페이지로 발행(push)하고, Confluence 페이지·폴더·스페이스를 마크다운으로 가져옵니다(pull).",
   "keywords": [
@@ -23,7 +23,7 @@
     "url": "https://github.com/wonseok-han/confluence-sync/issues"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": "^22.13.0 || ^24.0.0"
   },
   "bin": {
     "confluence-sync": "dist/sync.js",
@@ -32,6 +32,11 @@
   "files": [
     "dist",
     "README.md",
+    "docs/user/CLI.md",
+    "docs/user/WEB.md",
+    "docs/user/CONFIGURATION.md",
+    "docs/user/OBSIDIAN.md",
+    "docs/user/images/web",
     "LICENSE"
   ],
   "scripts": {
@@ -39,21 +44,25 @@
     "web": "npm run build && node dist/sync.js web",
     "test": "npm run build && node --test tests/*.test.mjs",
     "prepublishOnly": "npm run build",
-    "sync": "tsx src/sync.ts",
-    "sync:dry": "tsx src/sync.ts --dry-run",
-    "sync:rebuild": "tsx src/sync.ts --rebuild",
-    "list": "tsx src/sync.ts --list",
+    "sync": "tsx src/sync.ts push",
+    "sync:dry": "tsx src/sync.ts push --dry-run",
+    "list": "tsx src/sync.ts push --list",
     "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include=\"dist/**/*.js\" tests/*.test.mjs"
   },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
+    "@mixmark-io/domino": "^2.2.0",
     "@napi-rs/canvas": "^1.0.9",
+    "@noble/hashes": "^2.4.0",
+    "@vercel/blob": "^2.8.2",
+    "buffer": "^6.0.3",
     "dotenv": "^16.4.5",
     "ignore": "^7.0.5",
     "markdown-it": "^14.1.0",
     "markdown-it-footnote": "^4.0.0",
+    "path-browserify": "^1.0.1",
     "pdfjs-dist": "^6.3.289",
     "turndown": "^7.2.4"
   },
@@ -66,5 +75,13 @@
     "monaco-editor": "^0.57.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
+  },
+  "overrides": {
+    "@vercel/cli-config": {
+      "zod": "^4.6.6"
+    }
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }

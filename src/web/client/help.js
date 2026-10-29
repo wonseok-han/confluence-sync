@@ -5,6 +5,10 @@ export function initHelp(currentMode) {
     // Start with the guide for the active task without changing the workspace.
     document.getElementById('help-' + currentMode()).scrollIntoView({ block: 'start' });
   });
+  document.getElementById('open-token-guide').addEventListener('click', () => {
+    dialog.showModal();
+    document.getElementById('help-token').scrollIntoView({ block: 'start' });
+  });
   dialog.querySelectorAll('.help-nav a').forEach(link => {
     link.addEventListener('click', event => {
       event.preventDefault();

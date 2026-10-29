@@ -9,14 +9,15 @@
  * 스페이스를 통째로 다시 받지 않고도 최신 변환 품질을 얻기 위한 것이다.
  * 링크는 대상이 트리 안에 실제로 있을 때만 바꾼다(외부 URL·이미지·깨진 링크는 손대지 않는다).
  */
+import { prepareMarkdown } from './markdown.js';
 import { attachmentMapper } from './attachments.js';
 import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, copyFileSync, realpathSync } from 'node:fs';
 import { resolve, relative, dirname, basename, join, isAbsolute } from 'node:path';
-import { collectMarkdown, collectAssets, buildVault, vaultResolver } from '../documents/catalog.js';
-import { linksToWikilinks, resolveWikilinks, splitFrontmatter } from '../documents/obsidian.js';
+import { collectMarkdown, collectAssets, buildVault } from '../documents/catalog.js';
+import { linksToWikilinks, splitFrontmatter } from '../documents/obsidian.js';
 import { buildAnchorIndex } from '../documents/anchors.js';
-import { footnotesToLinks, linksToFootnotes } from './footnotes.js';
-import { extractPdfPages, restorePdfReferences, mapMarkdownText } from './pdf-pages.js';
+import { linksToFootnotes } from './footnotes.js';
+import { restorePdfReferences } from './pdf-pages.js';
 import { repairMarkdown, totalFixes, type RepairStats } from './repair.js';
 import { bold, cyan, dim, gray, green, red, yellow } from '../shared/colors.js';
 
@@ -266,27 +267,13 @@ export async function runConvert(argv: string[]): Promise<void> {
       const selfIdx = buildAnchorIndex(splitFrontmatter(text).body);
       text = toObsidian(text, abs, baseDir, nameCount, headingOf, (s) => selfIdx.get(s.toLowerCase()), attachments.source);
     } else if (to === 'markdown') {
-      const lookup = vaultResolver(rel, vault);
-      // 명시된 첨부 경로를 먼저 출력 트리로 옮긴 뒤 wiki 이름을 해석한다.
-      text = attachments.rewrite(text);
-      text = resolveWikilinks(text, (target, embed) => {
-        const imported = resolve(baseDir, target);
-        if (attachments.copies.has(posix(relative(baseDir, imported)))) {
-          return posix(relative(dirname(abs), imported));
-        }
-        return lookup(target, embed);
-      });
-      text = footnotesToLinks(attachments.rewrite(text));
-      mapMarkdownText(text, part => {
-        if (/\[\[[^\]\n]*\.pdf#page=[^\]\n]*\]\]/i.test(part)) {
-          throw new Error(`PDF 위키링크를 해석하지 못했습니다 (${rel}). --base에 PDF가 포함되는지 확인하세요.`);
-        }
-        return part;
-      });
-      const pdf = await extractPdfPages(text, abs, baseDir, outDir ?? baseDir, dryRun, attachments.source);
+      const pdf = await prepareMarkdown(text, abs, baseDir, vault, outDir ?? baseDir, dryRun, attachments);
       pdf.assets.forEach(a => sourceAssets.add(a));
       text = pdf.text;
       if (pdf.pages) notes.push(dim(`PDF ${pdf.pages}쪽 이미지`));
+    } else if (outDir) {
+      // Repair-only exports use the same attachment layout without changing document link syntax.
+      text = attachments.rewrite(text);
     }
 
     // 제자리 변환이면 바뀐 것만 쓰지만, --out 이면 대상 전부를 내보낸다(온전한 트리가 나와야 하므로)

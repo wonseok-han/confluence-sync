@@ -4,7 +4,9 @@ import { relative, resolve } from 'node:path';
 import { positionalArgs } from '../cli/args.js';
 import { collectMarkdown, readDoc, buildFolderIndex, parentKeyOf } from '../documents/catalog.js';
 import { buildIgnorer } from './ignore.js';
-import { MAPPING_FILE, saveMapping, type Mapping } from './mapping.js';
+import { resolveSyncBase, loadWorkspace, inScope, inNestedWorkspace, requireScope } from './workspace.js';
+import { mappingPath } from './metadata.js';
+import { saveMapping, type Mapping } from './mapping.js';
 
 function readMapping(path: string): Mapping {
   if (!existsSync(path)) return {};
@@ -34,10 +36,12 @@ export async function runRemap(argv: string[]): Promise<void> {
     } else if (arg !== 'remap' && arg !== '--dry-run') throw new Error(`remap: 지원하지 않는 인자 ${arg}`);
   }
   if (positionalArgs(argv).length !== 1) throw new Error('remap은 --base 전체를 대상으로 실행합니다.');
-  const baseInput = opts['--base']?.[0] ?? process.env.CONFLUENCE_SYNC_BASE;
+  const baseInput = resolveSyncBase(opts['--base']?.[0]);
   if (!baseInput) throw new Error('remap: --base <dir> 또는 CONFLUENCE_SYNC_BASE가 필요합니다.');
   const base = resolve(baseInput);
-  const output = resolve(opts['--mapping']?.[0] ?? resolve(base, MAPPING_FILE));
+  const workspace = loadWorkspace(base);
+  const scope = requireScope(workspace);
+  const output = resolve(opts['--mapping']?.[0] ?? mappingPath(base));
   const source = opts['--from-mapping']?.[0];
   if (source && !existsSync(resolve(source))) throw new Error(`원본 매핑이 없습니다: ${source}`);
   const mapping = readMapping(output);
@@ -47,7 +51,7 @@ export async function runRemap(argv: string[]): Promise<void> {
     mapping[key] ??= entry;
   }
   const ignorer = buildIgnorer(base, opts['--exclude'] ?? []);
-  const files = collectMarkdown(base).map(f => relative(base, f).split('\\').join('/')).filter(f => !ignorer.ignores(f)).sort();
+  const files = collectMarkdown(base).map(f => relative(base, f).split('\\').join('/')).filter(f => !ignorer.ignores(f) && inScope(f, workspace) && !inNestedWorkspace(base, f)).sort();
   const folders = buildFolderIndex(files);
   const byId = new Map<string, [string, Mapping[string]]>();
   for (const [key, entry] of Object.entries(mapping)) {
@@ -66,10 +70,15 @@ export async function runRemap(argv: string[]): Promise<void> {
     if (mapping[key] && mapping[key].pageId !== id) throw new Error(`pageId 충돌: ${key}`);
     const prior = byId.get(id);
     if (prior?.[1].type === 'folder') throw new Error(`폴더 ID를 문서에 사용할 수 없습니다: ${key}`);
+    if (id === scope.id && (scope.type !== 'page' || key !== 'README.md')) throw new Error('스코프 루트의 매핑 경로는 README.md로 유지해야 합니다.');
+    if (scope.type === 'page' && key === 'README.md') {
+      if (id !== scope.id) throw new Error('루트 README.md의 pageId가 선택한 스코프와 다릅니다.');
+      console.log('스코프 루트 유지: README.md'); continue;
+    }
     if (prior) delete next[prior[0]];
     const entry = { ...(prior?.[1] ?? { pageId: id, title: doc.title }), pendingMove: { parentKey: parentKeyOf(key, folders) } };
     updates.push([key, entry]);
-    console.log(`${prior?.[0] ?? `#${id}`} → ${key} (부모: ${entry.pendingMove.parentKey ?? 'ROOT'})${entry.hash ? '' : ' — 기존 해시 없음: sync 시 본문 갱신 대상'}`);
+    console.log(`${prior?.[0] ?? `#${id}`} → ${key} (부모: ${entry.pendingMove.parentKey ?? 'ROOT'})${entry.hash ? '' : ' — 기존 해시 없음: push 시 본문 갱신 대상'}`);
   }
   for (const [key, entry] of updates) next[key] = entry;
   if (!argv.includes('--dry-run')) saveMapping(output, next);

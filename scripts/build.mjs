@@ -6,3 +6,4 @@ await rm(new URL('../dist/', import.meta.url), { recursive: true, force: true })
 execFileSync(process.execPath, [fileURLToPath(new URL('../node_modules/typescript/bin/tsc', import.meta.url))], { stdio: 'inherit' });
 await chmod(new URL('../dist/sync.js', import.meta.url), 0o755);
 await import('./build-web.mjs');
+await import('./build-site.mjs');

@@ -1,12 +1,12 @@
 /**
- * 동기화 제외 규칙. base 루트의 .confluence-syncignore(.gitignore 방식) + --exclude 옵션.
+ * 동기화 제외 규칙. base 루트의 .csync/ignore(구 .confluence-syncignore)(.gitignore 방식) + --exclude 옵션.
  * 매칭은 npm `ignore`(gitignore 스펙) 사용. 경로는 base 기준 상대(POSIX).
  */
 import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { ignorePath } from './metadata.js';
 import ignore from 'ignore';
 
-export const IGNORE_FILE = '.confluence-syncignore';
+export { IGNORE_FILE } from './metadata.js';
 
 export type Ignorer = {
   ignores: (rel: string) => boolean;
@@ -17,7 +17,7 @@ export type Ignorer = {
 export function buildIgnorer(baseDir: string, excludes: string[]): Ignorer {
   const ig = ignore();
   let active = false;
-  const file = join(baseDir, IGNORE_FILE);
+  const file = ignorePath(baseDir);
   if (existsSync(file)) { ig.add(readFileSync(file, 'utf8')); active = true; }
   if (excludes.length) { ig.add(excludes); active = true; }
   return {

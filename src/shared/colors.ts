@@ -1,13 +1,13 @@
 /**
  * 의존성 없는 ANSI 컬러 헬퍼.
  * 비활성 조건: NO_COLOR / TERM=dumb / --no-color / 출력이 TTY 가 아님(파이프·리다이렉트).
- * FORCE_COLOR 가 있으면 강제 활성.
+ * FORCE_COLOR=1은 파이프에서도 활성, FORCE_COLOR=0은 비활성. 명시적 비활성 조건이 우선한다.
  */
 const enabled =
   !process.env.NO_COLOR &&
   process.env.TERM !== 'dumb' &&
   !process.argv.includes('--no-color') &&
-  (process.env.FORCE_COLOR ? true : process.stdout.isTTY === true);
+  (process.env.FORCE_COLOR === '0' ? false : process.env.FORCE_COLOR ? true : process.stdout.isTTY === true);
 
 const wrap = (open: number, close: number) => (s: string | number) =>
   enabled ? `\x1b[${open}m${s}\x1b[${close}m` : String(s);

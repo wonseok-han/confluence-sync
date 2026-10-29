@@ -10,6 +10,8 @@
  * 이름은 마크다운 슬러그를 그대로 쓰므로 왕복도 정확해진다 — 양쪽 다 우리가 정한 값이다.
  */
 
+import { rewriteTableLinks } from './tables.js';
+
 const FENCE = /^\s*(?:```|~~~)/;
 
 /**
@@ -188,6 +190,14 @@ export function collectLinkAnchors(md: string): LinkAnchor[] {
       out.push({ dest: w.target, fragment: w.fragment, wiki: true }); // dest 가 비면 같은 문서
     }
   }
+  rewriteTableLinks(md, href => {
+    const d = decodeAnchor(href);
+    const i = d.indexOf('#');
+    if (i >= 0 && i < d.length - 1 && !/^[a-z][a-z\d+.-]*:|^\/\//i.test(d)) {
+      out.push({ dest: d.slice(0, i), fragment: d.slice(i + 1), wiki: false });
+    }
+    return href;
+  });
   return out;
 }
 

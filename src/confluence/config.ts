@@ -1,7 +1,10 @@
 /**
  * 환경변수(.env / 셸) 로딩과 필수값 검증.
- * dotenv 로딩은 진입점(sync.ts)에서 `import 'dotenv/config'` 로 먼저 수행된다.
+ * 작업공간 .env를 읽고 셸 환경변수를 우선 적용한다.
  */
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { parse } from 'dotenv';
 import { red, cyan } from '../shared/colors.js';
 
 export type Env = {
@@ -9,18 +12,19 @@ export type Env = {
   email?: string;
   token?: string;
   spaceKey?: string;
-  /** 루트 앵커. 페이지·폴더 id 모두 가능. CONFLUENCE_PARENT_ID(구: CONFLUENCE_PARENT_PAGE_ID). */
-  parentId?: string;
+
 };
 
-export function readEnv(): Env {
+export function readEnv(base?: string): Env {
+  const read = (dir: string) => existsSync(join(dir, '.env')) ? parse(readFileSync(join(dir, '.env'))) : {};
+  const dir = base && existsSync(join(base, '.env')) ? base : process.cwd();
+  const values = { ...read(dir), ...process.env };
   return {
-    baseUrl: process.env.CONFLUENCE_BASE_URL,
-    email: process.env.CONFLUENCE_EMAIL,
-    token: process.env.CONFLUENCE_API_TOKEN,
-    spaceKey: process.env.CONFLUENCE_SPACE_KEY,
-    // 신규 이름 우선, 없으면 구 이름(CONFLUENCE_PARENT_PAGE_ID) 하위호환
-    parentId: (process.env.CONFLUENCE_PARENT_ID ?? process.env.CONFLUENCE_PARENT_PAGE_ID)?.trim() || undefined,
+    baseUrl: values.CONFLUENCE_BASE_URL,
+    email: values.CONFLUENCE_EMAIL,
+    token: values.CONFLUENCE_API_TOKEN,
+    spaceKey: values.CONFLUENCE_SPACE_KEY,
+
   };
 }
 

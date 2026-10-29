@@ -1,19 +1,22 @@
-import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,realpathSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
 import {join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import assert from 'node:assert/strict';
 export function workspace(t,files={}) {
- const root=mkdtempSync(join(tmpdir(),'csync-tests-'));
+ const root=realpathSync.native(mkdtempSync(join(tmpdir(),'csync-tests-')));
  t.after(()=>rmSync(root,{recursive:true,force:true}));
  const put=(rel,content)=>{const path=join(root,rel);mkdirSync(dirname(path),{recursive:true});writeFileSync(path,content);return path;};
  for(const [rel,content] of Object.entries(files))put(rel,content);
  return {root,put};
 }
 // Unexpected calls fail instead of reaching any network. All credentials below are synthetic.
-export function mockFetch(t,steps) {
+export function mockFetch(t,steps,responder) {
  const calls=[];
  t.mock.method(globalThis,'fetch',async(url,init={})=>{
-  const step=steps[calls.length];calls.push({url:String(url),...init});
+  const step=steps[calls.length];
+  const extra=responder?.(url,init,step);
+  if(extra!==null && extra!==undefined) return new Response(JSON.stringify(extra),{status:200});
+  calls.push({url:String(url),...init});
   assert.ok(step,`Unexpected request: ${url}`);
   assert.equal(new URL(url).pathname+new URL(url).search,step.path);
   assert.equal(init.method??'GET',step.method??'GET');

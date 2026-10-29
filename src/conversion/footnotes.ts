@@ -1,17 +1,66 @@
 import MarkdownIt from 'markdown-it';
 import footnote from 'markdown-it-footnote';
+import type Ruler from 'markdown-it/lib/ruler.mjs';
 import { collectHeadings } from '../documents/anchors.js';
 import { mapMarkdownText, replaceGeneratedBlocks } from './pdf-pages.js';
 
+/** Registered rule names survive minification; Function.name does not. */
+function registeredRule<T>(ruler:Ruler<T>,name:string):T {
+  const before=ruler.getRules('');
+  ruler.disable(name);
+  const remaining=new Set(ruler.getRules(''));
+  ruler.enable(name);
+  const rule=before.find(fn=>!remaining.has(fn));
+  if(!rule)throw new Error(`각주 파서 규칙을 찾을 수 없습니다: ${name}`);
+  return rule;
+}
+
+/** Use the parser's balanced inline-note rule, preserving code and escaped examples. */
+function extractInlineNotes(source: string): {text: string; labels: Set<string>} {
+  const md = new MarkdownIt({html: true}).use(footnote);
+  const rule = registeredRule(md.inline.ruler,'footnote_inline');
+  const definitions: string[] = [], labels = new Set<string>();
+  let edits: {start:number; end:number; text:string}[] = [], depth = 0, serial = 0;
+  md.inline.ruler.at('footnote_inline', (state, silent) => {
+    const start = state.pos;
+    depth++;
+    let ok: boolean;
+    try { ok = rule(state, silent); } finally { depth--; }
+    if(ok && !silent && depth === 0) {
+      let label: string;
+      do { label = `csync-inline-${++serial}`; } while(source.includes(`[^${label}]`));
+      labels.add(label);
+      definitions.push(`[^${label}]: ${state.src.slice(start + 2, state.pos - 1).replace(/\n/g, '\n    ')}`);
+      edits.push({start,end:state.pos,text:`[^${label}]`});
+    }
+    return ok;
+  });
+  const lines=source.split('\n'), offsets=[0];
+  for(const line of lines)offsets.push(offsets[offsets.length-1]+line.length+1);
+  const spans=new MarkdownIt({html:true}).parse(source,{}).filter(t=>['fence','code_block','html_block'].includes(t.type)&&t.map)
+    .map(t=>[offsets[t.map![0]],Math.min(offsets[t.map![1]],source.length)]);
+  const prose=(part:string)=>{
+    edits=[];md.inline.parse(part,md,{},[]);
+    for(const edit of edits.sort((a,b)=>b.start-a.start))part=part.slice(0,edit.start)+edit.text+part.slice(edit.end);
+    return part;
+  };
+  let cursor=0,text='';
+  for(const [start,end] of spans){if(start<cursor)continue;text+=prose(source.slice(cursor,start))+source.slice(start,end);cursor=end;}
+  text+=prose(source.slice(cursor));
+  return {text:definitions.length?text.trimEnd()+'\n\n'+definitions.join('\n\n')+'\n':source, labels};
+}
+
 /** 각주 확장을 일반 제목 앵커 + 위첨자 Markdown 링크로 내보낸다. */
 export function footnotesToLinks(source: string): string {
-  if (!source.includes('[^')) return source;
+  if (!source.includes('[^') && !source.includes('^[')) return source;
+  const inline = extractInlineNotes(source);
+  source = inline.text;
   const md = new MarkdownIt({ html: true }).use(footnote);
   const definitions: { start: number; end: number; label: string; body: string }[] = [];
   const lines = source.split('\n');
   const offsets = [0];
   for (const line of lines) offsets.push(offsets[offsets.length - 1] + line.length + 1);
-  const defRule = md.block.ruler.getRules('').find((r) => r.name === 'footnote_def')!;
+  const defRule = registeredRule(md.block.ruler,'footnote_def');
   md.block.ruler.at('footnote_def', (state, start, end, silent) => {
     const ok = defRule(state, start, end, silent);
     if (ok && !silent) {
@@ -31,7 +80,7 @@ export function footnotesToLinks(source: string): string {
   const labels = new Set(definitions.map((d) => d.label));
   const notes = new Map<string, { number: number; heading: string; anchor: string }>();
   const edits: { start: number; end: number; text: string }[] = [];
-  const refRule = md.inline.ruler.getRules('').find((r) => r.name === 'footnote_ref')!;
+  const refRule = registeredRule(md.inline.ruler,'footnote_ref');
   let localEdits: typeof edits = [];
   md.inline.ruler.at('footnote_ref', (state, silent) => {
     const start = state.pos;
@@ -52,7 +101,7 @@ export function footnotesToLinks(source: string): string {
     }
     return ok;
   });
-  // 인라인 각주(^[...])는 이 변환의 대상이 아니다.
+  // Inline notes have already been assigned collision-free definition labels.
   md.inline.ruler.disable('footnote_inline');
   const replaceRefs = (text: string): string => {
     localEdits = [];
@@ -81,24 +130,52 @@ export function footnotesToLinks(source: string): string {
   for (const e of edits.sort((a, b) => b.start - a.start)) result = result.slice(0, e.start) + e.text + result.slice(e.end);
   const bodies = new Map(definitions.map((d) => [d.label, d.body]));
   return result.trimEnd() + '\n\n' + [...notes].map(([label, note]) =>
-    `<!-- csync-footnote:v1 ${Buffer.from(JSON.stringify({ label, anchor: note.anchor })).toString('base64')} -->\n###### ${note.heading}\n\n${replaceRefs(bodies.get(label) ?? '')}\n<!-- /csync-footnote -->`,
+    `<!-- csync-footnote:v1 ${Buffer.from(JSON.stringify({ label, anchor: note.anchor, ...(inline.labels.has(label) ? { inline: true } : {}) })).toString('base64')} -->\n###### ${note.heading}\n\n${replaceRefs(bodies.get(label) ?? '')}\n<!-- /csync-footnote -->`,
   ).join('\n\n') + '\n';
 }
 
 /** 생성 표식이 있는 각주만 복원한다. 설명의 사용자 수정은 유지한다. */
 export function linksToFootnotes(source: string): string {
-  const refs = new Map<string, string>();
+  const refs = new Map<string, {label:string; body:string; inline:boolean}>();
   const definitions: string[] = [];
+  const inlined = new Set<string>();
+  const parser = new MarkdownIt({html:true}).use(footnote);
   const text = replaceGeneratedBlocks(source,
-    /<!-- csync-footnote:v1 ([A-Za-z0-9+/=]+) -->\n#{1,6} [^\n]+\n\n([\s\S]*?)\n<!-- \/csync-footnote -->/g,
+    /<!-- csync-footnote:v1 ([A-Za-z0-9+/=]+) -->\n+#{1,6} [^\n]+\n\n([\s\S]*?)\n<!-- \/csync-footnote -->/g,
     (_all, encoded, body) => {
-      const { label, anchor } = JSON.parse(Buffer.from(encoded, 'base64').toString()) as { label: string; anchor: string };
-      refs.set(anchor, label);
-      definitions.push(`[^${label}]: ${body.trimEnd().split('\n').join('\n    ')}`);
+      const data = decodeFootnote(encoded);
+      if (!data) return _all;
+      const {label, anchor} = data;
+      refs.set(anchor, {label, body:body.trimEnd(), inline:data.inline === true});
+      if (!data.inline) definitions.push(`[^${label}]: ${body.trimEnd().split('\n').join('\n    ')}`);
       return '';
     });
   if (!refs.size) return source;
   const replace = (s: string) => mapMarkdownText(s, p => p.replace(/<sup>\[\d+\]\(#([^\s)]+)\)<\/sup>/g,
-    (all, anchor) => refs.has(decodeURIComponent(anchor)) ? `[^${refs.get(decodeURIComponent(anchor))}]` : all));
-  return replace(text).trimEnd() + '\n\n' + definitions.map(replace).join('\n\n') + '\n';
+    (all, anchor) => {
+      const note = refs.get(safeDecode(anchor));
+      if (!note) return all;
+      if (note.inline && !/\n\s*\n/.test(note.body)) {
+        const candidate = `^[${note.body}]`, tokens: import('markdown-it/lib/token.mjs').default[] = [];
+        parser.inline.parse(candidate, parser, {}, tokens);
+        if (tokens.length === 1 && tokens[0].type === 'footnote_ref') { inlined.add(safeDecode(anchor)); return candidate; }
+      }
+      return `[^${note.label}]`;
+    }));
+  const main=replace(text).trimEnd();
+  // A remotely removed inline reference must not discard the remaining note text.
+  for (const [anchor, note] of refs) if (note.inline && !inlined.has(anchor)) definitions.push(`[^${note.label}]: ${note.body.split('\n').join('\n    ')}`);
+  const notes=definitions.map(replace).join('\n\n');
+  return main + (notes ? '\n\n' + notes : '') + '\n';
 }
+
+
+export type FootnoteMetadata = { label: string; anchor: string; inline?: boolean };
+export function decodeFootnote(encoded: string): FootnoteMetadata | undefined {
+  if(encoded.length > 8000)return;
+  try {
+    const data=JSON.parse(Buffer.from(encoded,'base64').toString('utf8'));
+    if(data && typeof data.label==='string' && /^[^\s\[\]\r\n]+$/.test(data.label) && typeof data.anchor==='string' && /^[\p{L}\p{N}_-]+$/u.test(data.anchor) && (data.inline===undefined || typeof data.inline==='boolean'))return data;
+  } catch { /* Preserve malformed metadata rather than consuming unrelated content. */ }
+}
+function safeDecode(value: string): string { try { return decodeURIComponent(value); } catch { return value; } }

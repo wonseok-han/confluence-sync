@@ -1,10 +1,16 @@
+import { progressStep } from '../shared/progress.js';
+import { storeBaseline } from './baseline.js';
+import { buildTreeRenderer } from './render.js';
+import { localStateHash } from './local-state.js';
+import { loadIndex, stagedPaths, assertStaged, completeStaged } from './staging.js';
 /** Incremental Confluence push and local preview orchestration. */
+import { mappingPath } from './metadata.js';
 import { positionalArgs } from '../cli/args.js';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, statSync, readFileSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { readEnv, requireEnv } from '../confluence/config.js';
-import { docHash, type Rendered } from '../documents/markdown.js';
-import { buildTreeRenderer } from './render.js';
+import { docHash } from '../documents/markdown.js';
+import { preparePushTree } from './prepare.js';
 import {
   collectMarkdown, buildFolderIndex, readDoc,
   parentKeyOf, containerKeyOf, sortForSync, resolveSelection, withParents,
@@ -12,12 +18,16 @@ import {
 import { loadMapping, saveMapping, type Mapping } from './mapping.js';
 import { createClient } from '../confluence/client.js';
 import { buildIgnorer } from './ignore.js';
-import { bold, dim, red, green, yellow, magenta, cyan, gray } from '../shared/colors.js';
+import { resolveSyncBase, loadWorkspace, inScope, inNestedWorkspace, assertWorkspaceConnection, requireScope } from './workspace.js';
+import { verifyScope } from './scope.js';
+import { reconcilePages } from './reconcile.js';
+import { bold, dim, red, green, yellow, cyan, gray } from '../shared/colors.js';
 
 export async function runPush(argv: string[]): Promise<void> {
+  if (argv.includes('--rebuild')) throw new Error('--rebuild는 v2에서 제거되었습니다. 파일 이동·갱신은 push, 본문 강제 갱신은 push --force를 사용하세요. 기존 페이지는 삭제하지 않습니다.');
+  if (argv.includes('--scope')) throw new Error('--scope는 제거되었습니다. 기준 폴더 안에서 추가한 문서만 업로드합니다.');
   const DRY_RUN = argv.includes('--dry-run');
   const LIST = argv.includes('--list');
-  const REBUILD = argv.includes('--rebuild');
   const FORCE = argv.includes('--force');
   const VERIFY = argv.includes('--verify');
   function optVal(name: string): string | undefined {
@@ -33,12 +43,12 @@ export async function runPush(argv: string[]): Promise<void> {
   const EXCLUDES = optVals('--exclude');
   const positionals = positionalArgs(argv);
 
-  const baseInput = optVal('--base') ?? process.env.CONFLUENCE_SYNC_BASE;
+  const baseInput = resolveSyncBase(optVal('--base'));
   if (!baseInput) {
     console.error(
       red('✗ 동기화 루트가 지정되지 않았습니다.') + '\n' +
       '  --base <dir> 인자 또는 env CONFLUENCE_SYNC_BASE 로 동기화할 디렉토리를 지정하세요.\n' +
-      `  예) ${cyan('confluence-sync --base ./docs')}\n` +
+      `  예) ${cyan('confluence-sync push --base ./docs')}\n` +
       `  설정(.env)을 만들려면:  ${cyan('confluence-sync init')}\n` +
       `  전체 도움말:           ${cyan('confluence-sync --help')}`,
     );
@@ -47,30 +57,36 @@ export async function runPush(argv: string[]): Promise<void> {
   const BASE_DIR = resolve(baseInput);
   // mapping 은 base 루트에 둔다(문서셋에 종속). --mapping 으로 위치 override 가능.
   const mappingOpt = optVal('--mapping');
-  const MAPPING_PATH = mappingOpt ? resolve(mappingOpt) : resolve(BASE_DIR, '.confluence-sync.json');
+  const MAPPING_PATH = mappingOpt ? resolve(mappingOpt) : mappingPath(BASE_DIR);
 
-  const env = readEnv();
+  const env = readEnv(BASE_DIR);
+  const workspace = loadWorkspace(BASE_DIR);
+  const remoteScope = requireScope(workspace);
+  if ((!DRY_RUN && !LIST) || (VERIFY && !LIST)) assertWorkspaceConnection(workspace, env);
 
   if (!existsSync(BASE_DIR) || !statSync(BASE_DIR).isDirectory()) {
     console.error(red(`동기화 루트가 디렉토리가 아닙니다: ${BASE_DIR}`));
     process.exit(1);
   }
-  if (!DRY_RUN && !LIST) requireEnv(env); // list/dry 는 Confluence 호출이 없어 인증 불필요
+  if ((!DRY_RUN && !LIST) || (VERIFY && !LIST)) requireEnv(env); // list/dry 는 Confluence 호출이 없어 인증 불필요
 
   const ignorer = buildIgnorer(BASE_DIR, EXCLUDES);
   const collected = collectMarkdown(BASE_DIR).map((f) => relative(BASE_DIR, f).split('\\').join('/'));
-  const allRel = collected.filter((r) => !ignorer.ignores(r)); // 제외된 문서는 모든 단계에서 빠짐
+  const allRel = collected.filter((r) => !ignorer.ignores(r) && !inNestedWorkspace(BASE_DIR, r)); // 제외된 문서는 모든 단계에서 빠짐
   const ignoredCount = collected.length - allRel.length;
   const folderIndex = buildFolderIndex(allRel);
   // 링크·섹션 링크 변환은 항상 트리 전체 기준이다. 선택 동기화여도 대상 문서의 제목·헤딩을 알아야 하고,
   // 다른 문서가 이 문서의 섹션을 가리킬 수 있다. 제외된 문서는 링크 대상에서도 빠진다.
-  const { titles: titleIndex, render } = buildTreeRenderer(BASE_DIR, allRel, { referenceRoots: optVals('--reference-root'), baseUrl: env.baseUrl });
+  const titleIndex = Object.fromEntries(allRel.map(rel => [rel, readDoc(BASE_DIR, rel).title]));
 
-  // 사용자가 실제로 고른 문서. 경로 인자가 없으면 전체가 대상이다.
-  const picked = positionals.length ? resolveSelection(allRel, positionals, BASE_DIR) : allRel;
+  // 사용자가 실제로 고른 문서. 경로 인자가 없으면 저장된 업로드 선택만 사용한다.
+  const staged = !positionals.length && !LIST ? loadIndex(BASE_DIR).entries : undefined;
+  const requested = positionals.length ? resolveSelection(allRel, positionals, BASE_DIR) : LIST ? allRel : stagedPaths(BASE_DIR);
+  if (requested.some(rel => !allRel.includes(rel))) throw new Error('업로드 대상 문서가 없거나 제외되었습니다. unstage 후 다시 추가하세요.');
+  const picked = requested.filter(rel => inScope(rel, workspace));
   const explicit = new Set(picked);
   // 상위 README 를 함께 넣는 것은 **자식의 부모 pageId 를 얻기 위해서**다(발행 대상이 아니다).
-  const selected = positionals.length ? withParents(picked, folderIndex) : allRel;
+  const selected = withParents(picked, folderIndex);
   const files = sortForSync(selected);
   /** 딸려온 상위 README 인가 — 이미 페이지가 있으면 내용은 건드리지 않는다. */
   const isCarriedParent = (rel: string) => !explicit.has(rel);
@@ -79,7 +95,7 @@ export async function runPush(argv: string[]): Promise<void> {
       (files.length > explicit.size ? dim(` (+상위 ${files.length - explicit.size})`) : '')
     : `${files.length}건`;
   const ignoredNote = ignoredCount ? dim(`  (제외 ${ignoredCount})`) : '';
-  console.log(`${dim('base:')} ${cyan(BASE_DIR)}\n${dim('대상:')} ${scope}${ignoredNote}`);
+  console.log(`${dim('base:')} ${cyan(BASE_DIR)}\n${dim('스페이스 루트:')} ${cyan(`${remoteScope.path} (#${remoteScope.id})`)}\n${dim('작업공간:')} ${cyan(BASE_DIR)}\n${dim('대상:')} ${scope}${ignoredNote}`);
 
   // ---- 경로 헬퍼 ----
   const isReadmeFile = (p: string) => /README\.md$/.test(p);
@@ -108,215 +124,219 @@ export async function runPush(argv: string[]): Promise<void> {
     return;
   }
 
-  const mapping = loadMapping(MAPPING_PATH);
-  // A remap plan is valid only for the tree it was prepared against.
-  for (const rel of files) {
-    const entry = mapping[rel];
-    if (entry?.pendingMove && entry.pendingMove.parentKey !== parentKeyOf(rel, folderIndex)) {
-      throw new Error(`구조가 remap 이후 변경되었습니다: ${rel}. remap을 다시 실행하세요.`);
-    }
-    const id = readDoc(BASE_DIR, rel).fm.pageId;
-    if (entry && id && entry.pageId !== id) throw new Error(`pageId 충돌: ${rel}`);
-    if (!entry && id && Object.values(mapping).some(e => e.pageId === id && e.pendingMove)) {
-      throw new Error(`remap 이후 경로가 변경되었습니다: ${rel}. remap을 다시 실행하세요.`);
-    }
-  }
+  const originalMapping = loadMapping(MAPPING_PATH);
+  const mapping = reconcilePages(BASE_DIR, originalMapping, allRel, picked, remoteScope);
+  const relinked = new Set(picked.filter(rel => !originalMapping[rel] && mapping[rel]?.pageId));
+  for (const rel of files) if (isCarriedParent(rel) && !mapping[rel]?.pageId) throw new Error(`상위 문서의 매핑이 없습니다: ${rel}. 먼저 Pull로 기존 상위 문서를 연결하거나 상위 문서도 함께 추가하세요.`);
+  const root = remoteScope;
+  if (root.type === 'page' && explicit.has('README.md') && mapping['README.md']?.pageId !== root.id) throw new Error('루트 README.md는 선택한 원격 페이지의 본문입니다. pull로 기준을 확보하거나 새 하위 문서는 다른 파일명을 사용하세요.');
+  const rootParent = root.id;
 
-  if (DRY_RUN) {
-    const seen = new Set<string>();
-    for (const rel of files) {
-      for (const d of ancestorFolderDirs(rel)) if (!seen.has(d)) {
-        seen.add(d);
-        const fex = mapping[`${d}/`];
-        console.log(`  [${fex?.pageId ? gray('폴더') : green('폴더+')}] 📁 ${d}/`);
+  console.log(dim('Markdown 전처리: 위키링크·각주·PDF 페이지 참조를 준비합니다. 원본은 변경하지 않습니다.'));
+  progressStep('선택한 문서·첨부 전처리');
+  const prepared = await preparePushTree(BASE_DIR, allRel, picked, { referenceRoots: optVals('--reference-root'), baseUrl: env.baseUrl });
+  try {
+    const { render, docs } = prepared;
+    const hashes = Object.fromEntries(picked.map(rel => [rel, docHash(docs[rel].title, render(rel, docs[rel].body, docs[rel].title))]));
+    if (staged) for (const rel of picked) assertStaged(BASE_DIR, rel, hashes[rel], staged[rel]);
+    const sourceTexts = Object.fromEntries(picked.map(rel => [rel, readFileSync(resolve(BASE_DIR, rel), 'utf8')]));
+    const localHashes = Object.fromEntries(picked.map(rel => [rel, localStateHash(BASE_DIR, rel, render(rel, docs[rel].body, docs[rel].title))]));
+    const legacy = buildTreeRenderer(BASE_DIR, allRel);
+    const locallyClean = (rel: string) => {
+      const entry = mapping[rel];
+      return entry?.localHash ? entry.localHash === localHashes[rel] : !!entry?.hash && (entry.hash === hashes[rel]
+        || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title))
+        || entry.hash === docHash(docs[rel].title, render(rel, docs[rel].body, docs[rel].title, 'panels'))
+        || entry.hash === docHash(docs[rel].title, render(rel, docs[rel].body, docs[rel].title, true))
+        || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title, 'panels'))
+        || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title, true)));
+    };
+    const publicationHash = (rel: string) => !FORCE && locallyClean(rel) ? mapping[rel].hash! : hashes[rel];
+    const unchanged = (rel: string) => !FORCE && !VERIFY && locallyClean(rel) && !mapping[rel]?.pendingMove;
+    const needsRemote = picked.some(rel => !unchanged(rel));
+    let client: ReturnType<typeof createClient> | undefined;
+    let spaceId = '';
+    if (needsRemote && (!DRY_RUN || VERIFY)) {
+      client = createClient({ baseUrl: env.baseUrl!, email: env.email!, token: env.token! }, { force: FORCE, verify: VERIFY, scope: { id: root.id, spaceId: workspace.connection!.spaceId! } });
+      progressStep('원격 연결과 문서 버전 검증');
+      spaceId = await verifyScope(client, workspace);
+
+      for (const rel of files) {
+        if (!isCarriedParent(rel) && unchanged(rel)) continue;
+        if (isCarriedParent(rel) && mapping[rel]?.pageId) { await client.assertInScope(mapping[rel].pageId); continue; }
+        const { title, body, fm } = docs[rel];
+        const hash = publicationHash(rel);
+        const entry = mapping[rel] ?? (fm.pageId ? { pageId: fm.pageId, title } : undefined);
+        if (entry) await client.checkPage({ [rel]: entry }, spaceId, rel, hash);
       }
-      const ex0 = mapping[rel];
-      // 딸려온 상위 README 는 pageId 만 쓰고 지나간다 — 고르지 않은 문서를 발행하지 않는다
-      if (isCarriedParent(rel) && ex0?.pageId) {
-        console.log(`  [${gray('상위')}] ${rel}  ${dim(`(pageId #${ex0.pageId} 만 사용)`)}`);
+    }
+
+    if (DRY_RUN) {
+      const seen = new Set<string>();
+      for (const rel of files) {
+        for (const d of ancestorFolderDirs(rel)) if (!seen.has(d)) {
+          seen.add(d);
+          const fex = mapping[`${d}/`];
+          console.log(`  [${fex?.pageId ? gray('폴더') : green('폴더+')}] 📁 ${d}/`);
+        }
+        const ex0 = mapping[rel];
+        // 딸려온 상위 README 는 pageId 만 쓰고 지나간다 — 고르지 않은 문서를 발행하지 않는다
+        if (isCarriedParent(rel) && ex0?.pageId) {
+          console.log(`  [${gray('상위')}] ${rel}  ${dim(`(pageId #${ex0.pageId} 만 사용)`)}`);
+          continue;
+        }
+        const { title, body, fm } = docs[rel];
+        const r = render(rel, body, title);
+        for (const link of r.referenceLinks) console.log(dim(`  참조 링크: ${link}`));
+        for (const warning of r.linkWarnings) console.error(yellow(`  ⚠ ${rel}: ${warning}`));
+        const hash = publicationHash(rel);
+        const ex = mapping[rel];
+        // 매핑엔 없지만 frontmatter 에 pageId 가 있으면 신규 생성이 아니라 기존 페이지에 연결된다
+        const status = !ex?.pageId
+          ? (fm.pageId ? cyan('연결') : green('신규'))
+          : ex.pendingMove ? cyan(!FORCE && ex.hash === hash ? '위치 확인/이동' : '위치 확인/이동 + 변경')
+          : !FORCE && locallyClean(rel) ? gray(relinked.has(rel) ? '로컬 경로 연결' : '동일') : yellow('변경');
+        const pk = parentKeyOf(rel, folderIndex);
+        const anchorNote = r.anchorLinks || r.anchorsPlaced
+          ? `, 섹션링크: ${r.anchorLinks}, 앵커: ${r.anchorsPlaced}` : '';
+        console.log(`  [${status}] ${rel}  ${dim('→')}  ${cyan(`"${title}"`)}  ${dim(`(부모: ${pk ?? 'ROOT'}, 내부링크: ${r.internalLinks}${anchorNote}, 이미지: ${r.images.length}, 첨부: ${r.attachments.length})`)}`);
+        if (r.deadAnchors.length) {
+          console.error(yellow(`    ⚠ 대응 헤딩 없는 앵커 ${r.deadAnchors.length}개: `) + dim(r.deadAnchors.slice(0, 3).join(' ')));
+        }
+      }
+      console.log('\n' + dim(VERIFY ? '--dry-run --verify: 원격 조회만 수행, 변경 없음.' : '--dry-run: 실제 호출 없음.'));
+      return;
+    }
+
+    const apiClient = client!;
+    const work: Mapping = mapping;
+
+    let failed = 0;
+    let moved = 0;
+    let created = 0, updated = 0, skipped = 0, foldersMade = 0, carried = 0;
+    const handledFolders = new Map<string, boolean>();   // 이번 실행에서 처리한 폴더 dir
+
+    // README 없는 폴더를 Confluence 폴더로 생성(없으면)하고 work 에 등록. 성공 여부 반환.
+    const ensureFolder = async (dir: string): Promise<boolean> => {
+      const key = `${dir}/`;
+      const pcKey = containerKeyOf(parentDirOf(dir), folderIndex);
+      const parentId = pcKey ? work[pcKey]?.pageId : rootParent;
+      if (pcKey && !parentId) {
+        console.error(yellow(`  ✗ 폴더 건너뜀  ${dir}/  (부모 '${pcKey}' 가 아직 없음)`));
+        return false;
+      }
+      const ex = work[key];
+      try {
+        const title = dir.split('/').pop()!;
+        const result = await apiClient.upsertFolder(spaceId, env.spaceKey!, title, parentId, ex?.type === 'folder' ? ex.pageId : undefined);
+        const fid = result.id;
+        work[key] = ex?.pageId === fid ? ex : { pageId: fid, title, type: 'folder' };
+        saveMapping(MAPPING_PATH, work);
+        console.log(`  ${cyan(!result.created ? '📁 폴더 연결' : '📁 폴더')}  ${dir}/  ${dim(`(부모: ${pcKey ?? 'ROOT'})`)}`);
+        if (result.created) foldersMade++;
+        return true;
+      } catch (e) {
+        console.error(red(`  ✗ 폴더 준비 실패  ${dir}/`) + `\n${(e as Error).message}`);
+        return false;
+      }
+    };
+
+    for (const [index, rel] of files.entries()) {
+      progressStep(`문서 처리 ${index + 1}/${files.length} · ${rel}`);
+      if (!isCarriedParent(rel) && unchanged(rel)) {
+        if (relinked.has(rel)) {
+          saveMapping(MAPPING_PATH, work);
+          console.log(`  ${gray('로컬 경로 연결')}  ${rel}  ${dim('(원격 본문·제목·위치 유지)')}`);
+        }
+        console.log(`  = 변경없음  ${rel}`); skipped++; completeStaged(BASE_DIR, rel, staged?.[rel]); continue;
+      }
+      if (isCarriedParent(rel) && !needsRemote) { carried++; continue; }
+      // 상위 README-less 폴더들 보장(shallow→deep)
+      let folderOk = true;
+      for (const d of ancestorFolderDirs(rel)) {
+        if (!handledFolders.has(d)) handledFolders.set(d, await ensureFolder(d));
+        if (!handledFolders.get(d)) folderOk = false;
+        if (!folderOk) break;
+      }
+      if (!folderOk) { failed++; console.error(yellow(`  ✗ 건너뜀  ${rel}  (상위 폴더 미생성)`)); continue; }
+
+      // 딸려온 상위 README 는 자식의 부모 pageId 를 얻으려고 들어온 것이다.
+      // 이미 페이지가 있으면 내용은 건드리지 않는다 — `csync <파일>` 이 고르지 않은 문서를 발행하면 안 된다.
+      // (페이지가 아직 없으면 자식을 붙일 곳이 없으므로 아래에서 생성한다)
+      if (isCarriedParent(rel) && work[rel]?.pageId) {
+        console.log(`  ${gray('· 상위')}  ${rel}  ${dim(`(pageId #${work[rel].pageId} 만 사용)`)}`);
+        carried++;
         continue;
       }
-      const { title, body, fm } = readDoc(BASE_DIR, rel);
+
+      const { title, body, fm } = docs[rel];
       const r = render(rel, body, title);
       for (const link of r.referenceLinks) console.log(dim(`  참조 링크: ${link}`));
       for (const warning of r.linkWarnings) console.error(yellow(`  ⚠ ${rel}: ${warning}`));
-      const hash = docHash(title, r);
-      const ex = mapping[rel];
-      // 매핑엔 없지만 frontmatter 에 pageId 가 있으면 신규 생성이 아니라 기존 페이지에 연결된다
-      const status = !ex?.pageId
-        ? (fm.pageId ? cyan('연결') : green('신규'))
-        : ex.pendingMove ? cyan(ex.hash === hash ? '위치 확인/이동' : '위치 확인/이동 + 변경')
-        : ex.hash === hash ? gray('동일') : yellow('변경');
+      const hash = publicationHash(rel);
       const pk = parentKeyOf(rel, folderIndex);
-      const anchorNote = r.anchorLinks || r.anchorsPlaced
-        ? `, 섹션링크: ${r.anchorLinks}, 앵커: ${r.anchorsPlaced}` : '';
-      console.log(`  [${status}] ${rel}  ${dim('→')}  ${cyan(`"${title}"`)}  ${dim(`(부모: ${pk ?? 'ROOT'}, 내부링크: ${r.internalLinks}${anchorNote}, 이미지: ${r.images.length}, 첨부: ${r.attachments.length})`)}`);
       if (r.deadAnchors.length) {
-        console.error(yellow(`    ⚠ 대응 헤딩 없는 앵커 ${r.deadAnchors.length}개: `) + dim(r.deadAnchors.slice(0, 3).join(' ')));
+        console.error(yellow(`  ⚠ 대응 헤딩 없는 앵커  ${rel}`) + dim(`  ${r.deadAnchors.slice(0, 3).join(' ')}${r.deadAnchors.length > 3 ? ` 외 ${r.deadAnchors.length - 3}` : ''}`));
       }
-    }
-    console.log('\n' + dim('--dry-run: 실제 호출 없음.'));
-    return;
-  }
-
-  const client = createClient(
-    { baseUrl: env.baseUrl!, email: env.email!, token: env.token! },
-    { force: FORCE, verify: VERIFY },
-  );
-  const spaceId = await client.getSpaceId(env.spaceKey!);
-  if (REBUILD) { await client.deleteAll(mapping); saveMapping(MAPPING_PATH, {}); }
-  const work: Mapping = REBUILD ? {} : mapping;
-
-  let moved = 0;
-  let created = 0, updated = 0, skipped = 0, recreated = 0, relinked = 0, foldersMade = 0, linked = 0, carried = 0;
-  const rendered = new Map<string, Rendered & { title: string; hash: string; parentId: string | undefined }>();
-  const recreatedTitles = new Set<string>(); // 이번에 재생성된 문서의 제목
-  const touched = new Set<string>();          // 이번에 발행(생성/갱신/재생성)된 문서
-  const handledFolders = new Map<string, boolean>();   // 이번 실행에서 처리한 폴더 dir
-
-  // README 없는 폴더를 Confluence 폴더로 생성(없으면)하고 work 에 등록. 성공 여부 반환.
-  const ensureFolder = async (dir: string): Promise<boolean> => {
-    const key = `${dir}/`;
-    const pcKey = containerKeyOf(parentDirOf(dir), folderIndex);
-    const parentId = pcKey ? work[pcKey]?.pageId : env.parentId;
-    if (pcKey && !parentId) {
-      console.error(yellow(`  ✗ 폴더 건너뜀  ${dir}/  (부모 '${pcKey}' 가 아직 없음)`));
-      return false;
-    }
-    const ex = work[key];
-    try {
-      const title = dir.split('/').pop()!;
-      const result = await client.upsertFolder(spaceId, env.spaceKey!, title, parentId, ex?.type === 'folder' ? ex.pageId : undefined);
-      const fid = result.id;
-      work[key] = { pageId: fid, title, type: 'folder' };
-      saveMapping(MAPPING_PATH, work);
-      console.log(`  ${cyan(!result.created ? '📁 폴더 연결' : '📁 폴더')}  ${dir}/  ${dim(`(부모: ${pcKey ?? 'ROOT'})`)}`);
-      if (result.created) foldersMade++;
-      return true;
-    } catch (e) {
-      console.error(red(`  ✗ 폴더 준비 실패  ${dir}/`) + `\n${(e as Error).message}`);
-      return false;
-    }
-  };
-
-  for (const rel of files) {
-    // 상위 README-less 폴더들 보장(shallow→deep)
-    let folderOk = true;
-    for (const d of ancestorFolderDirs(rel)) {
-      if (!handledFolders.has(d)) handledFolders.set(d, await ensureFolder(d));
-      if (!handledFolders.get(d)) folderOk = false;
-      if (!folderOk) break;
-    }
-    if (!folderOk) { console.error(yellow(`  ✗ 건너뜀  ${rel}  (상위 폴더 미생성)`)); continue; }
-
-    // 딸려온 상위 README 는 자식의 부모 pageId 를 얻으려고 들어온 것이다.
-    // 이미 페이지가 있으면 내용은 건드리지 않는다 — `csync <파일>` 이 고르지 않은 문서를 발행하면 안 된다.
-    // (페이지가 아직 없으면 자식을 붙일 곳이 없으므로 아래에서 생성한다)
-    if (isCarriedParent(rel) && work[rel]?.pageId) {
-      console.log(`  ${gray('· 상위')}  ${rel}  ${dim(`(pageId #${work[rel].pageId} 만 사용)`)}`);
-      carried++;
-      continue;
-    }
-
-    const { title, body, fm } = readDoc(BASE_DIR, rel);
-    const r = render(rel, body, title);
-    for (const link of r.referenceLinks) console.log(dim(`  참조 링크: ${link}`));
-    for (const warning of r.linkWarnings) console.error(yellow(`  ⚠ ${rel}: ${warning}`));
-    const hash = docHash(title, r);
-    const pk = parentKeyOf(rel, folderIndex);
-    if (r.deadAnchors.length) {
-      console.error(yellow(`  ⚠ 대응 헤딩 없는 앵커  ${rel}`) + dim(`  ${r.deadAnchors.slice(0, 3).join(' ')}${r.deadAnchors.length > 3 ? ` 외 ${r.deadAnchors.length - 3}` : ''}`));
-    }
-    const parentId = pk ? work[pk]?.pageId : env.parentId;
-    rendered.set(rel, { ...r, title, hash, parentId });
-    if (pk && !parentId) {
-      console.error(yellow(`  ✗ 건너뜀  ${rel}  (부모 '${pk}' 가 아직 없음)`));
-      continue;
-    }
-
-    // pull 로 받은 문서(frontmatter 에 pageId)는 매핑이 없어도 원본 페이지에 다시 연결한다.
-    // 매핑 파일을 잃었거나 vault 를 다른 곳에 복제한 경우 중복 생성을 막아준다.
-    if (!work[rel]?.pageId && fm.pageId) {
-      try {
-        if (await client.getContentOrNull(fm.pageId)) {
-          work[rel] = { pageId: fm.pageId, title };
-          saveMapping(MAPPING_PATH, work);
-          console.log(`  ${cyan('🔗 연결')}  ${rel}  ${dim(`→ 기존 페이지 #${fm.pageId}`)}`);
-          linked++;
-        } else {
-          console.error(yellow(`  ⚠ frontmatter 의 pageId #${fm.pageId} 를 찾을 수 없습니다 → 새로 생성  (${rel})`));
-        }
-      } catch (e) {
-        console.error(yellow(`  ⚠ pageId 확인 실패 #${fm.pageId}: ${(e as Error).message}`));
-      }
-    }
-
-    try {
-      const result = await client.upsertPage(work, spaceId, rel, title, r.storage, hash, parentId);
-      saveMapping(MAPPING_PATH, work);
-      if (result === 'skipped') {
-        console.log(`  ${gray('=  변경없음')}  ${rel}`);
-        skipped++;
+      // Pull keeps existing local paths; editing content must preserve the observed remote parent.
+      const recordedParent = work[rel]?.pendingMove ? undefined : work[rel]?.remoteParentId;
+      const parentId = recordedParent ?? (pk ? work[pk]?.pageId : rootParent);
+      if (pk && !parentId) {
+        failed++;
+        console.error(yellow(`  ✗ 건너뜀  ${rel}  (부모 '${pk}' 가 아직 없음)`));
         continue;
       }
-      if (result === 'moved') {
-        console.log(`  ${cyan('→ 이동')}  ${rel}  (부모: ${pk ?? 'ROOT'})`);
-        moved++;
-        continue;
-      }
-      const imgOk = await client.uploadAttachments(work[rel].pageId, r.attachments, BASE_DIR);
-      const imgNote = r.attachments.length ? `, 첨부 ${imgOk}/${r.attachments.length}` : '';
-      if (imgOk !== r.attachments.length) {
-        delete work[rel].hash; // 부분 실패는 다음 동기화에서 재시도한다.
-        saveMapping(MAPPING_PATH, work);
-      }
-      const label = result === 'created' ? green('＋ 생성')
-        : result === 'recreated' ? magenta('♻ 재생성(삭제 복구)')
-        : yellow('↻ 갱신');
-      console.log(`  ${label}  ${rel}  ${dim('→')}  ${cyan(`"${title}"`)}  ${dim(`(부모: ${pk ?? 'ROOT'}${imgNote})`)}`);
-      if (result === 'created') created++;
-      else if (result === 'recreated') { recreated++; recreatedTitles.add(title); }
-      else updated++;
-      touched.add(rel);
-    } catch (e) {
-      console.error(red(`  ✗ 실패  ${rel}`) + `\n${(e as Error).message}`);
-    }
-  }
 
-  // 링크 정합성: 재생성된 문서를 가리키던, 이번에 발행 안 된(스킵된) 문서를 강제 재발행해 링크를 새 페이지로 재연결
-  if (recreatedTitles.size) {
-    for (const rel of files) {
-      if (touched.has(rel)) continue;
-      const r = rendered.get(rel);
-      if (!r || !work[rel]?.pageId) continue;
-      if (!r.linkedTitles.some((t) => recreatedTitles.has(t))) continue;
+      // pull 로 받은 문서(frontmatter 에 pageId)는 매핑이 없어도 원본 페이지에 다시 연결한다.
+      // 매핑 파일을 잃었거나 vault 를 다른 곳에 복제한 경우 중복 생성을 막아준다.
+      if (!work[rel]?.pageId && fm.pageId) work[rel] = { pageId: fm.pageId, title };
+
       try {
-        await client.upsertPage(work, spaceId, rel, r.title, r.storage, r.hash, r.parentId, true);
+        if (staged) assertStaged(BASE_DIR, rel, hashes[rel], staged[rel]);
+        const result = await apiClient.upsertPage(work, spaceId, rel, title, r.storage, hash, parentId);
         saveMapping(MAPPING_PATH, work);
-        const uploaded = await client.uploadAttachments(work[rel].pageId, r.attachments, BASE_DIR);
-        if (uploaded !== r.attachments.length) {
-          delete work[rel].hash;
+        if (result === 'skipped') {
+          work[rel].localHash = localHashes[rel]; work[rel].sourceObject = storeBaseline(BASE_DIR, sourceTexts[rel]); saveMapping(MAPPING_PATH, work);
+          console.log(`  ${gray('=  변경없음')}  ${rel}`);
+          skipped++; completeStaged(BASE_DIR, rel, staged?.[rel]);
+          continue;
+        }
+        if (result === 'moved') {
+          work[rel].localHash = localHashes[rel]; work[rel].sourceObject = storeBaseline(BASE_DIR, sourceTexts[rel]); saveMapping(MAPPING_PATH, work);
+          console.log(`  ${cyan('→ 이동')}  ${rel}  (부모: ${pk ?? 'ROOT'})`);
+          moved++; completeStaged(BASE_DIR, rel, staged?.[rel]);
+          continue;
+        }
+        const imgOk = await apiClient.uploadAttachments(work[rel].pageId, r.attachments, BASE_DIR);
+        const imgNote = r.attachments.length ? `, 첨부 ${imgOk}/${r.attachments.length}` : '';
+        if (imgOk !== r.attachments.length) {
+          failed++;
+          delete work[rel].hash; // 부분 실패는 다음 동기화에서 재시도한다.
           saveMapping(MAPPING_PATH, work);
         }
-        console.log(`  ${cyan('🔗 링크 재연결')}  ${rel}  ${dim('→')}  ${cyan(`"${r.title}"`)}`);
-        relinked++;
+        if (imgOk === r.attachments.length) { work[rel].localHash = localHashes[rel]; work[rel].sourceObject = storeBaseline(BASE_DIR, sourceTexts[rel]); saveMapping(MAPPING_PATH, work); }
+        if (imgOk === r.attachments.length) completeStaged(BASE_DIR, rel, staged?.[rel]);
+        const label = result === 'created' ? green('＋ 생성')
+          : yellow('↻ 갱신');
+        console.log(`  ${label}  ${rel}  ${dim('→')}  ${cyan(`"${title}"`)}  ${dim(`(부모: ${pk ?? 'ROOT'}${imgNote})`)}`);
+        if (result === 'created') created++;
+        else updated++;
       } catch (e) {
-        console.error(red(`  ✗ 링크 재연결 실패  ${rel}`) + `\n${(e as Error).message}`);
+        failed++;
+        console.error(red(`  ✗ 실패  ${rel}`) + `\n${(e as Error).message}`);
       }
     }
-  }
 
-  console.log(
-    '\n' + bold('완료') +
-    `  ${green(`생성 ${created}`)}` +
-    `  ${yellow(`갱신 ${updated}`)}` +
-    `  ${cyan(`이동 ${moved}`)}` +
-    `  ${magenta(`재생성 ${recreated}`)}` +
-    `  ${cyan(`링크재연결 ${relinked}`)}` +
-    `  ${gray(`변경없음 ${skipped}`)}` +
-    (linked ? `  ${cyan(`연결 ${linked}`)}` : '') +
-    (foldersMade ? `  ${cyan(`폴더 ${foldersMade}`)}` : '') +
-    (carried ? `  ${gray(`상위 ${carried}`)}` : '') +
-    `  ${dim(`대상 ${files.length - carried}`)}`,
-  );
+    if (failed) process.exitCode = 1;
+    console.log(
+      '\n' + bold(failed ? '일부 실패' : '완료') +
+      `  ${green(`생성 ${created}`)}` +
+      `  ${yellow(`갱신 ${updated}`)}` +
+      `  ${cyan(`이동 ${moved}`)}` +
+      `  ${gray(`변경없음 ${skipped}`)}` +
+      (foldersMade ? `  ${cyan(`폴더 ${foldersMade}`)}` : '') +
+      (carried ? `  ${gray(`상위 ${carried}`)}` : '') +
+      `  ${dim(`대상 ${files.length - carried}`)}`,
+    );
+  } finally { prepared.dispose(); }
 }

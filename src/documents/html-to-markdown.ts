@@ -4,17 +4,31 @@
  * storage/export_view 는 무손실 역변환이 아니므로 근사 결과다.
  */
 import TurndownService from 'turndown';
+import { restoreFootnoteAnchors, installFootnoteRules } from './footnote-roundtrip.js';
+import { linksToFootnotes } from '../conversion/footnotes.js';
+import { mapMarkdownText } from '../conversion/pdf-pages.js';
+import { restoreCalloutPanels, installPanelRule } from './callout-roundtrip.js';
+import MarkdownIt from 'markdown-it';
+import { applyTableWidths, hasWidths, tableWidths, restoreTableWidths } from './tables.js';
 
 export type Html2MdOpts = {
+  /** Restore Confluence panels as Obsidian callouts instead of titled quotes. */
+  obsidian?: boolean;
+  /** Used to distinguish same-page footnote references from external page links. */
+  pageId?: string;
   /** 본문에서 참조된 로컬 첨부 파일명을 통지(다운로드 대상 수집용) */
   onImage?: (filename: string) => void;
   /** 로컬 첨부 이미지 링크에 붙일 상대 경로 접두사(예: 'attachments/문서명'). 없으면 파일명만 */
   assetPrefix?: string;
+  /** Override an attachment destination, e.g. keep the remote reference when unavailable locally. */
+  attachmentDestination?: (filename: string, source: string) => string;
   /**
    * storage 에서 뽑은 코드블록 언어 목록(문서 순서, 미지정은 '').
    * export_view 의 `brush:` 는 언어 미지정 시 Confluence 가 java 를 기본으로 넣어 신뢰할 수 없다.
    */
   codeLangs?: string[];
+  /** Original storage supplies widths that export_view may omit. */
+  storage?: string;
 };
 
 /** storage(XHTML)의 code 매크로들에서 language 파라미터를 문서 순서대로 추출(미지정은 ''). */
@@ -38,15 +52,9 @@ const linkDest = (p: string) => (/\s/.test(p) ? `<${p}>` : p);
  * 줄 맨 앞의 진짜 마커 이스케이프는 보존하고, 그 뒤(줄 중간)의 것만 되돌린다. 코드블록은 건드리지 않는다.
  */
 export function relaxEscapes(md: string): string {
-  let inFence = false;
-  return md
+  return mapMarkdownText(md, prose => prose
     .split('\n')
     .map((line) => {
-      if (/^\s*```/.test(line)) {
-        inFence = !inFence;
-        return line;
-      }
-      if (inFence) return line;
       // 들여쓰기 + (줄 맨 앞의 이스케이프된 마커) 까지는 그대로 두고 이후만 완화
       const head = line.match(/^\s*(?:\\[-+>#]|\d+\\\.)?/)?.[0] ?? '';
       const rest = line
@@ -54,15 +62,17 @@ export function relaxEscapes(md: string): string {
         // 줄 중간의 - + . > 는 마커가 아니므로 이스케이프 불필요
         .replace(/\\([-+.>])/g, '$1')
         // 단어 내부 밑줄은 CommonMark 에서 강조가 아니다 (:11_eleven_square_blue: 같은 이모지 코드)
-        .replace(/(\w)\\_(?=\w)/g, '$1_')
+        .replace(/(?<=[\p{L}\p{N}\p{M}_])(?:\\_)+(?=[\p{L}\p{N}\p{M}_])/gu, run => run.replace(/\\/g, ''))
         // 링크가 아닌 대괄호 쌍(뒤에 ( 나 [ 가 오지 않음)은 이스케이프 불필요
         .replace(/\\\[([^[\]\n]*)\\\](?!\s*[([])/g, '[$1]');
       return head + rest;
     })
-    .join('\n');
+    .join('\n'));
 }
 
 export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
+  html = restoreFootnoteAnchors(restoreCalloutPanels(restoreTableWidths(html, opts.storage), opts.storage), opts.storage, opts.pageId);
+  const cellRenderer = new MarkdownIt({ html: true });
   const td = new TurndownService({
     headingStyle: 'atx',
     codeBlockStyle: 'fenced',
@@ -70,6 +80,9 @@ export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
     hr: '---',
     emDelimiter: '_',
   });
+
+  installPanelRule(td, opts.obsidian ?? false);
+  installFootnoteRules(td);
 
   // Confluence export_view 는 색상 텍스트용 인라인 <style> 을 본문(제목 안까지) 끼워 넣는다.
   // turndown 은 기본적으로 이런 요소의 텍스트를 그대로 뱉으므로 통째로 제거한다.
@@ -79,7 +92,7 @@ export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
   // 그러나 단어 내부 밑줄은 CommonMark 에서 강조가 아니므로(:11_eleven_square_blue: 같은 이모지 코드)
   // 양쪽이 단어 문자인 경우만 이스케이프를 되돌린다.
   const baseEscape = td.escape.bind(td);
-  td.escape = (s: string) => baseEscape(s).replace(/(\w)\\_(?=\w)/g, '$1_');
+  td.escape = (s: string) => baseEscape(s).replace(/(?<=[\p{L}\p{N}\p{M}_])(?:\\_)+(?=[\p{L}\p{N}\p{M}_])/gu, run => run.replace(/\\/g, ''));
 
   // Confluence 는 리스트 항목 내용을 <li><p>…</p></li> 로 감싼다.
   // 기본 규칙대로면 문단으로 취급돼 항목마다 빈 줄이 생기므로(loose list),
@@ -127,13 +140,16 @@ export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
       const isAttachment =
         el.getAttribute('data-linked-resource-type') === 'attachment' ||
         /\/download\/(attachments|thumbnails)\//.test(src);
+      // export_view may include a Confluence macro loading indicator, not a page attachment.
+      if (!isAttachment && /(?:^|\s)waiting-image(?:\s|$)/.test(el.getAttribute('class') || '')
+        && /\/images\/icons\/wait\.gif(?:[?#]|$)/i.test(src)) return '';
       if (!isAttachment && /^https?:\/\//i.test(src)) {
         return `![${alt}](${linkDest(src)})`;
       }
       const alias = el.getAttribute('data-linked-resource-default-alias') || '';
       const name = alias || decodeURIComponent((src.split('?')[0].split('/').pop() || '').trim());
       if (name) opts.onImage?.(name);
-      const dest = opts.assetPrefix ? `${opts.assetPrefix}/${name}` : name;
+      const dest = opts.attachmentDestination?.(name, src) ?? (opts.assetPrefix ? `${opts.assetPrefix}/${name}` : name);
       return `![${alt || name}](${linkDest(dest)})`;
     },
   });
@@ -142,6 +158,30 @@ export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
   td.addRule('confTable', {
     filter: 'table',
     replacement: (_content, node) => {
+      const table = node as unknown as HTMLElement;
+      const widths = tableWidths(table);
+      if (hasWidths(widths) || table.querySelector('th[colspan], td[colspan], th[rowspan], td[rowspan]')) {
+        // Reuse conversion rules for links/images, then encode the cells as HTML.
+        // Markdown inside a raw HTML block is not portable.
+        const copy = table.cloneNode(true) as HTMLElement;
+        for (const anchor of Array.from(copy.querySelectorAll('a[href]'))) {
+          const href = anchor.getAttribute('href')!;
+          if (!/\/download\/attachments\//.test(href)) continue;
+          const name = anchor.getAttribute('data-linked-resource-default-alias')
+            || decodeURIComponent(href.split('?')[0].split('#')[0].split('/').pop() || '');
+          if (!name) continue;
+          opts.onImage?.(name);
+          anchor.setAttribute('href', opts.attachmentDestination?.(name, href) ?? (opts.assetPrefix ? `${opts.assetPrefix}/${name}` : name));
+        }
+        for (const cell of Array.from(copy.querySelectorAll('th, td'))) {
+          cell.innerHTML = cellRenderer.render(td.turndown(cell.innerHTML));
+        }
+        applyTableWidths(copy, widths);
+        copy.removeAttribute('data-table-width');
+        copy.removeAttribute('data-layout');
+        copy.removeAttribute('ac:local-id');
+        return `\n\n${copy.outerHTML}\n\n`;
+      }
       const cell = (c: Element) =>
         td.turndown((c as HTMLElement).innerHTML || '').replace(/\n+/g, ' ').replace(/\|/g, '\\|').trim();
       const trs = Array.from((node as unknown as HTMLElement).querySelectorAll('tr'));
@@ -158,5 +198,6 @@ export function htmlToMarkdown(html: string, opts: Html2MdOpts = {}): string {
     },
   });
 
-  return relaxEscapes(td.turndown(html)).trim() + '\n';
+  const result = relaxEscapes(td.turndown(html)).trim() + '\n';
+  return opts.obsidian ? linksToFootnotes(result) : result;
 }
