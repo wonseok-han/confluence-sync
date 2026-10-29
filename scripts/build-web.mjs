@@ -9,7 +9,8 @@ await build({
     app: 'src/web/client/app.js',
     'editor.worker': 'node_modules/monaco-editor/esm/vs/editor/editor.worker.js',
   },
-  outdir: 'dist/web/assets', bundle: true, format: 'esm', minify: true,
+  outdir: 'dist/web/assets', bundle: true, format: 'esm', minify: true, splitting: true,
+  chunkNames: 'chunks/[name]-[hash]',
   loader: { '.ttf': 'file' }, assetNames: '[name]-[hash]', logLevel: 'info',
 });
 

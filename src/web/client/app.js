@@ -3,14 +3,12 @@ import { createConnection } from './connection.js';
 import { createOverwriteDialog } from './overwrite-dialog.js';
 import { initSnackbars } from './snackbar.js';
 import { initHelp } from './help.js';
-import * as monaco from 'monaco-editor/editor/editor.api.js';
-import 'monaco-editor/languages/definitions/markdown/register.js';
+import { loadMonaco } from './monaco-loader.js';
 import './styles.css';
 import { initSync } from './sync.js';
 import { initDocumentPreview } from './preview.js';
 import { initTableFormatting } from './table-format.js';
 
-self.MonacoEnvironment = { getWorker: () => new Worker('/assets/editor.worker.js', { type: 'module' }) };
 const $ = id => document.getElementById(id);
 const notify = initSnackbars();
 const activity = createActivity();
@@ -24,7 +22,7 @@ let previews = [];
 let convertKind = 'file', selectedDirectory = false;
 let expanded = new Set(), treeCache = new Map(), treeLoading = new Set();
 let mode = 'convert';
-const tableFormatting = initTableFormatting({ api, monaco, notify,
+const tableFormatting = initTableFormatting({ api, loadMonaco, notify,
   refresh: () => documentPreview.update(true),
   setBusy: value => { busy = value; controls(); render(); },
 });
@@ -90,12 +88,16 @@ for (const name of ['convert', 'sync']) {
     }
   };
 }
-const original = monaco.editor.createModel('', 'markdown');
-const modified = monaco.editor.createModel('', 'markdown');
-try {
+let original, modified;
+async function ensureEditor() {
+ if(editor)return;
+ try {
+  const monaco=await loadMonaco();
+  original=monaco.editor.createModel('', 'markdown');
+  modified=monaco.editor.createModel('', 'markdown');
   editor = monaco.editor.createDiffEditor($('diff'), {
     automaticLayout: true, readOnly: true, originalEditable: false,
-    renderSideBySide: true, useInlineViewWhenSpaceIsLimited: true,
+    renderSideBySide: $('side-by-side').checked, useInlineViewWhenSpaceIsLimited: true,
     renderSideBySideInlineBreakpoint: 700, ignoreTrimWhitespace: false,
     minimap: { enabled: false }, scrollBeyondLastLine: false,
     wordWrap: 'on', renderOverviewRuler: true, accessibilityVerbose: true,
@@ -112,7 +114,8 @@ try {
 } catch (error) {
   $('editor-error').hidden = false;
   $('editor-error').textContent = '본문 비교 화면을 불러오지 못했습니다. 새로고침해 주세요. ' + error.message;
-  notify($('editor-error').textContent, 'error');
+  throw error;
+ }
 }
 $('previous-change').onclick = () => editor?.goToDiff('previous');
 $('next-change').onclick = () => editor?.goToDiff('next');
@@ -142,7 +145,7 @@ function reset() {
   if (mode === 'sync') { status(''); return; }
   previews = []; $('preview-documents').hidden = true;
   output = null; $('result').hidden = true; $('details').hidden = true;
-  original.setValue(''); modified.setValue('');
+  original?.setValue(''); modified?.setValue('');
   $('comparison-empty').hidden = false;
   $('previous-change').disabled = $('next-change').disabled = true;
   $('preview-label').textContent = '미리보기 대기'; status('');
@@ -352,6 +355,7 @@ async function convert(preview) {
   busy = true;
   try {
     reset(); controls(); render(); status(preview ? '미리보기를 만드는 중입니다…' : '문서와 첨부파일을 변환하는 중입니다…', false, null);
+    await ensureEditor();
     const request = { base, file, scope: convertKind, out: $('out-input').value, to: $('direction').value, fix: $('fix').checked, preview };
     let data;
     const approvedOverwrites = {};
@@ -397,7 +401,7 @@ $('open').onclick = async () => {
   catch (error) { status('폴더를 열 수 없습니다. 위 저장 경로를 이용해 주세요. ' + error.message, true); }
 };
 syncUI = initSync({ activity,
-  api, monaco, notify, context: () => {
+  api, loadMonaco, notify, context: () => {
     const state = mode === 'sync' ? explorerState() : workspaces.sync;
     return { base: state.base || state.folder, folder: state.folder, file: state.file, directory: state.selectedDirectory };
   },

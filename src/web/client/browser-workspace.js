@@ -30,6 +30,7 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
  const $=id=>document.getElementById(id),dialog=$('browser-folder-dialog'),note=$('browser-folder-status'),applyDialog=$('browser-apply-dialog');
  let session,mounts=[],baseline=[],running=false,queue=Promise.resolve(),cache=new Map(),resolveReady,pending=false;
  const ready=new Promise(resolve=>{resolveReady=resolve}),sessionKey='csync.browser-session.v1';
+ const enqueue=task=>{const next=queue.catch(()=>{}).then(task);queue=next;return next;};
  const save=async()=>{storage.setItem(sessionKey,JSON.stringify(session));await remember({mounts,baseline},session.id);};
  const grant=async(handle,readonly=false)=>{const mode=readonly?'read':'readwrite';if(await handle.queryPermission({mode})!=='granted'&&await handle.requestPermission({mode})!=='granted')throw Error('선택한 폴더의 읽기·쓰기 권한을 허용하세요.');};
  async function raw(path,body,method=body?'POST':'GET'){
@@ -41,7 +42,7 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
   try{pending=true;await applyBrowserChanges(mounts,baseline,changes,async path=>{const response=await fetch('/api/browser/file?path='+encodeURIComponent(path),{headers:headers(),credentials:'omit'});if(!response.ok)throw Error('결과 파일을 받지 못했습니다.');return response.arrayBuffer();});await raw('/api/browser/ack',{files:changes.snapshot});baseline=changes.snapshot;cache.clear();await save();pending=false;applyDialog.close();}
   catch(error){$('browser-apply-status').textContent=error.message;if(!applyDialog.open)applyDialog.showModal();throw error;}
  }
- $('browser-apply-retry').onclick=async()=>{if(running)return;try{for(const m of mounts)if(!m.readonly)await grant(m.handle);queue=queue.catch(()=>{}).then(flush);await queue;}catch(error){$('browser-apply-status').textContent=error.message;}};
+ $('browser-apply-retry').onclick=async()=>{if(running)return;try{for(const m of mounts)if(!m.readonly)await grant(m.handle);await enqueue(flush);}catch(error){$('browser-apply-status').textContent=error.message;}};
  applyDialog.addEventListener('cancel',event=>event.preventDefault());
  async function mirror(force=false){
   if(pending)throw Error('보류 중인 로컬 파일 적용을 먼저 완료하세요.');await flush();const files=await scanBrowserFiles(mounts,cache,force),manifest=files.map(({path,size,hash})=>({path,size,hash}));if(JSON.stringify(manifest)===JSON.stringify(baseline))return;
@@ -52,19 +53,25 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
  const unlock=()=>{$('workspace-interface').inert=false;$('local-connection-status').textContent=mounts[0].handle.name+' · 브라우저 폴더';dialog.close();resolveReady();};
  const open=async()=>{await mirror();unlock();};
  const resume=async()=>{const job=await raw('/api/sync/job');running=job.job?.state==='running';if(running)unlock();else await open();};
- async function chooseBase(){
-  const handle=await pickDirectory({mode:'readwrite'});await grant(handle);await queue.catch(()=>{});if(running||pending)throw Error('진행 중인 작업을 먼저 완료하세요.');$('browser-folder-open').disabled=true;note.textContent='선택한 문서·첨부를 임시 작업공간에 준비하는 중…';
+ async function chooseBase(handle){
+  if(running||pending)throw Error('진행 중인 작업을 먼저 완료하세요.');$('browser-folder-open').disabled=true;note.textContent='선택한 문서·첨부를 임시 작업공간에 준비하는 중…';
   try{
    if(session){await flush();await raw('/api/browser/session',undefined,'DELETE');await remember(null,session.id);}
    session=await raw('/api/browser/session',{name:handle.name});mounts=[{virtual:session.base,handle}];baseline=[];cache.clear();await save();await open();return {path:session.base};
   }finally{$('browser-folder-open').disabled=false;}
  }
- const chooseMount=async kind=>{
-  const handle=await pickDirectory({mode:kind==='reference'?'read':'readwrite'});await grant(handle,kind==='reference');await queue.catch(()=>{});if(running||pending)throw Error('진행 중인 작업을 먼저 완료하세요.');
+ const chooseMount=async(kind,handle)=>{
+  if(running||pending)throw Error('진행 중인 작업을 먼저 완료하세요.');
   if(kind==='out'&&await mounts[0].handle.isSameEntry(handle))return {path:session.base};
   for(const m of mounts){if(kind==='out'&&m.virtual===session.output)continue;if(kind==='reference'&&m.readonly&&await m.handle.isSameEntry(handle))return {path:m.virtual};if(await m.handle.isSameEntry(handle)||await m.handle.resolve(handle)!==null||await handle.resolve(m.handle)!==null)throw Error('문서·출력·참조 폴더는 서로 겹치지 않는 별도 폴더로 선택하세요.');}
   const virtual=kind==='out'?session.output:(await raw('/api/browser/mount',{kind:'reference'})).path;
   mounts=mounts.filter(m=>m.virtual!==virtual);mounts.push({virtual,handle,readonly:kind==='reference'});await save();await mirror();return {path:virtual};
+ };
+ // Keep the native picker in the user's gesture; queue only state changes and
+ // file transfer, including restoration, so mirrors cannot replace one another.
+ const selectFolder=async kind=>{
+  const handle=await pickDirectory({mode:kind==='reference'?'read':'readwrite'});await grant(handle,kind==='reference');
+  return enqueue(()=>kind==='base'?chooseBase(handle):chooseMount(kind,handle));
  };
  async function operation(path,options){
   if(pending)throw Error('보류 중인 로컬 파일 적용을 먼저 완료하세요.');
@@ -79,22 +86,22 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
  }
  const request=(path,options={})=>{
   if(path==='/api/pick-folder'){
-   const {kind}=JSON.parse(options.body);return (async()=>{if(running||pending)throw Error('진행 중인 작업을 먼저 완료하세요.');if(kind==='base'){const result=await chooseBase();location.reload();return new Response(JSON.stringify(result));}return new Response(JSON.stringify(await chooseMount(kind)));})();
+   const {kind}=JSON.parse(options.body);return (async()=>{if(running||pending)throw Error('진행 중인 작업을 먼저 완료하세요.');if(kind==='base'){const result=await selectFolder('base');location.reload();return new Response(JSON.stringify(result));}return new Response(JSON.stringify(await selectFolder(kind)));})();
   }
-  const next=queue.catch(()=>{}).then(()=>operation(path,options));queue=next;return next.then(result=>new Response(JSON.stringify(result))).catch(error=>new Response(JSON.stringify({error:error.message,code:error.code,conflicts:error.conflicts,inPlace:error.inPlace,output:error.output}),{status:error.status??400}));
+  const next=enqueue(()=>operation(path,options));return next.then(result=>new Response(JSON.stringify(result))).catch(error=>new Response(JSON.stringify({error:error.message,code:error.code,conflicts:error.conflicts,inPlace:error.inPlace,output:error.output}),{status:error.status??400}));
  };
- $('local-disconnect').hidden=false;$('local-disconnect').textContent='폴더 연결 해제';$('local-disconnect').onclick=async()=>{try{await queue.catch(()=>{});if(running||pending)throw Error('작업과 로컬 파일 적용을 먼저 완료하세요.');if(session){await raw('/api/browser/session',undefined,'DELETE');await remember(null,session.id);}storage.removeItem(sessionKey);location.reload();}catch(error){note.textContent=error.message;dialog.showModal();}};
+ $('local-disconnect').hidden=false;$('local-disconnect').textContent='폴더 연결 해제';$('local-disconnect').onclick=()=>enqueue(async()=>{try{if(running||pending)throw Error('작업과 로컬 파일 적용을 먼저 완료하세요.');if(session){await raw('/api/browser/session',undefined,'DELETE');await remember(null,session.id);}storage.removeItem(sessionKey);location.reload();}catch(error){note.textContent=error.message;dialog.showModal();}});
  const outputHint=$('out-mode-hint');if(outputHint)outputHint.textContent='별도 폴더 또는 원본 덮어쓰기';
  $('workspace-interface').inert=true;dialog.addEventListener('cancel',event=>event.preventDefault());$('root-path-editor').hidden=true;$('out-input').readOnly=true;$('out-input').placeholder='브라우저에서 출력 폴더를 선택하세요';$('open').textContent='저장 위치 확인';
- $('browser-folder-open').onclick=()=>chooseBase().catch(error=>{if(error.name!=='AbortError')note.textContent=error.message;});
- $('browser-folder-resume').onclick=async()=>{try{for(const mount of mounts)await grant(mount.handle,mount.readonly);await resume();}catch(error){note.textContent=error.message;}};
+ $('browser-folder-open').onclick=()=>selectFolder('base').catch(error=>{if(error.name!=='AbortError')note.textContent=error.message;});
+ $('browser-folder-resume').onclick=async()=>{try{for(const mount of mounts)await grant(mount.handle,mount.readonly);await enqueue(resume);}catch(error){note.textContent=error.message;}};
  window.addEventListener('beforeunload',event=>{if(running||pending){event.preventDefault();event.returnValue='';}});
  if(!window.isSecureContext||!window.showDirectoryPicker){note.textContent='폴더 읽기·쓰기를 지원하는 데스크톱 Chrome 또는 Edge에서 HTTPS 주소로 접속하세요.';$('browser-folder-open').disabled=true;dialog.showModal();}
  else{
-  dialog.showModal();(async()=>{let stored;try{session=JSON.parse(storage.getItem(sessionKey));stored=session?await remember(undefined,session.id):undefined;}catch{}if(!session||!stored?.mounts?.length)return;mounts=stored.mounts;baseline=stored.baseline??[];let granted=true;for(const mount of mounts)if(await mount.handle.queryPermission({mode:mount.readonly?'read':'readwrite'})!=='granted')granted=false;
+  dialog.showModal();enqueue(async()=>{let stored;try{session=JSON.parse(storage.getItem(sessionKey));stored=session?await remember(undefined,session.id):undefined;}catch{}if(!session||!stored?.mounts?.length)return;mounts=stored.mounts;baseline=stored.baseline??[];let granted=true;for(const mount of mounts)if(await mount.handle.queryPermission({mode:mount.readonly?'read':'readwrite'})!=='granted')granted=false;
    if(granted)try{await resume();}catch(error){if([401,410].includes(error.status)){await remember(null,session.id);session=undefined;baseline=[];storage.removeItem(sessionKey);note.textContent='작업공간을 다시 연결해야 합니다. 폴더를 다시 선택하세요.';}else note.textContent=error.message;}
    else{$('browser-folder-resume').hidden=false;note.textContent='이전에 선택한 폴더에 다시 접근하려면 권한을 허용하세요.';}
-  })().catch(error=>{note.textContent=error.message;});
+  }).catch(error=>{note.textContent=error.message;});
  }
  return {ready,request,browser:true,remote:false};
 }

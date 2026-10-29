@@ -9,7 +9,7 @@ export function fitColumnWidths(total, weights) {
   return values;
 }
 
-export function initTableFormatting({ api, monaco, refresh, setBusy, notify = () => {} }) {
+export function initTableFormatting({ api, monaco, loadMonaco = async () => monaco, refresh, setBusy, notify = () => {} }) {
   const $ = id => document.getElementById(id);
   const frame = $('document-preview-frame'), toggle = $('table-edit-toggle'), controls = $('table-format-controls');
   const dialog = $('table-review-dialog'), note = $('table-format-status');
@@ -111,7 +111,7 @@ export function initTableFormatting({ api, monaco, refresh, setBusy, notify = ()
     $('document-format-toggle').setAttribute('aria-expanded', String(!hidden));
     if (hidden && enabled) toggle.onclick();
   };
-  function review(data, basic) {
+  function review(data, basic, monaco) {
     planId = data.planId; $('table-save-status').textContent = '';
     $('table-review-title').textContent = '문서 서식 변경 확인';
     $('format-review-note').textContent = basic ? '기본 서식 정리와 표 조절 결과를 확인하세요. 저장을 눌러야 파일에 반영됩니다.' : '표 조절 결과를 확인하세요. 본문 기본 서식은 변경하지 않습니다. 저장을 눌러야 파일에 반영됩니다.';
@@ -130,8 +130,9 @@ export function initTableFormatting({ api, monaco, refresh, setBusy, notify = ()
     const current = generation, version = revision; $('document-format-basic').disabled = $('document-format-review').disabled = true;
     try {
       const data = await api('/api/document-format/preview', { ...selection, hash: documentData.hash, basic, tables: 'keep', changes: Array.from(plans, ([index, widths]) => ({ index, widths: widths.slice() })) });
+      const library = await loadMonaco();
       if (current !== generation || version !== revision) return;
-      review(data, basic);
+      review(data, basic, library);
     } catch (error) { notify(error.message, 'error'); }
     finally { updateControls(); }
   }

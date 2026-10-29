@@ -61,7 +61,9 @@ export function createStandaloneEngine({store=sessionStore,fetch}={}){
    if(typeof input?.path==='string'&&input.path.startsWith('/'))pathIn(mounts,input.path);
    if(input?.referenceRoots)for(const root of input.referenceRoots)pathIn(mounts,root);
    if(url.pathname==='/api/browse'||url.pathname==='/api/search')pathIn(mounts,url.searchParams.get('path')||session.base);
-   if(url.pathname!=='/api/sync/config'&&url.pathname!=='/api/sync/job')await validateWorkspace(mounts,url.pathname.startsWith('/api/sync/')&&!input?.envId&&!url.pathname.endsWith('/env/import'));
+   // Listing names does not follow document links. Validate their targets only
+   // when processing documents, so one unrelated link cannot block navigation.
+   if(!['/api/sync/config','/api/sync/job','/api/browse','/api/search'].includes(url.pathname))await validateWorkspace(mounts,url.pathname.startsWith('/api/sync/')&&!input?.envId&&!url.pathname.endsWith('/env/import'));
    const response=await api.request(method,url,input);
    if(url.pathname==='/api/browse'&&response.body.path===session.base){response.body.parent=session.base;response.body.home=session.base;}
    if(response.body?.job)lastJob=response.body.job;

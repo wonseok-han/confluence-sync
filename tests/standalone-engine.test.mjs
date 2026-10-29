@@ -11,6 +11,12 @@ const {createStandaloneEngine}=await import('data:text/javascript;base64,'+Buffe
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const env='CONFLUENCE_BASE_URL=https://example.atlassian.net/wiki\nCONFLUENCE_EMAIL=demo@example.com\nCONFLUENCE_API_TOKEN=synthetic-secret\nCONFLUENCE_SPACE_KEY=TEST\n';
 const workspace={version:2,connection:{baseUrl:'https://example.atlassian.net/wiki',spaceKey:'TEST',spaceId:'space',homepageId:'100'},remoteRoot:{id:'100',type:'page',path:'/'}};
+test('folder navigation lists documents with absolute links without following those links',async()=>{
+ const c=await client();await c.mirror({'a.md':'[Local attachment](/Users/example/private.pdf)'});
+ const listing=await c.api('/api/browse');assert.equal(listing.status,200,listing.error);assert.equal(listing.entries[0].name,'a.md');
+ const search=await c.api('/api/search?q=a');assert.equal(search.status,200,search.error);assert.equal(search.entries[0].name,'a.md');
+ const convert=await c.api('/api/convert',{base:c.session.base,file:c.session.base+'/a.md',to:'markdown',preview:true});assert.equal(convert.status,400);assert.match(convert.error,/절대 경로/);
+});
 async function client(store){let engine=createStandaloneEngine({store,fetch:(...args)=>globalThis.fetch(...args)}),session;
  const api=async(path,body,method=body?'POST':'GET')=>{const response=await engine({path,method,headers:session?{'x-csync-session':session.id,'x-csync-token':session.token}:{},body:body instanceof ArrayBuffer?body:body?JSON.stringify(body):undefined});return {status:response.status,...JSON.parse(response.body)};};
  session=await api('/api/browser/session',{name:'notes'});assert.equal(session.status,201);

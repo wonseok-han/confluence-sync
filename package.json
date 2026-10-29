@@ -23,7 +23,7 @@
     "url": "https://github.com/wonseok-han/confluence-sync/issues"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": "^22.13.0 || ^24.0.0"
   },
   "bin": {
     "confluence-sync": "dist/sync.js",
@@ -75,5 +75,8 @@
     "@vercel/cli-config": {
       "zod": "^4.6.6"
     }
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }

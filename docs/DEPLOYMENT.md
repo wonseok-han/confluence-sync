@@ -12,7 +12,9 @@
                        Vercel 중계 Functions ↔ Confluence Cloud
 ```
 
-1. 저장소를 Vercel에 Import합니다. Framework는 **Other**, Build Command는 `npm run build`, Output Directory는 `dist/site`입니다. 저장소의 `vercel.json`에 설정되어 있습니다.
+1. 저장소를 Vercel에 Import합니다. Framework는 **Other**, Build Command는 `node scripts/build.mjs`, Output Directory는 `dist/site`입니다. 저장소의 `vercel.json`에 설정되어 있습니다.
+   설치 명령은 `node scripts/install-vercel.mjs`입니다. 잘못 주입된 `npm_config_cache_dir`를 제거한 환경에서 `npm ci`를 실행합니다. Node 지원 범위는 22.13 이상인 22.x와 24.x로 제한하며, Vercel에서는 24.x를 사용합니다. 프로젝트 설정에 설치·빌드 명령을 직접 덮어썼다면 저장소 설정과 맞추거나 Override를 해제하세요.
+
 2. 발급된 `https://프로젝트명.vercel.app` 주소를 데스크톱 Chrome·Edge에서 엽니다. 별도 도메인이나 인증서를 준비할 필요가 없습니다.
 3. **문서 폴더 열기**로 로컬 폴더의 읽기·쓰기 권한을 허용합니다. `.env`는 선택한 폴더에서 읽거나 웹의 가져오기 기능으로 설정합니다. 사용자의 Confluence 토큰을 Vercel 환경변수에 등록하지 않습니다.
 4. 변환·문서 서식 정리·로컬 변경 확인은 문서 서버 전송 없이 동작합니다. 스페이스 연결 후 Fetch로 원격을 확인하고 Pull, 또는 문서 체크 → 업로드 미리보기 → Push를 사용합니다.

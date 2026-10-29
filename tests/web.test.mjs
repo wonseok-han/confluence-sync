@@ -140,10 +140,12 @@ test('output rejects source overlap, alias overlap and nested destination symlin
 test('bundled Monaco assets and worker are available locally without an API token', async t => {
   const { root } = workspace(t);
   const { url } = await app(t, root);
-  for (const file of ['app.js', 'app.css', 'editor.worker.js']) {
+  const chunks = readdirSync(new URL('../dist/web/assets/chunks/', import.meta.url)).filter(file => /\.(js|css)$/.test(file)).map(file => 'chunks/' + file);
+  for (const file of ['app.js', 'app.css', 'editor.worker.js', ...chunks]) {
     const response = await fetch(url + '/assets/' + file);
     assert.equal(response.status, 200);
-    assert.ok((await response.text()).length > 1000);
+    assert.match(response.headers.get('content-type'), file.endsWith('.js') ? /javascript/ : /css/);
+    assert.ok((await response.text()).length > 0);
   }
   const response = await fetch(url + '/assets/..%2f..%2fpackage.json');
   assert.notEqual(response.status, 200);

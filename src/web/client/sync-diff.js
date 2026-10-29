@@ -1,5 +1,5 @@
 /** Opening a diff reads the selected current remote body; new documents compare to empty. */
-export function createSyncDiff({api,selection,monaco,notify}) {
+export function createSyncDiff({api,selection,monaco,loadMonaco=async()=>monaco,notify}) {
   const $=id=>document.getElementById(id);
   let path='',generation=0,editor,beforeModel,afterModel;
   function close(){generation++;$('sync-diff-dialog').close();}
@@ -27,6 +27,8 @@ export function createSyncDiff({api,selection,monaco,notify}) {
       if(data.before===null)return;
       $('sync-diff-editor').hidden=false;$('sync-diff-labels').hidden=false;
       if(!editor){
+        const monaco=await loadMonaco();
+        if(current!==generation||!$('sync-diff-dialog').open)return;
         beforeModel=monaco.editor.createModel('','markdown');afterModel=monaco.editor.createModel('','markdown');
         editor=monaco.editor.createDiffEditor($('sync-diff-editor'),{automaticLayout:true,readOnly:true,originalEditable:false,ignoreTrimWhitespace:false,renderSideBySide:true,useInlineViewWhenSpaceIsLimited:true,renderSideBySideInlineBreakpoint:700,minimap:{enabled:false},wordWrap:'on',scrollBeyondLastLine:false,fontSize:12});
         editor.setModel({original:beforeModel,modified:afterModel});

@@ -150,7 +150,7 @@ confluence-sync --version
 confluence-sync --help
 ```
 
-Node.js 22.13 이상이 필요합니다.
+Node.js 22.13 이상인 22.x 또는 24.x가 필요합니다.
 
 > 짧은 이름 **`csync`** 도 같이 설치됩니다 — 아래 예시의 `confluence-sync` 는 전부 `csync` 로 바꿔 쓸 수 있습니다.
 

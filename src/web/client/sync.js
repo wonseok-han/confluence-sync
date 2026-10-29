@@ -5,7 +5,7 @@ import { createStaging } from './staging.js';
 import { createEnvSettings } from './env-settings.js';
 import { renderSyncLog } from './sync-log.js';
 
-export function initSync({ api, monaco, context, setBusy, showSync, refresh = async () => {}, notify = () => {}, activity }) {
+export function initSync({ api, monaco, loadMonaco, context, setBusy, showSync, refresh = async () => {}, notify = () => {}, activity }) {
   const $ = id => document.getElementById(id);
   let busy = false, planId = null, previewJobId = null, preparedKey = '', loadedKey = '', timer, configured = false, credentialsReady = false, remotePath = '', workspaceLabel = '스페이스 전체';
   let jobActivity,currentJob;
@@ -144,7 +144,7 @@ export function initSync({ api, monaco, context, setBusy, showSync, refresh = as
     } catch (error) { status(error.message, true); }
     finally { setBusy(false); }
   };
-  const comparison = createSyncDiff({api,selection,monaco,notify});
+  const comparison = createSyncDiff({api,selection,monaco,loadMonaco,notify});
   const restoration = createRestore({api,selection:()=>({...selection(),format:pullFormat()}),setBusy,isBusy:()=>busy,status,start});
   const staging = createStaging({restore:restoration.open,canRestore:()=>configured&&credentialsReady,scopeKey:() => remotePath, compare:comparison.open,api, selection, changed:invalidatePreview, busy:setBusy, status, update:() => update(busy)});
   const envSettings = createEnvSettings({ api, context, setBusy, changed: () => { invalidatePreview(); update(busy); }, renderConfig: config => { invalidatePreview(); renderConfig(config); }, status });

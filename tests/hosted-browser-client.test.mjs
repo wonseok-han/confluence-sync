@@ -11,9 +11,9 @@ class Dir{
  async isSameEntry(other){return this===other}async resolve(other){return this===other?[]:null}async queryPermission(){return 'granted'}async requestPermission(){return 'granted'}
 }
 function browser(app,pickers,options={}){
- const ids=['browser-folder-dialog','browser-folder-status','browser-folder-open','browser-folder-resume','browser-apply-dialog','browser-apply-status','browser-apply-retry','workspace-interface','local-disconnect','local-connection-status','root-path-editor','out-input','open'];const nodes=new Map(ids.map(id=>[id,{hidden:false,disabled:false,open:false,value:'',showModal(){this.open=true},close(){this.open=false},addEventListener(){}}]));const values=new Map(),states=options.states??new Map(),calls=[];
+ const ids=['browser-folder-dialog','browser-folder-status','browser-folder-open','browser-folder-resume','browser-apply-dialog','browser-apply-status','browser-apply-retry','workspace-interface','local-disconnect','local-connection-status','root-path-editor','out-input','open'];const nodes=new Map(ids.map(id=>[id,{hidden:false,disabled:false,open:false,value:'',showModal(){this.open=true},close(){this.open=false},addEventListener(){}}]));const values=new Map(),states=options.states??new Map(),calls=[],optionsHook=options.afterFetch;
  const storage={getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},location={reload(){this.reloaded=true}};
- const api=createBrowserWorkspace({document:{getElementById:id=>nodes.get(id)},window:{isSecureContext:true,showDirectoryPicker(){},addEventListener(){}},location,storage,remember:async(value,key)=>{if(value===undefined)return states.get(key);if(value===null)states.delete(key);else states.set(key,value)},pickDirectory:async()=>pickers.shift(),fetch:async(path,options)=>{calls.push(path);return fetch(app.url+path,options)}});
+ const api=createBrowserWorkspace({document:{getElementById:id=>nodes.get(id)},window:{isSecureContext:true,showDirectoryPicker(){},addEventListener(){}},location,storage,remember:async(value,key)=>{if(value===undefined)return states.get(key);if(value===null)states.delete(key);else states.set(key,value)},pickDirectory:async()=>pickers.shift(),fetch:async(path,options)=>{calls.push(path);const response=await fetch(app.url+path,options);await optionsHook?.(path,options,response);return response;}});
  return {api,nodes,location,states,calls,async choose(){await new Promise(r=>setImmediate(r));await nodes.get('browser-folder-open').onclick();await api.ready;},async request(path,body){const response=await api.request(path,{method:body?'POST':'GET',...(body?{body:JSON.stringify(body)}:{})});const value=await response.json();assert.equal(response.status,200,JSON.stringify(value));return value;}};
 }
 test('browser controller uploads a selected folder, converts through the shared server and writes only into the selected output folder',async t=>{
@@ -52,4 +52,18 @@ test('browser in-place repair confirms originals and saves without a separate ou
  const approvedOverwrites=Object.fromEntries(pending.conflicts.map(item=>[item.path,item.hash]));
  const result=await b.request('/api/convert',{...body,approvedOverwrites});assert.equal(result.inPlace,true);
  assert.equal(source.text('a.md'),'# 한글_제목');assert.equal((await b.request('/api/browser/changes')).files.length,0);
+});
+
+
+test('folder selection and background browsing never overlap mirror transactions',async t=>{
+ const app=await startHostedWeb({port:0,host:'127.0.0.1'});t.after(()=>app.close());
+ const source=new Dir('docs'),out=new Dir('result');source.put('a.md','old');out.put('b.md','output');
+ let hold=false,entered,release;const started=new Promise(resolve=>{entered=resolve});
+ const b=browser(app,[source,out],{afterFetch:async path=>{if(hold&&path==='/api/browser/mirror'){hold=false;entered();await new Promise(resolve=>{release=resolve});}}});
+ await b.choose();source.put('a.md','changed');hold=true;
+ const picked=b.api.request('/api/pick-folder',{body:JSON.stringify({kind:'out'})});await started;
+ const browsing=b.api.request('/api/browse');
+ const timer=setTimeout(()=>release(),100);browsing.finally(()=>release());
+ const responses=await Promise.all([picked,browsing]);clearTimeout(timer);
+ for(const response of responses)assert.equal(response.status,200,JSON.stringify(await response.json()));
 });
