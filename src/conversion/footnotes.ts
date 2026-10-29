@@ -1,13 +1,24 @@
 import MarkdownIt from 'markdown-it';
 import footnote from 'markdown-it-footnote';
+import type Ruler from 'markdown-it/lib/ruler.mjs';
 import { collectHeadings } from '../documents/anchors.js';
 import { mapMarkdownText, replaceGeneratedBlocks } from './pdf-pages.js';
 
+/** Registered rule names survive minification; Function.name does not. */
+function registeredRule<T>(ruler:Ruler<T>,name:string):T {
+  const before=ruler.getRules('');
+  ruler.disable(name);
+  const remaining=new Set(ruler.getRules(''));
+  ruler.enable(name);
+  const rule=before.find(fn=>!remaining.has(fn));
+  if(!rule)throw new Error(`각주 파서 규칙을 찾을 수 없습니다: ${name}`);
+  return rule;
+}
 
 /** Use the parser's balanced inline-note rule, preserving code and escaped examples. */
 function extractInlineNotes(source: string): {text: string; labels: Set<string>} {
   const md = new MarkdownIt({html: true}).use(footnote);
-  const rule = md.inline.ruler.getRules('').find(r => r.name === 'footnote_inline')!;
+  const rule = registeredRule(md.inline.ruler,'footnote_inline');
   const definitions: string[] = [], labels = new Set<string>();
   let edits: {start:number; end:number; text:string}[] = [], depth = 0, serial = 0;
   md.inline.ruler.at('footnote_inline', (state, silent) => {
@@ -49,7 +60,7 @@ export function footnotesToLinks(source: string): string {
   const lines = source.split('\n');
   const offsets = [0];
   for (const line of lines) offsets.push(offsets[offsets.length - 1] + line.length + 1);
-  const defRule = md.block.ruler.getRules('').find((r) => r.name === 'footnote_def')!;
+  const defRule = registeredRule(md.block.ruler,'footnote_def');
   md.block.ruler.at('footnote_def', (state, start, end, silent) => {
     const ok = defRule(state, start, end, silent);
     if (ok && !silent) {
@@ -69,7 +80,7 @@ export function footnotesToLinks(source: string): string {
   const labels = new Set(definitions.map((d) => d.label));
   const notes = new Map<string, { number: number; heading: string; anchor: string }>();
   const edits: { start: number; end: number; text: string }[] = [];
-  const refRule = md.inline.ruler.getRules('').find((r) => r.name === 'footnote_ref')!;
+  const refRule = registeredRule(md.inline.ruler,'footnote_ref');
   let localEdits: typeof edits = [];
   md.inline.ruler.at('footnote_ref', (state, silent) => {
     const start = state.pos;

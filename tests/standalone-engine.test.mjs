@@ -7,7 +7,7 @@ import {browserPlatform} from '../scripts/browser-platform.mjs';
 import {tableEditorBridge} from '../dist/web/table-editor-script.js';
 import {workspace as diskWorkspace} from './helpers/fixtures.mjs';
 import {inspectStaging,changeStaging} from '../dist/sync/staging.js';
-const result=await build({entryPoints:['src/runtime/browser/engine.js'],bundle:true,platform:'browser',format:'esm',write:false,logLevel:'silent',plugins:[browserPlatform()],inject:['src/runtime/browser/globals.js'],define:{__CSYNC_VERSION__:'"2.0.0"',__CSYNC_TABLE_BRIDGE__:JSON.stringify(tableEditorBridge.toString())}});
+const result=await build({entryPoints:['src/runtime/browser/engine.js'],bundle:true,platform:'browser',format:'esm',minify:true,write:false,logLevel:'silent',plugins:[browserPlatform()],inject:['src/runtime/browser/globals.js'],define:{__CSYNC_VERSION__:'"2.0.0"',__CSYNC_TABLE_BRIDGE__:JSON.stringify(tableEditorBridge.toString())}});
 const {createStandaloneEngine}=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].text).toString('base64'));
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const env='CONFLUENCE_BASE_URL=https://example.atlassian.net/wiki\nCONFLUENCE_EMAIL=demo@example.com\nCONFLUENCE_API_TOKEN=synthetic-secret\nCONFLUENCE_SPACE_KEY=TEST\n';
@@ -107,4 +107,11 @@ test('remote changes remain readable when local document validation blocks stagi
  const blocked=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(blocked.status,400);assert.match(blocked.error,/doc0.md/);
  const before=requests,remote=await c.api('/api/sync/staging',{base:c.session.base,envId:'',remoteOnly:true});assert.equal(remote.status,200,remote.error);assert.equal(requests,before);assert.equal(remote.rows.length,6);assert.equal(remote.rows.filter(row=>row.remoteState==='changed').length,5);assert.equal(remote.rows.filter(row=>row.remoteState==='new').length,1);assert.ok(remote.rows.filter(row=>row.remoteState==='changed').every(row=>row.localUnverified));
  const rejected=await c.api('/api/sync/staging',{base:c.session.base,envId:'',remoteOnly:true,action:'add',paths:['doc0.md']});assert.equal(rejected.status,400);assert.match(rejected.error,/업로드 선택/);
+});
+
+
+test('minified browser staging supports inline and referenced footnotes without rewriting sources',async()=>{
+ const c=await client(),text='# Notes\n\nInline^[balanced [label](https://example.com) note] and reference[^law].\n\n[^law]: Referenced note\n';
+ await c.mirror({'.env':env,'.csync/workspace.json':JSON.stringify(workspace),'a.md':text});
+ const rows=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(rows.status,200,rows.error);assert.equal(rows.rows.length,1);assert.equal(await c.read(c.session.base+'/a.md'),text);
 });
