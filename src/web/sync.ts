@@ -9,19 +9,19 @@ import { connectWorkspace } from '../sync/scope.js';
 import type { Env } from '../confluence/config.js';
 import { referenceRoots } from '../sync/references.js';
 /** Web adapter for the existing push CLI. Only preview and incremental push are exposed. */
-import { spawn } from 'node:child_process';
+import { runSyncCLI } from './node-runner.js';
+export { runSyncCLI };
 import { createReadStream } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, readdir, realpath, stat, lstat, writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { parse } from 'dotenv';
 import { within } from './output.js';
 import { collectMarkdown } from '../documents/catalog.js';
 import { buildIgnorer } from '../sync/ignore.js';
 
 const keys = connectionKeys;
-type Imported = { env: Settings; content: string; source: string };
+export type Imported = { env: Settings; content: string; source: string };
 type Imports = Map<string, Imported>;
 type Settings = Record<string, string>;
 type ReceiveFormat='markdown'|'obsidian';
@@ -123,29 +123,9 @@ async function prepare(input: unknown, imports: Imports): Promise<Prepared> {
   return { selection, env, config: publicConfig(env, source, workspace), fingerprint: JSON.stringify(snapshots) };
 }
 
-export const runSyncCLI: SyncRunner = (args, settings, log) => new Promise((resolveJob, reject) => {
-  const source = import.meta.url.endsWith('.ts');
-  const worker = fileURLToPath(new URL(source ? '../sync.ts' : '../sync.js', import.meta.url));
-  const child = spawn(process.execPath, [...(source ? process.execArgv : []), worker, ...args], {
-    env: { ...process.env, ...settings, NO_COLOR: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  // Emit complete lines so secret masking cannot be bypassed by split stream chunks.
-  for (const stream of [child.stdout, child.stderr]) {
-    let pending = '';
-    stream.setEncoding('utf8');
-    stream.on('data', (chunk: string) => {
-      pending += chunk;
-      const end = pending.lastIndexOf('\n');
-      if (end >= 0) { log(pending.slice(0, end + 1)); pending = pending.slice(end + 1); }
-    });
-    stream.on('end', () => { if (pending) log(pending); });
-  }
-  child.once('error', reject);
-  child.once('close', code => resolveJob(code ?? 1));
-});
 
-export function createWebSync(runner: SyncRunner = runSyncCLI) {
-  const imports: Imports = new Map();
+export function createWebSync(runner: SyncRunner = runSyncCLI, initialImports: [string, Imported][] = []) {
+  const imports: Imports = new Map(initialImports);
   let job: Job | null = null;
   let plan: { id: string; prepared: Prepared } | null = null;
   let locked = false;
@@ -211,6 +191,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
     return current;
   };
   return {
+    connectionImports: () => [...imports] as [string, Imported][],
     running,
     diff: async (input: unknown) => {
       if(running())throw new Error('다른 작업이 진행 중입니다.');

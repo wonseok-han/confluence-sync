@@ -8,6 +8,7 @@ import { readPreviewSource, hiddenDocumentPath as hidden } from './document-sour
 import { editableTables, sourceHash } from './table-format.js';
 import { tableEditorBridge } from './table-editor-script.js';
 import { randomBytes } from 'node:crypto';
+declare const __CSYNC_TABLE_BRIDGE__: string | undefined;
 
 const elements = new Set('h1 h2 h3 h4 h5 h6 p a img ul ol li dl dt dd blockquote pre code em strong s del b i u sub sup br hr table caption colgroup col thead tbody tfoot tr th td span div details summary'.split(' '));
 const discard = new Set('SCRIPT STYLE IFRAME OBJECT EMBED FORM INPUT BUTTON TEXTAREA SELECT META LINK BASE SVG MATH TEMPLATE'.split(' '));
@@ -54,7 +55,8 @@ export async function previewDocument(basePath: string, filePath: string, nonce?
   if (rendered.length !== tables.length) tables.forEach(t => { t.editable = false; });
   tables.forEach((t, i) => { if (t.editable) rendered[i]?.setAttribute('data-csync-table', String(t.index)); });
   const channel = randomBytes(24).toString('hex');
-  const script = nonce ? `<script nonce="${nonce}" data-channel="${channel}">(${tableEditorBridge.toString()})()</script>` : '';
+  const bridge = typeof __CSYNC_TABLE_BRIDGE__ === 'string' ? __CSYNC_TABLE_BRIDGE__ : tableEditorBridge.toString();
+  const script = nonce ? `<script nonce="${nonce}" data-channel="${channel}">(${bridge})()</script>` : '';
   return { hash: sourceHash(original), channel, tables, html: `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${nonce ? `'nonce-${nonce}'` : "'none'"}; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
     *{box-sizing:border-box}body{margin:0;padding:24px;color:#172b4d;background:white;font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:760px;margin:auto}h1,h2,h3,h4{line-height:1.4}h1{font-size:26px}h2{font-size:22px}h3{font-size:18px}table{border-collapse:collapse;margin:16px 0}th,td{border:1px solid #c7cfdb;padding:8px;vertical-align:top;overflow-wrap:anywhere}th{background:#f0f3f8}td p,th p{margin:0}img{max-width:100%;height:auto}pre{padding:14px;background:#f4f6f9;overflow:auto}code{font-size:.88em;overflow-wrap:anywhere}blockquote{border-left:3px solid #c7cfdb;margin-left:0;padding-left:16px;color:#526078}a{color:#315fd8}hr{border:0;border-top:1px solid #dde3ec}
     .csync-editing table[data-csync-table]{cursor:pointer}.csync-editing table[data-csync-table]:hover{outline:2px dashed #8192e3}.csync-selected{outline:3px solid #5466d8!important}.csync-resize{position:absolute;width:10px;cursor:col-resize;z-index:10;touch-action:none;border-left:2px solid #5466d8;background:#5466d82a}

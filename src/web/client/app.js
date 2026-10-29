@@ -67,7 +67,7 @@ function displayMode(next) {
   }
   $('choose-base').lastChild.textContent = '기준 폴더 변경…';
   $('base-input').setAttribute('aria-label', mode === 'sync' ? 'Confluence 작업 기준 폴더 경로' : '변환 기준 폴더 경로');
-  $('workspace-note').textContent = connection.browser ? '파일은 브라우저에서 읽고 저장하며, 변환·Confluence 작업은 서버의 임시 공간에서 처리합니다.' : mode === 'sync' ? '원격 변경은 위에서 가져오고, 업로드할 문서는 체크 후 미리보기하세요.' : '변환은 이 컴퓨터에서 처리됩니다.';
+  $('workspace-note').textContent = connection.standalone ? '파일과 변환은 브라우저에서 처리하며, Confluence 요청만 중계 API로 전달합니다.' : connection.browser ? '파일은 브라우저에서 읽고 저장하며, 변환·Confluence 작업은 서버의 임시 공간에서 처리합니다.' : mode === 'sync' ? '원격 변경은 위에서 가져오고, 업로드할 문서는 체크 후 미리보기하세요.' : '변환은 이 컴퓨터에서 처리됩니다.';
   if (mode === 'convert') editor?.layout();
 }
 async function showMode(next) {

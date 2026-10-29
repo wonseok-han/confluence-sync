@@ -4,6 +4,7 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { relative } from 'node:path';
+import { confluenceFetch as fetch } from '../runtime/network.js';
 import type { Mapping } from '../sync/mapping.js';
 import { red, yellow, dim } from '../shared/colors.js';
 

@@ -1,4 +1,4 @@
-/** Browser-owned files; the server is a disposable execution workspace, never the source of truth. */
+/** Browser-owned files, shared by the local worker and optional hosted execution transport. */
 export const sha256=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(b=>b.toString(16).padStart(2,'0')).join('');
 const allowed=path=>!path.split('/').some((p,i)=>p==='node_modules'||p==='.git'||(p.startsWith('.')&&!(i===0&&['.csync','.env','.confluence-sync.json','.confluence-workspace.json','.confluence-syncignore'].includes(p))));
 const MAX_FILE=100*1024*1024,MAX_TOTAL=512*1024*1024;
@@ -33,7 +33,7 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
  const save=async()=>{storage.setItem(sessionKey,JSON.stringify(session));await remember({mounts,baseline},session.id);};
  const grant=async(handle,readonly=false)=>{const mode=readonly?'read':'readwrite';if(await handle.queryPermission({mode})!=='granted'&&await handle.requestPermission({mode})!=='granted')throw Error('선택한 폴더의 읽기·쓰기 권한을 허용하세요.');};
  async function raw(path,body,method=body?'POST':'GET'){
-  const response=await fetch(path,{method,credentials:'omit',headers:{...(session?{'X-Csync-Session':session.id,'X-Csync-Token':session.token}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok)throw Object.assign(Error(data.error||'서버 요청에 실패했습니다.'),{code:data.code,status:response.status,conflicts:data.conflicts,inPlace:data.inPlace,output:data.output});return data;
+  const response=await fetch(path,{method,credentials:'omit',headers:{...(session?{'X-Csync-Session':session.id,'X-Csync-Token':session.token}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok)throw Object.assign(Error(data.error||'작업 요청에 실패했습니다.'),{code:data.code,status:response.status,conflicts:data.conflicts,inPlace:data.inPlace,output:data.output});return data;
  }
  const headers=()=>({'X-Csync-Session':session.id,'X-Csync-Token':session.token});
  async function flush(){
@@ -92,7 +92,7 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
  if(!window.isSecureContext||!window.showDirectoryPicker){note.textContent='폴더 읽기·쓰기를 지원하는 데스크톱 Chrome 또는 Edge에서 HTTPS 주소로 접속하세요.';$('browser-folder-open').disabled=true;dialog.showModal();}
  else{
   dialog.showModal();(async()=>{let stored;try{session=JSON.parse(storage.getItem(sessionKey));stored=session?await remember(undefined,session.id):undefined;}catch{}if(!session||!stored?.mounts?.length)return;mounts=stored.mounts;baseline=stored.baseline??[];let granted=true;for(const mount of mounts)if(await mount.handle.queryPermission({mode:mount.readonly?'read':'readwrite'})!=='granted')granted=false;
-   if(granted)try{await resume();}catch(error){if([401,410].includes(error.status)){await remember(null,session.id);session=undefined;baseline=[];storage.removeItem(sessionKey);note.textContent='서버 작업공간이 만료되었습니다. 폴더를 다시 선택하세요.';}else note.textContent=error.message;}
+   if(granted)try{await resume();}catch(error){if([401,410].includes(error.status)){await remember(null,session.id);session=undefined;baseline=[];storage.removeItem(sessionKey);note.textContent='작업공간을 다시 연결해야 합니다. 폴더를 다시 선택하세요.';}else note.textContent=error.message;}
    else{$('browser-folder-resume').hidden=false;note.textContent='이전에 선택한 폴더에 다시 접근하려면 권한을 허용하세요.';}
   })().catch(error=>{note.textContent=error.message;});
  }

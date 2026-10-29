@@ -48,14 +48,18 @@
     "access": "public"
   },
   "dependencies": {
+    "@mixmark-io/domino": "^2.2.0",
     "@napi-rs/canvas": "^1.0.9",
+    "@noble/hashes": "^2.4.0",
+    "@vercel/blob": "^2.8.2",
+    "buffer": "^6.0.3",
     "dotenv": "^16.4.5",
     "ignore": "^7.0.5",
     "markdown-it": "^14.1.0",
     "markdown-it-footnote": "^4.0.0",
+    "path-browserify": "^1.0.1",
     "pdfjs-dist": "^6.3.289",
-    "turndown": "^7.2.4",
-    "@mixmark-io/domino": "^2.2.0"
+    "turndown": "^7.2.4"
   },
   "devDependencies": {
     "@types/markdown-it": "^14.1.2",
@@ -66,5 +70,10 @@
     "monaco-editor": "^0.57.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
+  },
+  "overrides": {
+    "@vercel/cli-config": {
+      "zod": "^4.6.6"
+    }
   }
 }

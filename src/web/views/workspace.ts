@@ -3,9 +3,9 @@ import { helpDialog } from './help.js';
 import { syncPanel } from './sync-panel.js';
 const formatIcon = (path: string) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
 /** HTML shell; Monaco and application code are bundled as local assets. */
-export const webPage = (token: string, runtime: 'local' | 'browser' = 'local') => `<!doctype html>
+export const webPage = (token: string, runtime: 'local' | 'browser' | 'standalone' = 'local') => `<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="csync-token" content="${token}"><meta name="csync-runtime" content="${runtime}"><meta name="csync-version" content="${readPkgVersion()}"><title>문서 워크스페이스 · confluence-sync</title><link rel="icon" type="image/svg+xml" href="/assets/favicon.svg?v=paperlink"><link rel="stylesheet" href="/assets/app.css"></head><body>
-<header class="app-header"><a class="brand" href="/" aria-label="confluence-sync 홈"><img class="brand-symbol" src="/assets/favicon.svg?v=paperlink" alt="" aria-hidden="true" width="30" height="30">confluence<span class="brand-light">sync</span></a><span class="app-version" aria-label="현재 버전">v${readPkgVersion()}</span><span class="local-status"><i></i><span id="local-connection-status">${runtime==='browser'?'브라우저 폴더 선택 필요':token ? '로컬 워크스페이스' : '로컬 실행기 연결 필요'}</span></span><button id="local-disconnect" class="quiet" type="button" hidden>연결 해제</button></header>
+<header class="app-header"><a class="brand" href="/" aria-label="confluence-sync 홈"><img class="brand-symbol" src="/assets/favicon.svg?v=paperlink" alt="" aria-hidden="true" width="30" height="30">confluence<span class="brand-light">sync</span></a><span class="app-version" aria-label="현재 버전">v${readPkgVersion()}</span><span class="local-status"><i></i><span id="local-connection-status">${runtime!=='local'?'브라우저 폴더 선택 필요':token ? '로컬 워크스페이스' : '로컬 실행기 연결 필요'}</span></span><button id="local-disconnect" class="quiet" type="button" hidden>연결 해제</button></header>
 <main id="workspace-interface" class="app-main">
   <div class="page-heading"><div><div class="eyebrow">DOCUMENT WORKSPACE</div><h1>문서 워크스페이스<span class="title-dot">.</span></h1></div><div class="page-heading-actions"><p>문서를 변환하고, Confluence에서 가져오거나 업로드하세요.</p><button id="open-help" aria-haspopup="dialog" aria-controls="help-dialog">사용 도움말</button></div></div>
   <div class="mode-tabs" role="tablist" aria-label="문서 작업"><button id="tab-convert" role="tab" aria-selected="true" aria-controls="convert-view">문서 변환</button><button id="tab-sync" role="tab" aria-selected="false" aria-controls="sync-view" tabindex="-1">Confluence</button></div>
@@ -86,7 +86,7 @@ export const webPage = (token: string, runtime: 'local' | 'browser' = 'local') =
 <dialog id="browser-folder-dialog" class="local-connect-dialog" aria-labelledby="browser-folder-title">
   <h2 id="browser-folder-title">내 컴퓨터의 문서 폴더 열기</h2>
   <p>로컬 프로그램 설치 없이 브라우저에서 문서 폴더를 선택하세요. 읽기·쓰기 권한을 허용하면 결과를 같은 폴더에 반영할 수 있습니다.</p>
-  <p>선택한 문서·출력·참조 폴더의 파일과 .env를 Docker 서버의 세션별 임시 작업공간으로 전달해 처리합니다. 출력은 전용 결과 폴더를 선택하세요. 작업공간은 연결 해제 또는 유휴 만료 시 정리합니다.</p>
+  <p>${runtime==='standalone'?'변환과 변경 확인은 브라우저에서 처리합니다. Confluence 통신에 필요한 인증과 업로드 대상 문서·첨부만 중계 API로 전달합니다. 큰 첨부는 전송 동안 비공개 임시 저장소를 거칩니다. 작업 중에는 이 탭을 열어 두세요.':'선택한 문서·출력·참조 폴더의 파일과 .env를 Docker 서버의 세션별 임시 작업공간으로 전달해 처리합니다. 출력은 전용 결과 폴더를 선택하세요. 작업공간은 연결 해제 또는 유휴 만료 시 정리합니다.'}</p>
   <p>데스크톱 Chrome·Edge와 HTTPS가 필요합니다. 파일별 100MiB, 전체 512MiB까지 처리합니다.</p>
   <p id="browser-folder-status" role="status" aria-live="polite"></p>
   <button id="browser-folder-resume" class="primary" type="button" hidden>이전 폴더 다시 연결</button>
@@ -94,7 +94,7 @@ export const webPage = (token: string, runtime: 'local' | 'browser' = 'local') =
 </dialog>
 <dialog id="browser-apply-dialog" class="local-connect-dialog" aria-labelledby="browser-apply-title">
   <h2 id="browser-apply-title">로컬 파일 적용 확인</h2><p id="browser-apply-status" role="alert"></p>
-  <p>서버 결과는 아직 보관 중입니다. 로컬 수정 사항을 다른 곳에 보관하거나 충돌을 해결한 뒤 다시 시도하세요. 이 창을 닫거나 새 작업으로 덮어쓰지 않습니다.</p>
+  <p>처리 결과는 아직 보관 중입니다. 로컬 수정 사항을 다른 곳에 보관하거나 충돌을 해결한 뒤 다시 시도하세요. 이 창을 닫거나 새 작업으로 덮어쓰지 않습니다.</p>
   <button id="browser-apply-retry" class="primary" type="button">다시 적용 확인</button>
 </dialog>
 <dialog id="overwrite-dialog" class="env-confirm-dialog overwrite-dialog" aria-labelledby="overwrite-title" aria-describedby="overwrite-warning">
