@@ -35,13 +35,22 @@ let restoring = true;
 let workspaces = { convert: {}, sync: {} };
 const explorerState = () => ({ base, folder, file, selectedDirectory, baseInput: $('base-input').value, expanded: [...expanded] });
 const preferencesKey = 'csync.workspace.v1';
+function outputPath() {
+  const input = $('out-input');
+  return connection.browser ? input.dataset.path || '' : input.value;
+}
+function setOutputPath(path) {
+  const input = $('out-input');
+  if (connection.browser) input.dataset.path = path;
+  input.value = connection.browser ? connection.folderName(path) : path;
+}
 function savePreferences() {
   if (restoring) return;
   workspaces[mode] = explorerState();
   try {
     localStorage.setItem(preferencesKey, JSON.stringify({
       workspaces, mode,
-      referenceRoots: $('sync-references').value, out: $('out-input').value,
+      referenceRoots: $('sync-references').value, out: outputPath(),
       convertScope: convertKind, direction: $('direction').value, fix: $('fix').checked,
       verify: $('sync-verify').checked, pullFormat: $('sync-pull-format').value,
       sideBySide: $('side-by-side').checked,
@@ -158,7 +167,7 @@ function controls() {
   for (const id of [ 'preview-document', 'tab-convert', 'tab-sync', 'choose-base', 'apply-base', 'base-input', 'base-home', 'up', 'choose-out', 'out-input', 'direction', 'fix', 'search']) $(id).disabled = busy;
   if (!busy) $('up').disabled = folder === parent || (base && !inside(base, parent));
   const root = base || folder;
-  const inPlace = !!root && $('out-input').value === root;
+  const inPlace = !!root && outputPath() === root;
   $('convert-save-mode').textContent=inPlace?'원본 덮어쓰기':'별도 폴더 저장';
   $('out-mode-hint').textContent=inPlace?'원본 덮어쓰기 · 확인 후 저장':connection.browser?'별도 폴더 또는 원본 덮어쓰기':'선택 사항';
   $('root-name').textContent = root ? root.split(/[\\/]/).filter(Boolean).pop() || root : '폴더를 선택하세요';
@@ -277,10 +286,22 @@ async function browse(path, chooseBase = false) {
 async function pickFolder(kind) {
   busy = true; controls(); render(); status('시스템 폴더 다이얼로그에서 폴더를 선택해 주세요.', false, null);
   try {
-    const data = await api('/api/pick-folder', { kind, start: kind === 'base' ? base || folder : $('out-input').value || parent });
+    const data = await api('/api/pick-folder', { kind, start: kind === 'base' ? base || folder : outputPath() || parent });
     if (data.path) {
+      if (kind === 'base' && connection.browser) {
+        // The previous session's paths and mounts cannot be restored in the new one.
+        navigation++; clearSearch();
+        base = folder = data.path; parent = undefined; file = null; selectedDirectory = false;
+        entries = []; treeCache = new Map(); expanded = new Set(); treeLoading = new Set();
+        $('base-input').value = data.path;
+        setOutputPath(''); $('sync-references').value = '';
+        workspaces = { convert: {}, sync: {} };
+        savePreferences();
+        location.reload();
+        return;
+      }
       if (kind === 'base') await browse(data.path, true);
-      else { $('out-input').value = data.path; reset(); }
+      else { setOutputPath(data.path); reset(); }
     } else status('폴더 선택을 취소했습니다.');
   } catch (error) { status(error.message, true); }
   finally { busy = false; controls(); render(); }
@@ -356,7 +377,7 @@ async function convert(preview) {
   try {
     reset(); controls(); render(); status(preview ? '미리보기를 만드는 중입니다…' : '문서와 첨부파일을 변환하는 중입니다…', false, null);
     await ensureEditor();
-    const request = { base, file, scope: convertKind, out: $('out-input').value, to: $('direction').value, fix: $('fix').checked, preview };
+    const request = { base, file, scope: convertKind, out: outputPath(), to: $('direction').value, fix: $('fix').checked, preview };
     let data;
     const approvedOverwrites = {};
     while (!data) {
@@ -378,7 +399,7 @@ async function convert(preview) {
     $('preview-count').textContent = `전체 ${data.documentCount}개 변환 · ${previews.length}개 본문 비교`;
     showPreview(0);
     $('log').textContent = data.log; $('details').hidden = false; output = data.output;
-    if (output) { $('output').textContent = output; $('result').hidden = false; }
+    if (output) { $('output').textContent = connection.browser ? connection.folderName(output) || output : output; $('result').hidden = false; }
     if (preview) status('미리보기 완료. 출력 위치를 확인하고 저장하세요.', false, 'success');
     else if (data.saved && data.saved.created === 0 && data.saved.overwritten === 0) {
       status(`기존 출력과 내용이 같아 저장하지 않았습니다. 파일 ${data.saved.reused}개를 그대로 재사용했습니다.`, false, 'success');
@@ -463,7 +484,7 @@ async function restoreWorkspace() {
   const saved = loadPreferences();
   const text = name => typeof saved[name] === 'string' ? saved[name] : '';
   busy = true; controls();
-  $('sync-references').value = text('referenceRoots'); $('out-input').value = text('out');
+  $('sync-references').value = text('referenceRoots'); setOutputPath(text('out'));
   if (['file', 'folder'].includes(saved.convertScope)) convertKind = saved.convertScope;
   if (['markdown', 'obsidian', 'repair'].includes(saved.direction)) $('direction').value = saved.direction;
   if (typeof saved.fix === 'boolean') $('fix').checked = saved.fix;

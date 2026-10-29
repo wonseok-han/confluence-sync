@@ -86,7 +86,7 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
  }
  const request=(path,options={})=>{
   if(path==='/api/pick-folder'){
-   const {kind}=JSON.parse(options.body);return (async()=>{if(running||pending)throw Error('진행 중인 작업을 먼저 완료하세요.');if(kind==='base'){const result=await selectFolder('base');location.reload();return new Response(JSON.stringify(result));}return new Response(JSON.stringify(await selectFolder(kind)));})();
+   const {kind}=JSON.parse(options.body);return (async()=>{if(running||pending)throw Error('진행 중인 작업을 먼저 완료하세요.');if(kind==='base')return new Response(JSON.stringify(await selectFolder('base')));return new Response(JSON.stringify(await selectFolder(kind)));})();
   }
   const next=enqueue(()=>operation(path,options));return next.then(result=>new Response(JSON.stringify(result))).catch(error=>new Response(JSON.stringify({error:error.message,code:error.code,conflicts:error.conflicts,inPlace:error.inPlace,output:error.output}),{status:error.status??400}));
  };
@@ -116,5 +116,5 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
    }
   }).catch(error=>{note.textContent=error.message;$('local-connection-status').textContent='폴더 연결 확인 필요';dialog.showModal();});
  }
- return {ready,request,browser:true,remote:false};
+ return {ready,request,browser:true,remote:false,folderName:path=>mounts.find(m=>m.virtual===path)?.handle.name??''};
 }
