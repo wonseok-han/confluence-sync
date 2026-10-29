@@ -43,4 +43,4 @@ src/
 
 `npm run build`는 기존 `dist/`를 정리한 뒤 TypeScript와 브라우저 자산을 빌드합니다. 배포용 실행 파일은 `dist/sync.js`, 브라우저 자산은 `dist/web/assets/`입니다. 파일을 옮길 때는 import뿐 아니라 웹 작업 프로세스의 실행 경로와 `import.meta.url` 기준 리소스 경로도 확인하세요.
 
-배포 권한을 가진 유지보수자는 [릴리스 절차](docs/RELEASING.md)를 참고하세요.
+배포 권한을 가진 유지보수자는 [릴리스 절차](docs/development/RELEASING.md)를 참고하세요.

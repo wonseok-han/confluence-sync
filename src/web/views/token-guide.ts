@@ -11,7 +11,7 @@ const steps = [
 export const tokenGuide = `<section id="help-token"><h3>API 토큰 발급 가이드</h3>
 <p>빨간 테두리와 Click 표시를 따라 진행하세요. 계정 정보는 가려져 있습니다. API 토큰의 권한(scope)은 csync에서 처리할 로컬 파일·폴더 작업 스코프와 별개의 설정입니다.</p>
 <p><a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer">Atlassian API 토큰 관리 열기 ↗</a></p>
-<div class="token-guide-steps">${steps.map(([file, title, description], i) => `<details${i === 0 ? ' open' : ''}><summary>${i + 1}. ${title}</summary><p>${description}</p><figure><a href="/assets/guide/${file}.png" target="_blank" rel="noopener noreferrer" aria-label="${i + 1}단계 이미지 원본 크기로 보기"><img src="/assets/guide/${file}.png" alt="${title}: 빨간 테두리로 표시한 조작 위치" loading="lazy"></a><figcaption>이미지를 누르면 원본 크기로 볼 수 있습니다.</figcaption></figure></details>`).join('')}</div>
+<div class="token-guide-steps guide-steps">${steps.map(([file, title, description], i) => `<details${i === 0 ? ' open' : ''}><summary>${i + 1}. ${title}</summary><p>${description}</p><figure><a href="/assets/guide/${file}.png" target="_blank" rel="noopener noreferrer" aria-label="${i + 1}단계 이미지 원본 크기로 보기"><img src="/assets/guide/${file}.png" alt="${title}: 빨간 테두리로 표시한 조작 위치" loading="lazy"></a><figcaption>이미지를 누르면 원본 크기로 볼 수 있습니다.</figcaption></figure></details>`).join('')}</div>
 <h4>csync에서 사용하는 권한</h4>
 <p>아래 이름 전체를 검색하세요. 조회·Pull에는 기본 읽기 권한을, Push에는 필요한 쓰기 권한을 추가합니다. 토큰 계정 자체에도 대상 스페이스의 해당 권한이 있어야 합니다.</p>
 <div class="token-scope-table"><table><thead><tr><th>작업</th><th>권한</th></tr></thead><tbody>

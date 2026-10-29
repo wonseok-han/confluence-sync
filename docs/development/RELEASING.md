@@ -1,6 +1,6 @@
 # 릴리스 절차
 
-배포 권한을 가진 유지보수자를 위한 문서입니다. 패키지 사용자는 [README](../README.md), 변경 이력은 [CHANGELOG](../CHANGELOG.md)를 참고하세요.
+배포 권한을 가진 유지보수자를 위한 문서입니다. 패키지 사용자는 [README](../../README.md), 변경 이력은 [CHANGELOG](../../CHANGELOG.md)를 참고하세요.
 
 ## 배포 준비
 
@@ -21,7 +21,7 @@ git push
 git push --tags
 ```
 
-[릴리스 워크플로](../.github/workflows/release.yml)는 버전 태그를 받으면 의존성 설치와 테스트를 수행합니다. `package.json` 버전과 태그가 일치하는지 확인한 뒤 npm 패키지를 발행하고 GitHub Release를 생성합니다.
+[릴리스 워크플로](../../.github/workflows/release.yml)는 버전 태그를 받으면 의존성 설치와 테스트를 수행합니다. `package.json` 버전과 태그가 일치하는지 확인한 뒤 npm 패키지를 발행하고 GitHub Release를 생성합니다.
 
 npm 발행에는 Trusted Publishing(OIDC)을 사용합니다. npm 패키지의 신뢰 발행자 설정이 이 저장소와 릴리스 워크플로를 가리켜야 합니다.
 

@@ -1,11 +1,13 @@
 import { tokenGuide } from './token-guide.js';
+import { usageGuide } from './usage-guide.js';
 /** In-app guide for the local document workflow. */
 export const helpDialog = `
 <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-title">
   <header class="help-heading"><div><span class="eyebrow">WORKSPACE GUIDE</span><h2 id="help-title">사용 도움말</h2></div><form method="dialog"><button aria-label="도움말 닫기" autofocus>닫기</button></form></header>
-  <nav class="help-nav" aria-label="도움말 목차"><a href="#help-convert">문서 변환</a><a href="#help-sync">Confluence</a><a href="#help-token">API 토큰 발급</a><a href="#help-links">참조 링크</a><a href="#help-faq">자주 묻는 질문</a></nav>
+  <nav class="help-nav" aria-label="도움말 목차"><a href="#help-screens">화면으로 보기</a><a href="#help-convert">문서 변환</a><a href="#help-sync">Confluence</a><a href="#help-token">API 토큰 발급</a><a href="#help-links">참조 링크</a><a href="#help-faq">자주 묻는 질문</a></nav>
   <div class="help-body" tabindex="0" aria-label="사용 도움말 내용">
     <p class="help-intro">Obsidian에서 작업한 문서를 변환한 다음, 변환 결과 폴더를 기준으로 Confluence에 올릴 수 있습니다. 로컬 실행에서는 두 탭의 기준 폴더를 각각 설정합니다. 배포 웹은 로컬 CLI 없이 브라우저에서 문서 폴더를 선택합니다. Vercel 배포에서는 변환·변경 확인을 브라우저에서 처리하고 Confluence 요청만 중계합니다. Docker 배포에서는 문서·첨부·.env를 서버의 임시 공간으로 전달해 처리합니다. 두 방식 모두 로컬 편집 충돌을 확인한 뒤 브라우저가 결과를 저장합니다. 데스크톱 Chrome·Edge와 HTTPS가 필요합니다. 변환 저장 전에 출력 폴더를 선택하세요. 원본과 같은 폴더를 지정하면 저장 시 덮어쓰기 확인창이 뜹니다.</p>
+    ${usageGuide}
     <section id="help-convert"><h3>문서 변환</h3>
       <ol><li><strong>기준 폴더 변경…</strong>으로 원본 폴더를 엽니다. 화살표는 폴더를 펼치고, 이름을 누르면 변환 대상을 선택합니다.</li><li>파일을 선택하고 기본적으로 접힌 <strong>문서 미리보기</strong>를 펼치면 표와 이미지를 포함한 본문이 표시됩니다. 파일 하나를 선택하면 그 파일만, 폴더를 선택하면 하위 Markdown 전체를 변환합니다. 변환 설정의 기준 폴더 전체 선택을 누르면 현재 탐색 위치와 관계없이 기준 폴더 아래 모든 Markdown을 대상으로 합니다. 선택 후 변환 미리보기와 변환 후 저장을 사용하세요.</li><li>변환 형식과 출력 폴더를 정하고 <strong>변환 미리보기</strong>로 원본과 결과를 비교합니다.</li><li><strong>변환 후 저장</strong>을 누른 뒤 <strong>결과 폴더 열기</strong>로 확인합니다. 웹 변환은 지정한 출력 폴더에 저장하며, 첨부와 PDF 페이지 이미지는 각 문서 옆의 attachments/문서명/에 모읍니다.</li></ol>
       <dl><dt>Markdown</dt><dd>찾을 수 있는 위키링크를 상대 링크로 바꾸고 PDF 페이지 참조를 이미지로 변환합니다. 찾지 못한 문서 위키링크는 그대로 남습니다.</dd><dt>Obsidian</dt><dd>해석 가능한 Markdown 문서 링크를 위키링크로 바꿉니다.</dd><dt>Confluence 변환 오류 보정</dt><dd>옛 변환 결과의 CSS 잔해, 불필요한 이스케이프와 코드블록 언어 등을 보정합니다. 미리보기로 바뀐 내용을 확인하세요.</dd><dt>출력 위치</dt><dd>파일 하나는 출력 폴더 바로 아래에, 폴더 전체는 선택 폴더 내부 구조를 유지해 저장합니다. 출력 폴더를 원본과 같게 지정하면 선택 범위의 원래 위치에 반영합니다. 실제 덮어쓰기 전 변경 파일을 확인하며, 확인 이후 원본이 바뀌면 저장을 중단합니다. 로컬 실행에서 출력 경로를 비우면 원본 기준 폴더 옆에 새 결과 폴더를 만듭니다.</dd></dl>

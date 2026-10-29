@@ -26,7 +26,8 @@ await copyFile('node_modules/monaco-editor/LICENSE', 'dist/web/assets/Monaco-LIC
 await copyFile('node_modules/monaco-editor/ThirdPartyNotices.txt', 'dist/web/assets/Monaco-ThirdPartyNotices.txt');
 
 // Guide screenshots include click annotations and account redaction.
-await cp(new URL('../docs/images/guide/', import.meta.url), new URL('../dist/web/assets/guide/', import.meta.url), { recursive: true });
+await cp(new URL('../docs/user/images/guide/', import.meta.url), new URL('../dist/web/assets/guide/', import.meta.url), { recursive: true });
+await cp(new URL('../docs/user/images/web/', import.meta.url), new URL('../dist/web/assets/guide/web/', import.meta.url), { recursive: true });
 
 await copyFile('src/web/assets/favicon.svg', 'dist/web/assets/favicon.svg');
 

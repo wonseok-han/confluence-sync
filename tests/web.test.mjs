@@ -266,16 +266,30 @@ test('web token guide serves only the annotated screenshots bundled with the pac
   const html = await (await fetch(url)).text();
   assert.match(html, /id="open-token-guide"/);
   assert.match(html, /id="help-token"/);
-  const images = [...html.matchAll(/<img src="(\/assets\/guide\/[^\"]+)"/g)].map(match => match[1]);
+  const images = [...html.matchAll(/<img src="(\/assets\/guide\/[^\/"]+)"/g)].map(match => match[1]);
   assert.equal(images.length, 7);
   for (const image of images) {
     const response = await fetch(url + image);
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('content-type'), 'image/png');
     const bytes = Buffer.from(await response.arrayBuffer());
-    assert.deepEqual(bytes, readFileSync(new URL('../docs/images/guide/' + image.split('/').at(-1), import.meta.url)));
+    assert.deepEqual(bytes, readFileSync(new URL('../docs/user/images/guide/' + image.split('/').at(-1), import.meta.url)));
   }
-  assert.equal((await fetch(url + '/docs/images/guide/01-account-settings.png')).status, 403);
+  assert.equal((await fetch(url + '/docs/user/images/guide/01-account-settings.png')).status, 403);
+});
+
+test('help usage screenshots are collapsed, lazy-loaded and available in local and static builds', async t => {
+  const {root}=workspace(t,{}),{url}=await app(t,root),html=await(await fetch(url)).text();
+  assert.match(html,/href="#help-screens"/);
+  const gallery=html.split('<section id="help-screens">')[1].split('</section>')[0];
+  assert.doesNotMatch(gallery,/<details[^>]*\bopen\b/);
+  assert.equal([...gallery.matchAll(/loading="lazy"/g)].length,3);
+  const images=[...gallery.matchAll(/<img src="([^\"]+)"/g)].map(match=>match[1]);assert.equal(images.length,3);
+  for(const image of images){
+    const response=await fetch(url+image);assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'image/png');
+    const expected=readFileSync(new URL('../docs/user/images/web/'+image.split('/').at(-1),import.meta.url));
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()),expected);assert.deepEqual(readFileSync(new URL('../dist/site'+image,import.meta.url)),expected);
+  }
 });
 
 test('document explorer and recursive search hide attachment directories without blocking referenced images',async t=>{
