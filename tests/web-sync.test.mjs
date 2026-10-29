@@ -139,9 +139,9 @@ test('web adapter runs real incremental push with all Confluence calls intercept
   const { resolve } = await import('node:path');
   const calls = put('calls.jsonl', '');
   const sync = createWebSync((args, config, log) => {
-    const steps = args.includes('--dry-run') ? [] : [
+    const steps = args.includes('--dry-run') ? [] : args[0] === 'fetch' ? [{path:'/wiki/api/v2/pages?space-id=space&status=current&limit=100',body:{results:[]}}] : [
       { path: '/wiki/api/v2/spaces?keys=TEST', body: { results: [{ id: 'space' }] } },
-      { path: '/wiki/api/v2/pages', method: 'POST', body: { id: 'page' } },
+      { path: '/wiki/api/v2/pages', method: 'POST', body: { id: '201' } },
     ];
     const responses = put('responses.json', JSON.stringify(steps));
     return runSyncCLI(args, { ...config, NODE_OPTIONS: '--import=' + pathToFileURL(resolve('tests/helpers/fetch-preload.mjs')).href, CSYNC_TEST_RESPONSES: responses, CSYNC_TEST_CALLS: calls, CSYNC_TEST_SCOPE_BASE: args[args.indexOf('--base')+1] }, log);
@@ -150,9 +150,9 @@ test('web adapter runs real incremental push with all Confluence calls intercept
   await sync.preview(body); const preview = await finished(sync); assert.equal(preview.state, 'succeeded');
   assert.equal(readFileSync(calls, 'utf8'), '');
   await sync.push(preview.planId); assert.equal((await finished(sync)).state, 'succeeded');
-  assert.equal(JSON.parse(readFileSync(mappingPath(join(root,'vault')), 'utf8'))['a.md'].pageId, 'page');
+  assert.equal(JSON.parse(readFileSync(mappingPath(join(root,'vault')), 'utf8'))['a.md'].pageId, '201');
   const sent = readFileSync(calls, 'utf8').trim().split('\n').map(JSON.parse);
-  assert.deepEqual(sent.map(call => call.method), ['GET', 'POST']);
+  assert.deepEqual(sent.map(call => call.method), ['GET', 'POST', 'GET']);
   assert.equal(sent[1].body.parentId, '123');
   await assert.rejects(sync.preview(body), /업로드 대상이 없습니다/);
   await changeStaging(body.base,['a.md'],'add',{baseUrl:'https://example.invalid/wiki'});
@@ -250,15 +250,15 @@ test('web pull works with an empty local document folder and uses the shared CLI
 test('web receive format uses the shared CLI flag and rejects unsupported formats',async t=>{
  const {root,put}=workspace(t,{'.env':env,'a.md':'# Local'});bindScope(root);put('.csync/mapping.json',JSON.stringify({'a.md':{pageId:'456',remoteVersion:1}}));const calls=[];const sync=createWebSync(async args=>{calls.push(args);return 0}),body={base:root,envId:''};
  await assert.rejects(sync.pull({...body,format:'html'}),/내부 링크/);assert.equal(calls.length,0);
- await sync.pull({...body,format:'obsidian'});assert.equal((await finished(sync)).selection.format,'obsidian');assert.deepEqual(calls.at(-1),['pull','--base',realpathSync(root),'--obsidian']);
- const approval=await sync.restore({...body,path:'a.md',overwrite:true,format:'obsidian'});assert.equal(approval.format,'obsidian');await assert.rejects(sync.restore({...body,confirmationId:approval.confirmationId,format:'markdown'}),/다시 확인/);assert.equal(calls.length,1);
+ await sync.pull({...body,format:'obsidian'});assert.equal((await finished(sync)).selection.format,'obsidian');assert.deepEqual(calls[0],['pull','--base',realpathSync(root),'--obsidian']);assert.deepEqual(calls[1],['fetch','--base',realpathSync(root),'--refresh']);
+ const approval=await sync.restore({...body,path:'a.md',overwrite:true,format:'obsidian'});assert.equal(approval.format,'obsidian');await assert.rejects(sync.restore({...body,confirmationId:approval.confirmationId,format:'markdown'}),/다시 확인/);assert.equal(calls.length,2);
  const confirmed=await sync.restore({...body,path:'a.md',overwrite:true,format:'obsidian'});await sync.restore({...body,confirmationId:confirmed.confirmationId,format:'obsidian'});await finished(sync);assert.deepEqual(calls.at(-1),['restore','--base',realpathSync(root),'a.md','--overwrite','--obsidian']);assert.equal(readFileSync(join(root,'a.md'),'utf8'),'# Local');
 });
 
 test('web pull requires credentials and scope, excludes local selection, and invalidates push approval',async t=>{
  const {root}=workspace(t,{'.env':env,'a.md':'# A'});const calls=[];const sync=createWebSync(async args=>{calls.push(args);return 0;});
  await assert.rejects(sync.pull({base:root,envId:''}),/스페이스 연결/);const input=await request(root);await sync.preview(input);const preview=await finished(sync);assert.ok(preview.planId);
- await sync.pull({...input,target:'/outside',referenceRoots:['/outside'],verify:true});await finished(sync);assert.deepEqual(calls.at(-1),['pull','--base',realpathSync(root)]);await assert.rejects(sync.push(preview.planId),/미리보기/);
+ await sync.pull({...input,target:'/outside',referenceRoots:['/outside'],verify:true});await finished(sync);assert.deepEqual(calls.at(-2),['pull','--base',realpathSync(root)]);assert.equal(calls.at(-1)[0],'fetch');await assert.rejects(sync.push(preview.planId),/미리보기/);
  const empty=workspace(t,{});bindScope(empty.root);await assert.rejects(sync.pull({base:empty.root,envId:''}),/설정 누락/);
 });
 
@@ -269,9 +269,9 @@ test('web real CLI pull downloads remote docs and refuses to overwrite local edi
  const listing={path:'/wiki/api/v2/pages?space-id=space&status=current&limit=100',body:{results:[{id:'124',title:'Child',spaceId:'space',parentId:'123',version:{number:1}}]}};
  const steps=[listing,{path:'/wiki/rest/api/content/124?expand=body.export_view,body.storage,version',body:{id:'124',type:'page',title:'Child',version:{number:1},body:{export_view:{value:'<p>Remote body</p>'},storage:{value:'<p>Remote body</p>'}}}}];
  const responses=put('responses.json',JSON.stringify(steps)),calls=put('calls.jsonl','');
- const sync=createWebSync((args,config,log)=>runSyncCLI(args,{...config,NODE_OPTIONS:'--import='+pathToFileURL(resolve('tests/helpers/fetch-preload.mjs')).href,CSYNC_TEST_RESPONSES:responses,CSYNC_TEST_CALLS:calls,CSYNC_TEST_SCOPE_BASE:root},log));
+ const sync=createWebSync((args,config,log)=>{if(args[0]==='fetch')put('responses.json',JSON.stringify([listing]));return runSyncCLI(args,{...config,NODE_OPTIONS:'--import='+pathToFileURL(resolve('tests/helpers/fetch-preload.mjs')).href,CSYNC_TEST_RESPONSES:responses,CSYNC_TEST_CALLS:calls,CSYNC_TEST_SCOPE_BASE:root},log)});
  await sync.pull({base:root,envId:''});assert.equal((await finished(sync)).state,'succeeded');const path=join(root,'Child.md');assert.match(readFileSync(path,'utf8'),/Remote body/);
- put('Child.md',readFileSync(path,'utf8').replace('Remote body','Local edit'));const before=readFileSync(path,'utf8');put('responses.json',JSON.stringify([listing]));await sync.pull({base:root,envId:''});const preserved=await finished(sync);assert.equal(preserved.state,'succeeded');assert.equal(readFileSync(path,'utf8'),before);
+ put('Child.md',readFileSync(path,'utf8').replace('Remote body','Local edit'));const before=readFileSync(path,'utf8');put('responses.json',JSON.stringify([]));await sync.pull({base:root,envId:''});const preserved=await finished(sync);assert.equal(preserved.state,'succeeded');assert.equal(readFileSync(path,'utf8'),before);
  assert.ok(readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse).every(call=>call.method==='GET'));
 });
 
@@ -338,7 +338,7 @@ test('web full Pull is explicit, validated and passed through to the CLI',async 
  const {root}=workspace(t,{'.env':env});await request(root);const calls=[];const sync=createWebSync(async(args)=>{calls.push(args);return 0});
  await assert.rejects(sync.pull({base:root,envId:'',full:'yes'}),/전체 탐색/);
  await sync.pull({base:root,envId:'',full:true});await finished(sync);assert.deepEqual(calls[0],['pull','--base',realpathSync(root),'--full']);
- await sync.pull({base:root,envId:''});await finished(sync);assert.deepEqual(calls[1],['pull','--base',realpathSync(root)]);
+ await sync.pull({base:root,envId:''});await finished(sync);assert.deepEqual(calls[2],['pull','--base',realpathSync(root)]);
 });
 
 test('web restore validates selected file, requires single-use confirmation and invokes the shared CLI',async t=>{
@@ -366,4 +366,39 @@ test('the downloadable env example contains blank configuration and never export
 
 test('exported job logs retain server masking on errors, including Basic credentials',async t=>{
  const {root}=workspace(t,{'.env':env});await request(root);const {formatJobLog}=await import('../src/web/client/download.js');const encoded=Buffer.from('demo@example.invalid:synthetic-secret').toString('base64');const sync=createWebSync(async(_args,_settings,log)=>{log('Token synthetic-secret\nBasic '+encoded+'\n');return 1});await sync.fetch({base:root,envId:''});const job=await finished(sync),output=formatJobLog(job);assert.equal(job.state,'failed');assert.match(output,/Token \[비공개\]/);assert.match(output,/Basic \[비공개\]/);assert.doesNotMatch(output,/synthetic-secret/);assert.equal(output.includes(encoded),false);
+});
+
+for(const kind of ['push','pull'])test(`${kind} retains its job and lock until one fresh Fetch finishes`,async t=>{
+ const {root}=workspace(t,{'.env':env,'a.md':'# A'});const body=await request(root),calls=[];let release;
+ const sync=createWebSync(async(args,_settings,log)=>{calls.push(args);log(args[0]+' log\n');if(args[0]==='fetch')await new Promise(resolve=>{release=resolve});return 0});
+ let current;if(kind==='push'){await sync.preview(body);const preview=await finished(sync);current=await sync.push(preview.planId);}else current=await sync.pull(body);
+ const jobId=current.id;for(let i=0;i<50&&!release;i++)await new Promise(resolve=>setTimeout(resolve,2));
+ assert.ok(release);assert.equal(sync.running(),true);assert.equal(sync.current().phase,'fetch');assert.equal(sync.current().id,jobId);assert.match(sync.current().log,new RegExp(kind+' log'));
+ await assert.rejects(sync.fetch({base:root,envId:''}),/다른 작업/);
+ release();const done=await finished(sync);assert.equal(done.state,'succeeded');assert.equal(done.id,jobId);assert.equal(done.refreshFailed,undefined);assert.equal(done.phase,undefined);assert.match(done.log,/자동 Fetch/);
+ assert.deepEqual(calls.filter(args=>args[0]==='fetch'),[['fetch','--base',realpathSync(root),'--refresh']]);
+});
+
+test('a follow-up Fetch failure warns without changing the successful Pull result',async t=>{
+ const {root}=workspace(t,{'.env':env});await request(root);const sync=createWebSync(async(args,_env,log)=>{log(args[0]+' completed\n');return args[0]==='fetch'?1:0});
+ await sync.pull({base:root,envId:''});const done=await finished(sync);assert.equal(done.state,'succeeded');assert.equal(done.refreshFailed,true);assert.match(done.log,/후속 Fetch 실패/);assert.match(done.log,/이미 완료된 가져오기는 유지/);
+});
+
+test('failed Pull does not start a follow-up Fetch',async t=>{
+ const {root}=workspace(t,{'.env':env});await request(root);const calls=[];const sync=createWebSync(async(args)=>{calls.push(args);return 1});
+ await sync.pull({base:root,envId:''});assert.equal((await finished(sync)).state,'failed');assert.equal(calls.length,1);
+});
+
+test('preview approval ignores timestamp-only changes while still hashing attachments',async t=>{
+ const {utimesSync,statSync}=await import('node:fs');
+ const {root,put}=workspace(t,{'.env':env,'a.md':'# A','asset.bin':'original'});const body=await request(root);
+ const sync=createWebSync(async args=>{if(args.includes('--dry-run'))for(const rel of ['a.md','asset.bin'])utimesSync(join(root,rel),new Date(),new Date(Date.now()+10000));return 0});
+ await sync.preview(body);const preview=await finished(sync);assert.equal(preview.state,'succeeded');assert.ok(preview.planId);
+ const file=join(root,'asset.bin'),prior=statSync(file);put('asset.bin','modified');utimesSync(file,prior.atime,prior.mtime);
+ await assert.rejects(sync.push(preview.planId),/문서나 설정이 변경/);
+});
+
+test('source content edits during preview still invalidate approval',async t=>{
+ const {root,put}=workspace(t,{'.env':env,'a.md':'# A'});const body=await request(root);const sync=createWebSync(async()=>{put('a.md','# B');return 0});
+ await sync.preview(body);const result=await finished(sync);assert.equal(result.state,'failed');assert.equal(result.planId,null);assert.match(result.log,/미리보기 중 문서나 설정이 바뀌/);
 });

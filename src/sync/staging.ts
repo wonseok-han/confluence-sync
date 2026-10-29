@@ -1,4 +1,5 @@
 import { green, cyan } from '../shared/colors.js';
+import { reconcilePages } from './reconcile.js';
 import { localStateHash } from './local-state.js';
 import { buildTreeRenderer } from './render.js';
 /** Document-level upload selection. Source files are never copied into the index. */
@@ -16,7 +17,7 @@ import { readEnv } from '../confluence/config.js';
 import { positionalArgs } from '../cli/args.js';
 
 type Entry = { source: string; hash: string };
-export type StagingRow = { unmapped?: boolean; recoverable?: boolean;path:string;status:string;staged:boolean;stale:boolean;entry:Entry;pageId?:string};
+export type StagingRow = { renamed?: boolean; unmapped?: boolean; recoverable?: boolean;path:string;status:string;staged:boolean;stale:boolean;entry:Entry;pageId?:string};
 type Index = { version: 1; binding: string; entries: Record<string, Entry> };
 type Options = { referenceRoots?: string[]; baseUrl?: string };
 const digest = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -71,23 +72,26 @@ export async function inspectStaging(base: string, options: Options = {}, only?:
   const sources = Object.fromEntries(selected.map(rel => [rel, sourceHash(base, rel)]));
   const prepared = await preparePushTree(base, all, selected, { referenceRoots: options.referenceRoots ?? [], baseUrl: options.baseUrl });
   try {
-    const mapping = loadMapping(mappingPath(base));
+    const originalMapping = loadMapping(mappingPath(base));
+    const mapping = reconcilePages(base, originalMapping, all, selected, requireScope(workspace));
     const legacy = buildTreeRenderer(base, all);
     const rows: StagingRow[] = selected.map(path => {
       const doc = prepared.docs[path], rendered = prepared.render(path, doc.body, doc.title), hash = docHash(doc.title, rendered);
       if (sourceHash(base, path) !== sources[path]) throw new Error('조회 중 문서가 변경되었습니다. 다시 시도하세요.');
-      const oldPath = doc.fm.pageId && Object.keys(mapping).find(key => mapping[key].pageId === doc.fm.pageId && !key.endsWith('/'));
-      const prior = mapping[path] ?? (oldPath ? mapping[oldPath] : undefined);
+      const oldPath = doc.fm.pageId && Object.keys(originalMapping).find(key => originalMapping[key].pageId === doc.fm.pageId && !key.endsWith('/'));
+      const prior = originalMapping[path] ?? (oldPath ? originalMapping[oldPath] : undefined);
+      const reconciled = mapping[path];
       const clean = prior?.localHash ? prior.localHash === localStateHash(base, path, rendered) : !!prior?.hash && (prior.hash === hash || prior.hash === docHash(legacy.docs[path].title, legacy.render(path, legacy.docs[path].body, legacy.docs[path].title))
         || prior.hash === docHash(doc.title, prepared.render(path, doc.body, doc.title, 'panels'))
         || prior.hash === docHash(doc.title, prepared.render(path, doc.body, doc.title, true))
         || prior.hash === docHash(legacy.docs[path].title, legacy.render(path, legacy.docs[path].body, legacy.docs[path].title, 'panels'))
         || prior.hash === docHash(legacy.docs[path].title, legacy.render(path, legacy.docs[path].body, legacy.docs[path].title, true)));
-      const status = !prior?.pageId ? 'new' : prior.pendingMove || oldPath && oldPath !== path ? 'moved' : clean ? 'same' : 'changed';
+      const renamed = !!prior?.pageId && !reconciled?.pendingMove && !!oldPath && oldPath !== path;
+      const status = !prior?.pageId ? 'new' : reconciled?.pendingMove ? 'moved' : renamed || !clean ? 'changed' : 'same';
       const entry = { source: sources[path], hash };
       const unmapped=!prior?.pageId&&!!doc.fm.pageId;
       const staged = !!index.entries[path], stale = staged && (unmapped || JSON.stringify(index.entries[path]) !== JSON.stringify(entry));
-      return { path, status, staged, stale, entry, pageId: prior?.pageId ?? doc.fm.pageId, ...(!prior?.pageId && doc.fm.pageId ? {unmapped:true,recoverable:doc.fm.spaceKey===workspace.connection?.spaceKey} : {}) };
+      return { path, status, staged, stale, entry, ...(renamed && clean ? {renamed:true} : {}), pageId: prior?.pageId ?? doc.fm.pageId, ...(!prior?.pageId && doc.fm.pageId ? {unmapped:true,recoverable:doc.fm.spaceKey===workspace.connection?.spaceKey} : {}) };
     });
     for (const path of Object.keys(index.entries)) if (!rows.some(row => row.path === path)) rows.push({ path, status: 'unavailable', staged: true, stale: true, entry: index.entries[path], pageId: mapping[path]?.pageId });
     return rows;

@@ -150,3 +150,15 @@ test('footnote comment-era baseline stays clean after anchor metadata support',a
  saveMapping(mappingPath(root),{'a.md':{pageId:'201',title:'A',hash:hashOf('A\0'+old),remoteVersion:1}});assert.equal((await inspectStaging(root,options))[0].status,'same');await changeStaging(root,['a.md'],'add',options);mockFetch(t,[]);await runPush(['--base',root]);assert.deepEqual(loadIndex(root).entries,{});
  put('a.md','---\ntitle: A\n---\nText[^law]\n\n[^law]: Edited');assert.equal((await inspectStaging(root,options))[0].status,'changed');
 });
+
+test('a filename-only rename preserves title and uploads no remote body, while relinking the stored path',async t=>{
+ configure(t);const source='---\npageId: 201\ntitle: Fixed remote title\n---\n\nBody\n';const {root,put}=workspace(t,{'folder/002_doc.md':source});bindScope(root);mockFetch(t,[]);
+ const {preparePushTree}=await import('../dist/sync/prepare.js');const {docHash}=await import('../dist/documents/markdown.js');const {localStateHash}=await import('../dist/sync/local-state.js');
+ const prepared=await preparePushTree(root,['folder/002_doc.md'],['folder/002_doc.md']);const doc=prepared.docs['folder/002_doc.md'],rendered=prepared.render('folder/002_doc.md',doc.body,doc.title);
+ const original={pageId:'201',title:doc.title,hash:docHash(doc.title,rendered),localHash:localStateHash(root,'folder/002_doc.md',rendered),remoteVersion:5,remoteParentId:'202'};prepared.dispose();
+ saveMapping(mappingPath(root),{'folder/Original_title.md':original,'folder/':{pageId:'202',type:'folder'}});
+ const before=readFileSync(mappingPath(root),'utf8');const row=(await inspectStaging(root,options))[0];assert.equal(row.status,'changed');assert.equal(row.renamed,true);assert.equal(readFileSync(mappingPath(root),'utf8'),before);
+ await changeStaging(root,['folder/002_doc.md'],'add',options);await runPush(['--base',root,'--dry-run']);assert.equal(readFileSync(mappingPath(root),'utf8'),before);
+ await runPush(['--base',root]);const mapping=loadMapping(mappingPath(root));assert.equal(mapping['folder/Original_title.md'],undefined);assert.deepEqual(mapping['folder/002_doc.md'],original);assert.equal(loadIndex(root).entries['folder/002_doc.md'],undefined);assert.equal(readFileSync(join(root,'folder/002_doc.md'),'utf8'),source);
+ assert.equal((await inspectStaging(root,options))[0].status,'same');
+});

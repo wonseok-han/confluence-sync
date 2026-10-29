@@ -16,7 +16,7 @@ export function createStaging({api, selection, changed, busy, status, update, co
   function persist() {
     try {
       const views = cache().filter(view => view?.key !== activeView);
-      views.push({key:activeView, scannedAt, rows:rows.map(({path,status,staged,stale,pageId,unmapped,recoverable,remoteState,remoteVersion,baselineVersion}) => ({path,status,staged,stale,pageId,unmapped,recoverable,remoteState,remoteVersion,baselineVersion}))});
+      views.push({key:activeView, scannedAt, rows:rows.map(({path,status,staged,stale,pageId,renamed,unmapped,recoverable,remoteState,remoteVersion,baselineVersion}) => ({path,status,staged,stale,pageId,renamed,unmapped,recoverable,remoteState,remoteVersion,baselineVersion}))});
       localStorage.setItem(storageKey,JSON.stringify(views.slice(-5)));
     } catch { /* Storage restrictions must not interrupt selection or upload. */ }
   }
@@ -45,7 +45,7 @@ export function createStaging({api, selection, changed, busy, status, update, co
       input.type = 'checkbox'; input.value = row.path; input.checked = row.staged;
       input.setAttribute('aria-label', row.path + ' 업로드에 포함');
       text.textContent = row.path;
-      const changeLabel = {new:'로컬 신규',changed:'로컬 수정',moved:'로컬 이동',same:'변경 없음',unavailable:'파일 확인'}[row.status];
+      const changeLabel = row.renamed ? '로컬 경로 변경' : {new:'로컬 신규',changed:'로컬 수정',moved:'로컬 이동',same:'변경 없음',unavailable:'파일 확인'}[row.status];
       const icon = document.createElement('span'), statusText = document.createElement('span');
       const both = row.remoteState==='new'&&!row.unmapped&&row.status!=='unavailable'||row.remoteState === 'changed' && ['changed','moved','new'].includes(row.status);
       const attention = row.unmapped || row.stale || both || ['unknown','unavailable'].includes(row.remoteState);

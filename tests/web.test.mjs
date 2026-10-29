@@ -324,3 +324,13 @@ test('in-place approval becomes invalid when the source is edited or deleted', a
   const deleted = await post({ ...body, approvedOverwrites }); assert.equal(deleted.status, 409);
   assert.equal((await deleted.json()).code, 'SOURCE_CHANGED'); assert.equal(existsSync(join(base, 'a.md')), false);
 });
+
+test('document formatting API reviews all tables without writing and saves only an unchanged source', async t => {
+  const original='#   Heading\nText\n\n| A | Long |\n|---|---|\n| X | A much longer body |\n';
+  const {root,put}=workspace(t,{'a.md':original});const {url,headers}=await app(t,root);
+  const request=(route,body)=>fetch(url+route,{method:'POST',headers,body:JSON.stringify(body)});
+  const doc=await(await request('/api/document-preview',{base:root,file:join(root,'a.md')})).json();
+  const response=await request('/api/document-format/preview',{base:root,file:join(root,'a.md'),hash:doc.hash,basic:true,tables:'fit'});assert.equal(response.status,200);
+  const plan=await response.json();assert.match(plan.after,/# Heading\n\nText/);assert.match(plan.after,/<table/);assert.equal(readFileSync(join(root,'a.md'),'utf8'),original);
+  put('a.md','User edit');assert.equal((await request('/api/table-format/save',{planId:plan.planId})).status,400);assert.equal(readFileSync(join(root,'a.md'),'utf8'),'User edit');
+});

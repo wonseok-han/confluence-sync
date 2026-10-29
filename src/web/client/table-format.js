@@ -13,19 +13,26 @@ export function initTableFormatting({ api, monaco, refresh, setBusy, notify = ()
   const $ = id => document.getElementById(id);
   const frame = $('document-preview-frame'), toggle = $('table-edit-toggle'), controls = $('table-format-controls');
   const dialog = $('table-review-dialog'), note = $('table-format-status');
-  let documentData, selection, enabled = false, index = -1, widths = [], plans = new Map(), planId, editor, beforeModel, afterModel, generation = 0;
+  let documentData, selection, enabled = false, index = -1, widths = [], plans = new Map(), planId, editor, beforeModel, afterModel, generation = 0, revision = 0;
   const post = data => frame.contentWindow?.postMessage({ ...data, channel: documentData?.channel }, '*');
   const message = text => { note.textContent = text; };
-  const invalidate = () => { planId = null; $('table-save').disabled = true; };
+  const invalidate = () => { revision++; planId = null; $('table-save').disabled = true; };
   function clear() {
     frame.onload = null;
     generation++; documentData = null; selection = null; enabled = false; index = -1; widths = []; plans.clear(); invalidate();
-    toggle.disabled = true; toggle.textContent = '표 서식 편집'; toggle.setAttribute('aria-pressed', 'false');
+    $('document-format-toggle').disabled = true; $('document-format-controls').hidden = true; $('document-format-toggle').setAttribute('aria-expanded', 'false');
+    $('document-format-tables').value = 'keep';
+    toggle.disabled = true; toggle.lastChild.textContent = '표 직접 편집'; toggle.setAttribute('aria-pressed', 'false');
     controls.hidden = true; if (dialog.open) dialog.close(); updateControls();
   }
   function updateControls() {
     const active = index >= 0;
-    for (const id of ['table-total-width', 'table-equal', 'table-review', 'table-revert']) $(id).disabled = !active;
+    for (const id of ['table-total-width', 'table-equal', 'table-revert']) $(id).disabled = !active;
+    $('document-format-basic').disabled = !documentData;
+    $('document-format-review').disabled = !documentData || !plans.size;
+    $('format-summary').textContent = plans.size ? `표 ${plans.size}개 조절됨 · 변경 비교 후 저장합니다.` : '변경 비교 후 원본 파일에 저장합니다.';
+    $('table-revert-all').disabled = !plans.size;
+    $('document-format-tables').disabled = !documentData?.tables.some(t => t.editable);
     $('table-fit').disabled = !active || !documentData?.tables.find(t => t.index === index)?.contentWeights;
     if (active) {
       const total = widths.reduce((a, b) => a + b, 0);
@@ -41,10 +48,13 @@ export function initTableFormatting({ api, monaco, refresh, setBusy, notify = ()
   }
   toggle.onclick = () => {
     enabled = !enabled; controls.hidden = !enabled;
-    toggle.textContent = enabled ? '표 편집 끝내기' : '표 서식 편집'; toggle.setAttribute('aria-pressed', String(enabled));
+    toggle.lastChild.textContent = enabled ? '표 직접 편집 중' : '표 직접 편집'; toggle.setAttribute('aria-pressed', String(enabled));
     post({ type: 'csync-table-edit', enabled });
-    if (enabled && index >= 0) post({ type: 'csync-table-widths', index, widths });
-    else if (enabled) message('미리보기에서 편집할 표를 클릭하세요.');
+    if (enabled) {
+      for (const [index, widths] of plans) post({ type: 'csync-table-widths', index, widths });
+      if (index >= 0) post({ type: 'csync-table-widths', index, widths });
+    }
+    if (enabled && index < 0) message('미리보기에서 편집할 표를 클릭하세요.');
   };
   window.addEventListener('message', event => {
     const data = event.data;
@@ -70,6 +80,63 @@ export function initTableFormatting({ api, monaco, refresh, setBusy, notify = ()
     apply(fitColumnWidths(widths.reduce((a, b) => a + b, 0), table.contentWeights));
     message('표 ' + (index + 1) + ' · 글자 길이에 맞춰 배분했습니다. 아직 저장하지 않았습니다.');
   };
+  function bulk(mode) {
+    const tables = documentData.tables.filter(t => t.editable);
+    if (!tables.length) return;
+    post({ type: 'csync-table-edit', enabled: true });
+    for (const table of tables) {
+      const current = plans.get(table.index) ?? table.widths, total = current.reduce((a, b) => a + b, 0);
+      const values = mode === 'fit' ? fitColumnWidths(total, table.contentWeights) : distribute(total, current.length);
+      plans.set(table.index, values); post({ type: 'csync-table-widths', index: table.index, widths: values });
+    }
+    if (index < 0) index = tables[0].index;
+    widths = plans.get(index).slice(); post({ type: 'csync-table-widths', index, widths }); invalidate(); updateControls();
+    post({ type: 'csync-table-edit', enabled });
+    message(`표 ${tables.length}개에 ${mode === 'fit' ? '내용에 맞춤' : '균등 배분'}을 적용했습니다. 변경 비교 후 저장하세요.`);
+  }
+  $('document-format-tables').onchange = () => {
+    if ($('document-format-tables').value === 'keep') $('table-revert-all').onclick();
+    else bulk($('document-format-tables').value);
+  };
+  $('table-revert-all').onclick = () => {
+    post({ type: 'csync-table-edit', enabled: true });
+    for (const table of documentData.tables.filter(t => t.editable)) post({ type: 'csync-table-widths', index: table.index, widths: table.widths });
+    plans.clear(); $('document-format-tables').value = 'keep';
+    if (index >= 0) { widths = documentData.tables.find(t => t.index === index).widths.slice(); post({ type: 'csync-table-widths', index, widths }); }
+    post({ type: 'csync-table-edit', enabled });
+    invalidate(); updateControls(); message('모든 표의 너비 변경을 취소했습니다.');
+  };
+  $('document-format-toggle').onclick = () => {
+    const hidden = !$('document-format-controls').hidden; $('document-format-controls').hidden = hidden;
+    $('document-format-toggle').setAttribute('aria-expanded', String(!hidden));
+    if (hidden && enabled) toggle.onclick();
+  };
+  function review(data, basic) {
+    planId = data.planId; $('table-save-status').textContent = '';
+    $('table-review-title').textContent = '문서 서식 변경 확인';
+    $('format-review-note').textContent = basic ? '기본 서식 정리와 표 조절 결과를 확인하세요. 저장을 눌러야 파일에 반영됩니다.' : '표 조절 결과를 확인하세요. 본문 기본 서식은 변경하지 않습니다. 저장을 눌러야 파일에 반영됩니다.';
+    if (!dialog.open) dialog.showModal();
+    if (!editor) {
+      beforeModel = monaco.editor.createModel('', 'markdown'); afterModel = monaco.editor.createModel('', 'markdown');
+      editor = monaco.editor.createDiffEditor($('table-review-diff'), { automaticLayout: true, readOnly: true, originalEditable: false, minimap: { enabled: false }, wordWrap: 'on', scrollBeyondLastLine: false });
+      editor.setModel({ original: beforeModel, modified: afterModel });
+    }
+    beforeModel.setValue(data.before); afterModel.setValue(data.after); editor.layout();
+    $('table-save').disabled = data.before === data.after;
+    if (data.before === data.after) $('table-save-status').textContent = '정리할 서식 변경이 없습니다.';
+  }
+  async function compare(basic) {
+    if (!documentData) return;
+    const current = generation, version = revision; $('document-format-basic').disabled = $('document-format-review').disabled = true;
+    try {
+      const data = await api('/api/document-format/preview', { ...selection, hash: documentData.hash, basic, tables: 'keep', changes: Array.from(plans, ([index, widths]) => ({ index, widths: widths.slice() })) });
+      if (current !== generation || version !== revision) return;
+      review(data, basic);
+    } catch (error) { notify(error.message, 'error'); }
+    finally { updateControls(); }
+  }
+  $('document-format-basic').onclick = () => compare(true);
+  $('document-format-review').onclick = () => compare(false);
   $('table-total-width').oninput = event => {
     const total = Number(event.target.value), extra = total - widths.length * 40;
     const weights = widths.map(w => w - 40), sum = weights.reduce((a, b) => a + b, 0);
@@ -82,34 +149,13 @@ export function initTableFormatting({ api, monaco, refresh, setBusy, notify = ()
     plans.delete(index); widths = documentData.tables.find(t => t.index === index).widths.slice();
     post({ type: 'csync-table-widths', index, widths }); invalidate(); updateControls(); message('선택한 표의 변경을 취소했습니다.');
   };
-  $('table-review').onclick = async () => {
-    const current = generation;
-    const chosen = index, values = widths.slice();
-    const changes = Array.from(new Map([...plans, [chosen, values]]), ([index, widths]) => ({ index, widths: widths.slice() }));
-    $('table-review').disabled = true; message('변경 내용을 비교하는 중…');
-    try {
-      const data = await api('/api/table-format/preview', { ...selection, hash: documentData.hash, index: chosen, widths: values, changes });
-      if (current !== generation || chosen !== index || JSON.stringify(widths) !== JSON.stringify(values)) return;
-      planId = data.planId; $('table-save-status').textContent = '';
-      dialog.showModal();
-      if (!editor) {
-        beforeModel = monaco.editor.createModel('', 'markdown'); afterModel = monaco.editor.createModel('', 'markdown');
-        editor = monaco.editor.createDiffEditor($('table-review-diff'), { automaticLayout: true, readOnly: true, originalEditable: false, minimap: { enabled: false }, wordWrap: 'on', scrollBeyondLastLine: false });
-        editor.setModel({ original: beforeModel, modified: afterModel });
-      }
-      beforeModel.setValue(data.before); afterModel.setValue(data.after); editor.layout();
-      $('table-save').disabled = false;
-      message('변경 내용을 확인한 뒤 원본 파일에 저장할 수 있습니다.');
-    } catch (error) { message(error.message); notify(error.message, 'error'); }
-    finally { if (current === generation) updateControls(); }
-  };
   $('table-save').onclick = async () => {
     if (!planId) return;
     const approved = planId;
     $('table-save').disabled = true; $('table-review-close').disabled = true; setBusy(true);
     try {
       await api('/api/table-format/save', { planId: approved });
-      dialog.close(); notify('표 서식을 원본 파일에 저장했습니다.', 'success'); await refresh();
+      dialog.close(); notify('문서 서식을 원본 파일에 저장했습니다.', 'success'); await refresh();
     } catch (error) { $('table-save-status').textContent = error.message; notify(error.message, 'error'); }
     finally { $('table-review-close').disabled = false; setBusy(false); }
   };
@@ -118,7 +164,9 @@ export function initTableFormatting({ api, monaco, refresh, setBusy, notify = ()
     clear(); documentData = data; selection = target;
     frame.onload = () => {
       if (documentData !== data) return;
+      $('document-format-toggle').disabled = false;
       toggle.disabled = !data.tables?.some(t => t.editable);
+      updateControls();
       post({ type: 'csync-table-edit', enabled });
     };
   } };

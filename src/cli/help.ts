@@ -33,9 +33,10 @@ ${workspace}
   원격 조회 시각을 확인하세요. 원격 미확인·오래된 결과는 csync fetch로 갱신합니다.
   로컬 누락 복구: csync restore README.md (기존 파일은 덮어쓰지 않음)
   원격 누락을 삭제로 확정하거나 로컬 파일 삭제를 원격에 전파하지 않습니다.`,
-  fetch: `csync fetch [--base <폴더>]
+  fetch: `csync fetch [--base <폴더>] [--refresh]
 
   --base <폴더>    원격 변경을 확인할 작업공간
+  --refresh        2분 캐시를 건너뛰고 원격 상태 다시 조회
 
   스페이스의 페이지 메타데이터를 100개씩 조회해 원격 신규·버전·제목·위치를 확인합니다. 본문·첨부는 받지 않습니다.
   .csync/remote.json에 저장하고 2분 동안 재사용합니다. 한 실행 최대 20회 요청.

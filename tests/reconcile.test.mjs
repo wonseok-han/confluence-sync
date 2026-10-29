@@ -35,3 +35,22 @@ test('adding a README parent automatically plans a move for an existing child',t
  const result=reconcilePages(root,{'parent/a.md':{pageId:'1',remoteVersion:2}},['parent/a.md','parent/README.md'],['parent/a.md'],scope);
  assert.deepEqual(result['parent/a.md'].pendingMove,{parentKey:'parent/README.md'});
 });
+
+test('renaming a file within the same parent relinks metadata without planning a remote move',t=>{
+ const {root}=workspace(t,{'folder/002_기술.md':fm('1')});
+ const original={'folder/긴_원격_제목.md':{pageId:'1',title:'Keep title',hash:'body',remoteVersion:3,remoteParentId:'200'},'folder/':{pageId:'200',type:'folder'}};
+ const result=reconcilePages(root,original,['folder/002_기술.md'],['folder/002_기술.md'],scope);
+ assert.equal(result['folder/긴_원격_제목.md'],undefined);assert.deepEqual(result['folder/002_기술.md'],original['folder/긴_원격_제목.md']);assert.equal(original['folder/002_기술.md'],undefined);
+});
+
+test('changing a parent source key with the same recorded parent ID needs no remote move',t=>{
+ const {root}=workspace(t,{'new/a.md':fm('1'),'new/README.md':fm('2')});
+ const result=reconcilePages(root,{'old/a.md':{pageId:'1',remoteParentId:'2'},'old/README.md':{pageId:'2'}},['new/a.md','new/README.md'],['new/a.md'],scope);
+ assert.equal(result['new/a.md'].pendingMove,undefined);
+});
+
+test('an existing pending remote verification is retained even on a same-parent rename',t=>{
+ const {root}=workspace(t,{'renamed.md':fm('1')});
+ const result=reconcilePages(root,{'old.md':{pageId:'1',pendingMove:{parentKey:null}}},['renamed.md'],['renamed.md'],scope);
+ assert.deepEqual(result['renamed.md'].pendingMove,{parentKey:null});
+});

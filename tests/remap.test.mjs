@@ -86,3 +86,12 @@ test('remap cannot turn a nested local file into a move of the remote scope root
  bindScope(root,{connection:{homepageId:'100'},scope:{id:'100',type:'page',path:'/'}});
  await assert.rejects(runRemap(['remap','--base',root]),/スコープ|스코프 루트/);assert.equal(existsSync(mappingPath(root)),false);
 });
+
+for(const force of [false,true])test(`dry-run pending move uses the same effective publication hash: force=${force}`,async t=>{
+ mockFetch(t,[]);const {root,put}=workspace(t,{'a.md':fm('1')});bindScope(root);
+ const {buildTreeRenderer}=await import('../dist/sync/render.js');const {localStateHash}=await import('../dist/sync/local-state.js');
+ const tree=buildTreeRenderer(root,['a.md']),doc=tree.docs['a.md'],rendered=tree.render('a.md',doc.body,doc.title);
+ put('.csync/mapping.json',JSON.stringify({'a.md':{pageId:'1',hash:'previous-compatible-render',localHash:localStateHash(root,'a.md',rendered),pendingMove:{parentKey:null}}}));
+ const logs=[];t.mock.method(console,'log',line=>logs.push(String(line)));await runPush(['--base',root,'--dry-run',...(force?['--force']:[])]);
+ const text=logs.join('\n').replace(/\u001b\[[0-9;]*m/g,'');assert.match(text,force?/\[위치 확인\/이동 \+ 변경\]/:/\[위치 확인\/이동\]/);
+});

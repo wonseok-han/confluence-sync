@@ -93,3 +93,11 @@ test('CLI fetch dispatch uses metadata batch API and reuses the saved cache',t=>
  const result=spawnSync(process.execPath,[resolve('dist/sync.js'),'fetch','--base',root],options);assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/원격 변경 1/);assert.match(result.stdout,/API 요청: 1회/);
  writeFileSync(responses,'[]');const cached=spawnSync(process.execPath,[resolve('dist/sync.js'),'fetch','--base',root],options);assert.equal(cached.status,0,cached.stderr);assert.match(cached.stdout,/캐시 사용/);assert.match(cached.stdout,/API 요청: 0회/);
 });
+
+test('explicit refresh bypasses a fresh cache and a failed refresh preserves the prior snapshot',async t=>{
+ const {root,cache}=setup(t,{'a.md':{pageId:'1',remoteVersion:1}});let fail=false;
+ const calls=intercept(t,(_url,count)=>{if(fail)throw Error('Offline');return response([page(1,count)])});
+ await fetchRemote(root,env);assert.equal((await fetchRemote(root,env)).cached,true);assert.equal(calls.length,1);
+ const updated=await fetchRemote(root,env,{refresh:true});assert.equal(updated.cached,false);assert.equal(calls.length,2);assert.equal(updated.snapshot.items[0].remoteVersion,2);
+ const saved=readFileSync(cache,'utf8');fail=true;await assert.rejects(fetchRemote(root,env,{refresh:true}),/Offline/);assert.equal(readFileSync(cache,'utf8'),saved);
+});

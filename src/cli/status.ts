@@ -37,7 +37,7 @@ export async function runStatus(argv: string[]) {
     const pathTone = group === 'conflict' || group === 'attention' ? tones[group] : row.staged ? green : group === 'receive' ? cyan : (text: string) => text;
     const remote = row.remoteState === 'unavailable' ? ' · 원격 조회 불가(삭제로 확정하지 않음)' : row.remoteState === 'unknown' ? ' · 원격 기준 확인 필요' : '';
     const versions = row.remoteVersion !== undefined ? ` · 기준 v${row.baselineVersion ?? '?'} / 원격 v${row.remoteVersion}` : '';
-    return `  ${selection} ${pathTone(row.path)} · ${row.unmapped?'받기 미완료 · 원격 대조 필요':row.remoteState==='new'?'원격 신규':labels[row.status] ?? row.status}${gray(versions)}${yellow(remote)}`;
+    return `  ${selection} ${pathTone(row.path)} · ${row.unmapped?'받기 미완료 · 원격 대조 필요':row.remoteState==='new'?'원격 신규':row.renamed?'로컬 경로 변경':labels[row.status] ?? row.status}${gray(versions)}${yellow(remote)}`;
   };
   for (const group of ['receive', 'conflict', 'attention', 'send'] as const) {
     const rows = view.rows.filter(row => changeGroup(row) === group).sort((a, b) => a.path.localeCompare(b.path));

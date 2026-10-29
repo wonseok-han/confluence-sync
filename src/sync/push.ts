@@ -124,7 +124,9 @@ export async function runPush(argv: string[]): Promise<void> {
     return;
   }
 
-  const mapping = reconcilePages(BASE_DIR, loadMapping(MAPPING_PATH), allRel, picked, remoteScope);
+  const originalMapping = loadMapping(MAPPING_PATH);
+  const mapping = reconcilePages(BASE_DIR, originalMapping, allRel, picked, remoteScope);
+  const relinked = new Set(picked.filter(rel => !originalMapping[rel] && mapping[rel]?.pageId));
   for (const rel of files) if (isCarriedParent(rel) && !mapping[rel]?.pageId) throw new Error(`상위 문서의 매핑이 없습니다: ${rel}. 먼저 Pull로 기존 상위 문서를 연결하거나 상위 문서도 함께 추가하세요.`);
   const root = remoteScope;
   if (root.type === 'page' && explicit.has('README.md') && mapping['README.md']?.pageId !== root.id) throw new Error('루트 README.md는 선택한 원격 페이지의 본문입니다. pull로 기준을 확보하거나 새 하위 문서는 다른 파일명을 사용하세요.');
@@ -149,6 +151,7 @@ export async function runPush(argv: string[]): Promise<void> {
         || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title, 'panels'))
         || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title, true)));
     };
+    const publicationHash = (rel: string) => !FORCE && locallyClean(rel) ? mapping[rel].hash! : hashes[rel];
     const unchanged = (rel: string) => !FORCE && !VERIFY && locallyClean(rel) && !mapping[rel]?.pendingMove;
     const needsRemote = picked.some(rel => !unchanged(rel));
     let client: ReturnType<typeof createClient> | undefined;
@@ -162,7 +165,7 @@ export async function runPush(argv: string[]): Promise<void> {
         if (!isCarriedParent(rel) && unchanged(rel)) continue;
         if (isCarriedParent(rel) && mapping[rel]?.pageId) { await client.assertInScope(mapping[rel].pageId); continue; }
         const { title, body, fm } = docs[rel];
-        const hash = !FORCE && locallyClean(rel) ? mapping[rel].hash! : docHash(title, render(rel, body, title));
+        const hash = publicationHash(rel);
         const entry = mapping[rel] ?? (fm.pageId ? { pageId: fm.pageId, title } : undefined);
         if (entry) await client.checkPage({ [rel]: entry }, spaceId, rel, hash);
       }
@@ -186,13 +189,13 @@ export async function runPush(argv: string[]): Promise<void> {
         const r = render(rel, body, title);
         for (const link of r.referenceLinks) console.log(dim(`  참조 링크: ${link}`));
         for (const warning of r.linkWarnings) console.error(yellow(`  ⚠ ${rel}: ${warning}`));
-        const hash = docHash(title, r);
+        const hash = publicationHash(rel);
         const ex = mapping[rel];
         // 매핑엔 없지만 frontmatter 에 pageId 가 있으면 신규 생성이 아니라 기존 페이지에 연결된다
         const status = !ex?.pageId
           ? (fm.pageId ? cyan('연결') : green('신규'))
-          : ex.pendingMove ? cyan(ex.hash === hash ? '위치 확인/이동' : '위치 확인/이동 + 변경')
-          : locallyClean(rel) ? gray('동일') : yellow('변경');
+          : ex.pendingMove ? cyan(!FORCE && ex.hash === hash ? '위치 확인/이동' : '위치 확인/이동 + 변경')
+          : !FORCE && locallyClean(rel) ? gray(relinked.has(rel) ? '로컬 경로 연결' : '동일') : yellow('변경');
         const pk = parentKeyOf(rel, folderIndex);
         const anchorNote = r.anchorLinks || r.anchorsPlaced
           ? `, 섹션링크: ${r.anchorLinks}, 앵커: ${r.anchorsPlaced}` : '';
@@ -241,6 +244,10 @@ export async function runPush(argv: string[]): Promise<void> {
     for (const [index, rel] of files.entries()) {
       progressStep(`문서 처리 ${index + 1}/${files.length} · ${rel}`);
       if (!isCarriedParent(rel) && unchanged(rel)) {
+        if (relinked.has(rel)) {
+          saveMapping(MAPPING_PATH, work);
+          console.log(`  ${gray('로컬 경로 연결')}  ${rel}  ${dim('(원격 본문·제목·위치 유지)')}`);
+        }
         console.log(`  = 변경없음  ${rel}`); skipped++; completeStaged(BASE_DIR, rel, staged?.[rel]); continue;
       }
       if (isCarriedParent(rel) && !needsRemote) { carried++; continue; }
@@ -266,7 +273,7 @@ export async function runPush(argv: string[]): Promise<void> {
       const r = render(rel, body, title);
       for (const link of r.referenceLinks) console.log(dim(`  참조 링크: ${link}`));
       for (const warning of r.linkWarnings) console.error(yellow(`  ⚠ ${rel}: ${warning}`));
-      const hash = !FORCE && locallyClean(rel) ? work[rel].hash! : docHash(title, r);
+      const hash = publicationHash(rel);
       const pk = parentKeyOf(rel, folderIndex);
       if (r.deadAnchors.length) {
         console.error(yellow(`  ⚠ 대응 헤딩 없는 앵커  ${rel}`) + dim(`  ${r.deadAnchors.slice(0, 3).join(' ')}${r.deadAnchors.length > 3 ? ` 외 ${r.deadAnchors.length - 3}` : ''}`));

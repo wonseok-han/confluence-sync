@@ -64,7 +64,7 @@ export function initSync({ api, monaco, context, setBusy, showSync, refresh = as
     if(job.state==='running'&&!jobActivity)beginJobActivity(job.kind);
     if(jobActivity) {
       const latest=(job.log||'').split(/\r?\n/).filter(line=>line.trim()&&!/^\s*(?:✓|완료|진행 ·)/.test(line)).at(-1);
-      jobActivity.update({label:job.state==='running'?jobLabels[job.kind]:'실행 결과를 반영하는 중',detail:job.state==='running'?(latest||'처리 중입니다. 실행 내역에서 세부 내용을 확인할 수 있습니다.'):'변경 목록과 로컬 폴더를 갱신하고 있습니다.',startedAt:job.startedAt,uncertain:false});
+      jobActivity.update({label:job.state==='running'?(job.phase==='fetch'?'완료 후 원격 상태를 다시 확인하는 중':jobLabels[job.kind]):'실행 결과를 반영하는 중',detail:job.state==='running'?(latest||'처리 중입니다. 실행 내역에서 세부 내용을 확인할 수 있습니다.'):'변경 목록과 로컬 폴더를 갱신하고 있습니다.',startedAt:job.startedAt,uncertain:false});
     }
     $('sync-job-summary').hidden = false;
     $('sync-job-summary').textContent = `${job.kind === 'restore' ? '문서 복구' : job.kind === 'preview' ? '업로드 미리보기' : job.kind === 'fetch' ? '원격 변경 확인' : job.kind === 'pull' ? '가져오기' : '업로드'} · ${['pull','fetch','restore'].includes(job.kind) ? `${job.config.spaceKey || '스페이스 미설정'} → ${job.selection.base}` : `${job.selection.target || job.selection.base} → ${job.config.spaceKey || '스페이스 미설정'}`} (${job.config.baseUrl || '서버 미설정'})`;
@@ -74,16 +74,18 @@ export function initSync({ api, monaco, context, setBusy, showSync, refresh = as
     renderSyncLog(log, job.log || '작업을 준비하는 중입니다…');
     if (following) log.scrollTop = log.scrollHeight;
     $('sync-job-state').hidden=false;
-    $('sync-job-state').setAttribute('data-state',job.state==='succeeded'&&job.warningCount?'warning':job.state);
-    $('sync-job-state').textContent = job.state === 'succeeded' && job.warningCount ? '완료 (경고)' : { running: '진행 중', succeeded: '완료', failed: '실패' }[job.state];
+    $('sync-job-state').setAttribute('data-state',job.state==='succeeded'&&(job.warningCount||job.refreshFailed)?'warning':job.state);
+    $('sync-job-state').textContent = job.state === 'succeeded' && (job.warningCount||job.refreshFailed) ? '완료 (경고)' : { running: '진행 중', succeeded: '완료', failed: '실패' }[job.state];
     const announce = !announcedJobs.has(job.id);
     if (job.state !== 'running') announcedJobs.add(job.id);
-    if (job.state === 'running') status(job.kind === 'restore' ? '선택한 문서를 원격 최신으로 복구하고 있습니다…' : job.kind === 'preview' ? '로컬 문서와 매핑을 비교하고 있습니다…' : job.kind === 'fetch' ? '원격 페이지 메타데이터를 확인하고 있습니다…' : job.kind === 'pull' ? 'Confluence에서 문서를 가져오고 있습니다…' : 'Confluence에 업로드하고 있습니다. 진행 내역을 확인하세요.', false, null);
+    if (job.state === 'running' && job.phase === 'fetch') status('Push·Pull을 완료했습니다. 최신 원격 상태를 다시 확인하고 있습니다…', false, null);
+    else if (job.state === 'running') status(job.kind === 'restore' ? '선택한 문서를 원격 최신으로 복구하고 있습니다…' : job.kind === 'preview' ? '로컬 문서와 매핑을 비교하고 있습니다…' : job.kind === 'fetch' ? '원격 페이지 메타데이터를 확인하고 있습니다…' : job.kind === 'pull' ? 'Confluence에서 문서를 가져오고 있습니다…' : 'Confluence에 업로드하고 있습니다. 진행 내역을 확인하세요.', false, null);
     else if (job.state === 'failed') status(job.kind === 'restore' ? '문서 복구에 실패했습니다. 실행 내역을 확인하세요.' : job.kind === 'fetch' ? '원격 변경 확인에 실패했습니다. 실행 내역을 확인하세요. 이전 캐시는 유지됩니다.' : job.kind === 'pull' ? '가져오기에 실패했습니다. 로컬 변경이나 오류 내역을 확인한 뒤 다시 시도하세요.' : '업로드가 실패했거나 일부 문서가 처리되지 않았습니다. 내역을 확인한 뒤 다시 미리보기해 주세요.', true, announce ? 'error' : null);
     else if (job.kind === 'preview') {
       if (job.id === previewJobId && preparedKey === key() && !job.config.missing.length && job.config.connected) planId = job.planId;
       status(job.config.missing.length ? '미리보기 완료. 접속 설정을 채운 뒤 다시 미리보기해 주세요.' : planId ? '미리보기 완료. 대상과 업로드 위치를 확인하고 Confluence에 업로드를 누르세요.' : '미리보기 내역을 불러왔습니다. 현재 선택으로 다시 미리보기해 주세요.', false, announce ? (job.config.missing.length ? 'warning' : 'success') : null);
     } else if (job.kind === 'fetch') status('Fetch를 완료했습니다. 변경 문서 목록에 원격 상태를 반영합니다. 상세 조회 내역은 대상 및 실행 내역에서 확인할 수 있으며 문서와 동기화 기준은 유지됩니다.', false, announce ? 'success' : null);
+    else if (job.refreshFailed) status(`${job.kind === 'push' ? '업로드' : '가져오기'}는 완료했지만 후속 Fetch에 실패했습니다. ${job.warningCount ? `첨부 ${job.warningCount}개는 원격 참조를 유지했습니다. ` : ''}변경 목록이 최신이 아닐 수 있으니 Fetch를 다시 실행하세요.`, false, announce ? 'warning' : null);
     else if (job.warningCount) status(`가져오기를 완료했습니다. 첨부 ${job.warningCount}개를 저장하지 못해 원격 참조를 유지했습니다. 실행 내역을 확인하세요.`, false, announce ? 'warning' : null);
     else status(job.kind === 'restore' ? '원격 최신으로 복구했습니다. 복구 문서는 업로드 선택에서 제외했습니다.' : job.kind === 'pull' ? '가져오기가 완료되었습니다. 기준 폴더에서 문서를 확인하세요.' : '업로드가 완료되었습니다. 다른 대상을 선택해 계속 작업할 수 있습니다.', false, announce ? 'success' : null);
   }

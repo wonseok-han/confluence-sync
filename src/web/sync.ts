@@ -10,6 +10,7 @@ import type { Env } from '../confluence/config.js';
 import { referenceRoots } from '../sync/references.js';
 /** Web adapter for the existing push CLI. Only preview and incremental push are exposed. */
 import { spawn } from 'node:child_process';
+import { createReadStream } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, readdir, realpath, stat, lstat, writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -32,7 +33,7 @@ function receiveFormat(input:unknown):ReceiveFormat{
 type Selection = { format?:ReceiveFormat; restorePaths?: string[]; restoreOverwrite?: boolean; remoteOnly?: boolean; full?: boolean; base: string; target: string; envId: string; verify: boolean; referenceRoots: string[] };
 type Prepared = { selection: Selection; env: Settings; config: ReturnType<typeof publicConfig>; fingerprint: string };
 export type SyncRunner = (args: string[], env: Settings, log: (text: string) => void) => Promise<number>;
-type Job = { warningCount?: number; id: string; kind: 'preview' | 'push' | 'pull' | 'fetch' | 'restore'; state: 'running' | 'succeeded' | 'failed'; log: string; selection: Selection; config: ReturnType<typeof publicConfig>; planId: string | null; startedAt: string; finishedAt?: string };
+type Job = { phase?: 'fetch'; refreshFailed?: boolean; warningCount?: number; id: string; kind: 'preview' | 'push' | 'pull' | 'fetch' | 'restore'; state: 'running' | 'succeeded' | 'failed'; log: string; selection: Selection; config: ReturnType<typeof publicConfig>; planId: string | null; startedAt: string; finishedAt?: string };
 
 async function settings(base: string, envId: string, imports: Imports) {
   if (envId) {
@@ -66,9 +67,17 @@ async function fingerprint(base: string, env: Settings, skipIndex = false) {
       if (relative(base, path).split('\\').join('/') === `${METADATA_DIR}/remote.json` || skipIndex && relative(base, path).split('\\').join('/') === `${METADATA_DIR}/index.json`) continue;
       if (entry.isDirectory()) await walk(path);
       else if (entry.isFile()) {
-        const info = await stat(path);
-        hash.update(JSON.stringify([relative(base, path), info.size, info.mtimeMs, info.ctimeMs]));
-        if (/\.md$/i.test(path) || entry.name.startsWith('.') || relative(base, path).split(/[\\/]/).includes(METADATA_DIR)) hash.update(await readFile(path));
+        if (skipIndex) {
+          // Background local scans keep the lightweight metadata shortcut.
+          const info = await stat(path);
+          hash.update(JSON.stringify([relative(base, path), info.size, info.mtimeMs, info.ctimeMs]));
+          if (/\.md$/i.test(path) || entry.name.startsWith('.') || relative(base, path).split(/[\\/]/).includes(METADATA_DIR)) hash.update(await readFile(path));
+        } else {
+          // Approval follows bytes, not OneDrive hydration/timestamp changes.
+          const content = createHash('sha256');
+          for await (const chunk of createReadStream(path)) content.update(chunk);
+          hash.update(JSON.stringify([relative(base, path), content.digest('hex')]));
+        }
       }
     }
   };
@@ -181,6 +190,18 @@ export function createWebSync(runner: SyncRunner = runSyncCLI) {
           const updated = await prepare(prepared.selection, imports);
           if (updated.fingerprint !== prepared.fingerprint) throw new Error('미리보기 중 문서나 설정이 바뀌었습니다. 다시 미리보기해 주세요.');
           plan = { id: randomUUID(), prepared }; current.planId = plan.id;
+        }
+        if (succeeded && ['push', 'pull'].includes(kind)) {
+          current.phase = 'fetch';
+          log('\n[자동 Fetch] 최신 원격 상태를 다시 확인합니다.\n');
+          reportedFailure = false;
+          try {
+            const refreshCode = await runner(['fetch', '--base', base, '--refresh'], prepared.env, log);
+            if (refreshCode !== 0 || reportedFailure) throw new Error('후속 Fetch가 완료되지 않았습니다.');
+          } catch (error) {
+            current.refreshFailed = true;
+            log(`[후속 Fetch 실패] ${error instanceof Error ? error.message : String(error)} 이미 완료된 ${kind === 'push' ? '업로드' : '가져오기'}는 유지됩니다. Fetch를 다시 실행하세요.\n`);
+          } finally { delete current.phase; }
         }
         current.warningCount = Number(current.log.match(/(?:^|\n)\[경고 요약\] 원격 첨부 (\d+)개/)?.[1] ?? 0);
         current.state = succeeded ? 'succeeded' : 'failed';

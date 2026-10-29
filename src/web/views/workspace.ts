@@ -1,6 +1,7 @@
 import { readPkgVersion } from '../../shared/version.js';
 import { helpDialog } from './help.js';
 import { syncPanel } from './sync-panel.js';
+const formatIcon = (path: string) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
 /** HTML shell; Monaco and application code are bundled as local assets. */
 export const webPage = (token: string, runtime: 'local' | 'browser' = 'local') => `<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="csync-token" content="${token}"><meta name="csync-runtime" content="${runtime}"><meta name="csync-version" content="${readPkgVersion()}"><title>문서 워크스페이스 · confluence-sync</title><link rel="icon" type="image/svg+xml" href="/assets/favicon.svg?v=paperlink"><link rel="stylesheet" href="/assets/app.css"></head><body>
@@ -31,13 +32,20 @@ export const webPage = (token: string, runtime: 'local' | 'browser' = 'local') =
     </aside>
     <div id="convert-view" class="workspace-content" role="tabpanel" aria-labelledby="tab-convert">
       <section id="document-preview-panel" class="panel document-preview" aria-label="문서 미리보기">
-        <div class="panel-heading document-preview-heading"><h2><button id="document-preview-toggle" class="preview-disclosure" aria-expanded="false" aria-controls="document-preview-body"><span id="document-preview-chevron" aria-hidden="true">▸</span>문서 미리보기<span id="document-preview-toggle-label" class="preview-disclosure-label">펼치기</span></button></h2><div id="document-preview-actions" class="actions" hidden><button id="table-edit-toggle" class="quiet" aria-pressed="false" disabled>표 서식 편집</button><button id="document-preview-refresh" class="quiet" disabled>새로고침</button></div></div>
+        <div class="panel-heading document-preview-heading"><h2><button id="document-preview-toggle" class="preview-disclosure" aria-expanded="false" aria-controls="document-preview-body"><span id="document-preview-chevron" aria-hidden="true">▸</span>문서 미리보기<span id="document-preview-toggle-label" class="preview-disclosure-label">펼치기</span></button></h2><div id="document-preview-actions" class="actions" hidden><button id="document-format-toggle" class="quiet format-entry" aria-expanded="false" aria-controls="document-format-controls" disabled>${formatIcon('M4 5h16M4 10h10M4 15h8m4-2 4 4m-5 3 5-5 2 2-5 5h-2v-2Z')}문서 서식 정리</button><button id="document-preview-refresh" class="quiet" title="문서를 다시 읽기" disabled>${formatIcon('M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1')}새로고침</button></div></div>
         <div id="document-preview-body" hidden>
         <p id="document-preview-status" class="document-preview-status" role="status" aria-live="polite">Markdown 파일을 선택하면 본문이 표시됩니다.</p>
-        <div id="table-format-controls" class="table-format-controls" hidden>
-          <p id="table-format-status" role="status" aria-live="polite">미리보기에서 편집할 표를 클릭하세요.</p>
-          <div class="table-format-actions"><label>전체 너비 <input id="table-total-width" type="range" min="320" max="1200" step="1" disabled><output id="table-total-label"></output></label><button id="table-fit" title="셀의 글자 길이에 맞춰 열 너비 자동 배분" disabled>내용에 맞춤</button><button id="table-equal" disabled>균등 배분</button><button id="table-review" class="primary" disabled>변경 비교</button><button id="table-revert" disabled>변경 취소</button></div>
-          <p class="hint">내용에 맞춤으로 자동 배분하거나 열 경계를 드래그하세요. 저장 전 변경은 파일을 바꾸면 취소됩니다.</p>
+        <div id="document-format-controls" class="document-format-controls" hidden>
+          <div class="format-toolbar" role="group" aria-label="문서 서식 정리 도구">
+            <div class="format-tool-group"><span class="format-group-label">문서</span><button id="document-format-basic" class="format-tool-button" title="제목·문단 간격, 목록 기호, 공백과 Markdown 표 정리 결과를 비교합니다" disabled>${formatIcon('M4 5h16M4 10h16M4 15h10M4 20h10')}기본 서식 정리</button></div>
+            <div class="format-tool-group"><label class="format-group-label" for="document-format-tables">모든 표</label><select id="document-format-tables" title="문서 안의 모든 표 열 너비"><option value="keep">기존 너비 유지</option><option value="fit">내용에 맞춤</option><option value="equal">균등 배분</option></select><button id="table-edit-toggle" class="format-tool-button" aria-pressed="false" aria-controls="table-format-controls" disabled>${formatIcon('M3 4h18v16H3zM3 9h18M9 4v16M15 4v16')}표 직접 편집</button></div>
+            <div class="format-toolbar-actions"><button id="table-revert-all" class="quiet" title="모든 표 너비 변경 취소" disabled>${formatIcon('M4 4v6h6M4 10a8 8 0 1 1 1 8')}표 변경 취소</button><button id="document-format-review" class="primary" disabled>${formatIcon('M9 4H4v16h5M15 4h5v16h-5M9 9l-3 3 3 3M15 9l3 3-3 3')}변경 비교</button></div>
+          </div>
+          <div id="table-format-controls" class="table-format-controls" hidden>
+            <div class="format-context-heading"><span class="format-context-label">선택한 표</span><p id="table-format-status" role="status" aria-live="polite">미리보기에서 조절할 표를 클릭하세요.</p></div>
+            <div class="table-format-actions"><label>표 너비 <input id="table-total-width" type="range" min="320" max="1200" step="1" disabled><output id="table-total-label"></output></label><div class="format-button-set"><button id="table-fit" title="선택한 표의 글자 길이에 맞춰 열 너비 배분" disabled>내용에 맞춤</button><button id="table-equal" disabled>균등 배분</button></div><button id="table-revert" class="quiet" disabled>선택 표 취소</button></div>
+          </div>
+          <div class="format-toolbar-footer"><span id="format-summary" role="status">변경 비교 후 원본 파일에 저장합니다.</span><details><summary>적용 범위</summary><p>기본 서식 정리를 누르면 정리 결과를 바로 비교합니다. 코드·링크 경로·HTML 표는 보존하며 저장 전에는 파일을 바꾸지 않습니다. 모든 표의 너비를 일괄 배분한 뒤 개별 표를 추가로 조절할 수 있습니다. 너비를 지정한 Markdown 표는 HTML로 바뀝니다. 비교창을 닫으면 저장하지 않습니다.</p></details></div>
         </div>
         <iframe id="document-preview-frame" class="document-preview-frame" title="선택한 Markdown 문서 미리보기" sandbox="allow-scripts" hidden></iframe>
         <p class="document-preview-note">로컬 문서 미리보기이며 Confluence의 실제 표시와 다를 수 있습니다.</p>
@@ -97,5 +105,5 @@ export const webPage = (token: string, runtime: 'local' | 'browser' = 'local') =
   <div class="actions"><button id="overwrite-cancel" type="button" autofocus>취소</button><button id="overwrite-confirm" type="button" class="primary">덮어쓰기</button></div>
 </dialog>
 ${helpDialog}
-<dialog id="table-review-dialog" class="table-review-dialog" aria-labelledby="table-review-title"><div class="panel-heading"><h2 id="table-review-title">표 서식 변경 확인</h2><button id="table-review-close">닫기</button></div><p class="table-review-note">편집한 표들의 너비 변경을 함께 저장합니다. 일반 Markdown 표는 HTML 표로 변환합니다.</p><div id="table-review-diff" class="table-review-diff"></div><p id="table-save-status" role="status" aria-live="polite"></p><div class="table-review-footer"><button id="table-save" class="primary">원본 파일에 저장</button></div></dialog>
+<dialog id="table-review-dialog" class="table-review-dialog" aria-labelledby="table-review-title"><div class="panel-heading"><h2 id="table-review-title">문서 서식 변경 확인</h2><button id="table-review-close">닫기</button></div><p id="format-review-note" class="table-review-note">기본 서식과 표 조절을 함께 확인한 뒤 저장하세요.</p><div id="table-review-diff" class="table-review-diff"></div><p id="table-save-status" role="status" aria-live="polite"></p><div class="table-review-footer"><button id="table-save" class="primary">원본 파일에 저장</button></div></dialog>
 </main><aside id="activity-panel" class="activity-panel" role="status" aria-live="polite" aria-atomic="false" hidden><span class="activity-spinner" aria-hidden="true"></span><div class="activity-content"><strong id="activity-title"></strong><p id="activity-detail"></p><div class="activity-meta"><time id="activity-elapsed" aria-hidden="true"></time><a id="activity-link" href="#sync-results" hidden>실행 내역 보기 ↓</a></div></div></aside><aside id="snackbars" class="snackbars" aria-label="작업 알림"></aside><script src="/assets/app.js" type="module"></script></body></html>`;

@@ -74,10 +74,10 @@ export function readFetchSnapshot(base:string,env:Env): FetchSnapshot | null {
     return {...item,path,baselineVersion:entry.remoteVersion,state:reasons.length?'changed' as const:'unchanged' as const,reasons};
   })};
 }
-export async function fetchRemote(baseInput: string, env: Env, options: { mappingFile?: string } = {}) {
+export async function fetchRemote(baseInput: string, env: Env, options: { mappingFile?: string; refresh?: boolean } = {}) {
   const context=fetchContext(baseInput,env,options);
   const {base,workspace,pages,scoped,key,path,now,expectedParents,binding}=context;
-  const cached=cachedSnapshot(context);
+  const cached=options.refresh ? null : cachedSnapshot(context);
   if(cached)return {snapshot:cached,cached:true,requests:0};
   const client=scopeClient({...env,baseUrl:env.baseUrl?.replace(/\/$/,'')});
   const remote = new Map<string, any>();
@@ -185,11 +185,11 @@ export async function fetchRemote(baseInput: string, env: Env, options: { mappin
 export async function runFetch(argv: string[]) {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--base') { if (!argv[i + 1] || argv[i + 1].startsWith('-')) throw new Error('--base에 기준 폴더를 지정하세요.'); i++; }
-    else if (!['fetch','--no-color'].includes(argv[i])) throw new Error('fetch는 연결된 작업공간을 사용합니다. 옵션은 --base만 지정하세요.');
+    else if (!['fetch','--no-color','--refresh'].includes(argv[i])) throw new Error('fetch는 연결된 작업공간을 사용합니다. 옵션은 --base와 --refresh만 지정하세요.');
   }
   const i = argv.indexOf('--base'), base = resolveSyncBase(i >= 0 ? argv[i + 1] : undefined);
   if (!base) throw new Error('작업공간이 없습니다. --base로 기준 폴더를 지정하세요.');
-  const { snapshot, cached, requests } = await fetchRemote(base, readEnv(base));
+  const { snapshot, cached, requests } = await fetchRemote(base, readEnv(base), {refresh: argv.includes('--refresh')});
   const counts = Object.fromEntries([...states].map(state => [state, snapshot.items.filter(item => item.state === state).length]));
   console.log(`${bold(cyan('원격 변경 확인 · 스페이스 작업공간'))}\n${dim(`조회 시각: ${snapshot.checkedAt}${cached ? ' · 2분 이내 캐시 사용' : ''}`)}\n이번 API 요청: ${cyan(`${requests}회`)} · 대상 ${snapshot.items.length}건`);
   const tones = {new:cyan,changed: cyan, unavailable: red, unknown: yellow, unchanged: green};

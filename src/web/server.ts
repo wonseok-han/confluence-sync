@@ -125,7 +125,7 @@ export async function startWeb(options: { start?: string; port?: number; ui?: st
         entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath, 'ko'));
         json(200, { root, entries, skipped }); return;
       }
-      if (req.method !== 'POST' || !['/api/table-format/preview', '/api/table-format/save', '/api/document-preview', '/api/convert', '/api/open', '/api/pick-folder', '/api/sync/diff', '/api/sync/staging', '/api/sync/config', '/api/sync/env/import', '/api/sync/env/save', '/api/sync/connect', '/api/sync/preview', '/api/sync/push', '/api/sync/pull', '/api/sync/fetch', '/api/sync/restore'].includes(url.pathname)) {
+      if (req.method !== 'POST' || !['/api/document-format/preview', '/api/table-format/preview', '/api/table-format/save', '/api/document-preview', '/api/convert', '/api/open', '/api/pick-folder', '/api/sync/diff', '/api/sync/staging', '/api/sync/config', '/api/sync/env/import', '/api/sync/env/save', '/api/sync/connect', '/api/sync/preview', '/api/sync/push', '/api/sync/pull', '/api/sync/fetch', '/api/sync/restore'].includes(url.pathname)) {
         json(404, { error: '없는 요청입니다.' }); return;
       }
       if (!req.headers['content-type']?.startsWith('application/json')) { json(415, { error: 'JSON 요청이 필요합니다.' }); return; }
@@ -139,6 +139,11 @@ export async function startWeb(options: { start?: string; port?: number; ui?: st
       if (url.pathname === '/api/document-preview') {
         if (typeof body.base !== 'string' || typeof body.file !== 'string') throw new Error('문서 경로를 확인해 주세요.');
         json(200, await previewDocument(body.base, body.file, previewNonce)); return;
+      }
+      if (url.pathname === '/api/document-format/preview') {
+        if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }
+        if (typeof body.base !== 'string' || typeof body.file !== 'string' || typeof body.hash !== 'string') throw new Error('문서 서식 요청을 확인해 주세요.');
+        json(200, await tableFormatting.documentPreview(body.base, body.file, body.hash, body.basic, body.tables, body.changes)); return;
       }
       if (url.pathname.startsWith('/api/table-format/')) {
         if (busy || sync.running()) { json(409, { error: conflictMessage() }); return; }

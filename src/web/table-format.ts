@@ -5,6 +5,7 @@ import { createDocument } from '@mixmark-io/domino';
 import { htmlTableMarkdown } from '../documents/html-tables.js';
 import { splitFrontmatter } from '../documents/obsidian.js';
 import { applyTableWidths, tableWidths } from '../documents/tables.js';
+import { formatDocument } from '../documents/format.js';
 import { readPreviewSource } from './document-source.js';
 
 export const sourceHash = (source: string) => createHash('sha256').update(source).digest('hex');
@@ -135,9 +136,42 @@ export function formatTable(source: string, index: number, widths: number[]): st
   return source.slice(0, target.start) + html + source.slice(target.end);
 }
 
+export function formatAllTables(source: string, mode: 'fit' | 'equal'): string {
+  let after = source;
+  for (const table of editableTables(source).filter(t => t.editable)) {
+    const total = table.widths.reduce((a, b) => a + b, 0), count = table.widths.length;
+    const weights = mode === 'fit' ? table.contentWeights! : Array(count).fill(1);
+    const extra = total - count * 40, sum = weights.reduce((a, b) => a + b, 0);
+    const shares = weights.map(w => w / sum * extra), widths = shares.map(w => 40 + Math.floor(w));
+    const order = shares.map((w, i) => ({ i, fraction: w - Math.floor(w) })).sort((a, b) => b.fraction - a.fraction);
+    const rest = total - widths.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < rest; i++) widths[order[i].i]++;
+    after = formatTable(after, table.index, widths);
+  }
+  return after;
+}
+
 export function createTableFormatting() {
   const plans = new Map<string, { base: string; file: string; before: string; after: string }>();
+  const plan = (base: string, file: string, before: string, after: string) => {
+    if (Buffer.byteLength(after) > 1_000_000) throw new Error('변경 결과가 미리보기 지원 크기인 1MB를 넘습니다.');
+    const planId = randomUUID();
+    if (plans.size >= 20) plans.delete(plans.keys().next().value!);
+    plans.set(planId, { base, file, before, after });
+    return { planId, before, after };
+  };
   return {
+    async documentPreview(base: string, file: string, hash: string, basic: boolean, tables: string, changes: { index: number; widths: number[] }[] = []) {
+      if (typeof basic !== 'boolean' || !['keep', 'fit', 'equal'].includes(tables)) throw new Error('문서 서식 옵션을 확인해 주세요.');
+      const { source, path } = await readPreviewSource(base, file);
+      if (sourceHash(source) !== hash) throw new Error('파일이 변경되었습니다. 문서 미리보기를 새로고침해 주세요.');
+      if (!Array.isArray(changes) || changes.length > 100 || new Set(changes.map(e => e?.index)).size !== changes.length) throw new Error('표 변경 목록을 확인해 주세요.');
+      let after = source;
+      for (const edit of changes) after = formatTable(after, edit?.index, edit?.widths);
+      if (basic) after = formatDocument(after);
+      if (tables !== 'keep') after = formatAllTables(after, tables as 'fit' | 'equal');
+      return plan(base, path, source, after);
+    },
     async preview(base: string, file: string, hash: string, index: number, widths: number[], changes?: { index: number; widths: number[] }[]) {
       const { source, path } = await readPreviewSource(base, file);
       if (sourceHash(source) !== hash) throw new Error('파일이 변경되었습니다. 문서 미리보기를 새로고침해 주세요.');
@@ -145,11 +179,7 @@ export function createTableFormatting() {
       if (!Array.isArray(edits) || !edits.length || edits.length > 100 || new Set(edits.map(e => e?.index)).size !== edits.length) throw new Error('표 변경 목록을 확인해 주세요.');
       let after = source;
       for (const edit of edits) after = formatTable(after, edit?.index, edit?.widths);
-      if (Buffer.byteLength(after) > 1_000_000) throw new Error('변경 결과가 미리보기 지원 크기인 1MB를 넘습니다.');
-      const planId = randomUUID();
-      if (plans.size >= 20) plans.delete(plans.keys().next().value!);
-      plans.set(planId, { base, file: path, before: source, after });
-      return { planId, before: source, after };
+      return plan(base, path, source, after);
     },
     async save(planId: string) {
       const plan = plans.get(planId);

@@ -28,9 +28,12 @@ export function reconcilePages(base: string, mapping: Mapping, allFiles: string[
     if (prior && prior.key !== key && existsSync(resolve(base, prior.key))) throw new Error(`기존 pageId 경로가 남아 있습니다: ${prior.key}, ${key}`);
     const entry = { ...(prior?.entry ?? { pageId: id, title: doc.title }) };
     const parentKey = parentKeyOf(key, folders);
+    const oldParentKey = prior ? parentKeyOf(prior.key, oldFolders) : undefined;
+    const parentId = parentKey ? mapping[parentKey]?.pageId ?? docs.get(parentKey)?.fm.pageId : scope.id;
+    const sameParent = !!prior && (oldParentKey === parentKey || !!parentId && prior.entry.remoteParentId === parentId);
     if (id === scope.id) {
       if (entry.pendingMove) throw new Error('스코프 루트는 이동할 수 없습니다.');
-    } else if (!prior || prior.key !== key || parentKeyOf(prior.key, oldFolders) !== parentKey || entry.pendingMove) {
+    } else if (!prior || !sameParent || entry.pendingMove) {
       entry.pendingMove = { parentKey };
     }
     if (prior && prior.key !== key) delete next[prior.key];
