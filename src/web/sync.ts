@@ -149,6 +149,7 @@ export function createWebSync(runner: SyncRunner = runSyncCLI, initialImports: [
     for (const root of kind === 'pull' || kind === 'fetch' || kind === 'restore' ? [] : prepared.selection.referenceRoots) args.push('--reference-root', root);
     if (target && kind !== 'pull') args.push(target);
     if (kind === 'preview') args.push('--dry-run');
+    if (kind === 'fetch') args.push('--refresh');
     if (kind === 'restore') {args.push(...prepared.selection.restorePaths!); if(prepared.selection.restoreOverwrite)args.push('--overwrite');}
     if (['pull','restore'].includes(kind) && prepared.selection.format==='obsidian') args.push('--obsidian');
     if (kind === 'pull' && prepared.selection.full) args.push('--full');

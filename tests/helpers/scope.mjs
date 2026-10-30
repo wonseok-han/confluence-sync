@@ -25,6 +25,16 @@ export function scopeResponder(root, steps, config = JSON.parse(readFileSync(wor
   if ((init.method ?? 'GET') !== 'GET' || expected?.path === path && (expected.method ?? 'GET') === 'GET') return null;
   const mapping = existsSync(mappingPath(root)) ? JSON.parse(readFileSync(mappingPath(root), 'utf8')) : {};
   for (const entry of Object.values(mapping)) known.add(entry.pageId);
+  if(new URL(url).pathname==='/wiki/rest/api/content/search'){
+   const ids=(new URL(url).searchParams.get('cql')??'').match(/id in \(([^)]+)\)/)?.[1]?.split(',')??[];
+   const byId=new Map(Object.entries(mapping).map(([path,entry])=>[entry.pageId,{path,entry}]));
+   if(ids.length&&ids.every(id=>byId.get(id)?.entry.type==='folder'))return {results:ids.map(id=>{
+    const current=byId.get(id),ancestors=[{id:config.remoteRoot.id,title:'Scope'}];
+    const parts=current.path.replace(/\/$/,'').split('/');parts.pop();let prefix='';
+    for(const part of parts){prefix+=part+'/';const parent=mapping[prefix]??mapping[prefix+'README.md'];if(parent)ancestors.push({id:parent.pageId,title:part});}
+    return {id,title:current.entry.title??current.path,type:'folder',space:{id:config.connection.spaceId},ancestors};
+   })};
+  }
   const match = path.match(/^\/wiki\/rest\/api\/content\/([^/?]+)\?expand=ancestors,space,version$/);
   if (match && known.has(match[1])) {
    const id = match[1], isRoot = id === config.remoteRoot.id;

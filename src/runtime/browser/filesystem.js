@@ -39,7 +39,19 @@ export function writeFileSync(name,data,options={}){
 }
 export const constants={COPYFILE_EXCL:1};
 export function copyFileSync(source,target,flags=0){if(flags&constants.COPYFILE_EXCL&&existsSync(target))throw failure('EEXIST',key(target));writeFileSync(target,readFileSync(source));}
-export function renameSync(source,target){const a=key(source),b=key(target);get(a);if(!get(path.dirname(b)).directory)throw failure('ENOTDIR',b);if(get(a).directory)throw Error('Directory renames are not supported by the browser engine.');if(existsSync(b)&&get(b).directory)throw failure('EISDIR',b);files.set(b,{...get(a),stamp:++clock});files.delete(a);}
+export function renameSync(source,target){
+ const a=key(source),b=key(target),item=get(a);if(a===b)return;
+ if(!get(path.dirname(b)).directory)throw failure('ENOTDIR',b);
+ if(item.directory){
+  if(a==='/'||b.startsWith(a+'/'))throw failure('EINVAL',b);
+  if(existsSync(b))throw failure('EEXIST',b);
+  const moved=[...files].filter(([name])=>name===a||name.startsWith(a+'/'));
+  for(const [name,value]of moved)files.set(b+name.slice(a.length),{...value,stamp:++clock});
+  for(const [name]of moved)files.delete(name);
+  return;
+ }
+ if(existsSync(b)&&get(b).directory)throw failure('EISDIR',b);files.set(b,{...item,stamp:++clock});files.delete(a);
+}
 export function rmSync(name,options={}){const p=key(name);if(!existsSync(p)){if(options.force)return;throw failure('ENOENT',p);}if(p==='/')throw failure('EPERM',p);if(get(p).directory&&!options.recursive&&readdirSync(p).length)throw failure('ENOTEMPTY',p);for(const f of files.keys())if(f===p||f.startsWith(p+'/'))files.delete(f);clock++;}
 export function unlinkSync(name){if(get(name).directory)throw failure('EISDIR',key(name));rmSync(name);}
 export function rmdirSync(name){if(!get(name).directory)throw failure('ENOTDIR',key(name));rmSync(name);}

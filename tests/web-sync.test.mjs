@@ -316,7 +316,7 @@ test('web Fetch uses the shared CLI command without upload options or approval',
  const {root}=workspace(t,{'.env':env});await request(root);const calls=[];
  const sync=createWebSync(async(args,settings,log)=>{calls.push({args,settings});log('이번 API 요청: 1회\n원격 변경 1\n');return 0});
  await sync.fetch({base:root,envId:'',target:'/outside',verify:true,referenceRoots:['/outside']});
- const job=await finished(sync);assert.equal(job.kind,'fetch');assert.equal(job.state,'succeeded');assert.equal(job.planId,null);assert.deepEqual(calls[0].args,['fetch','--base',realpathSync(root)]);assert.equal(calls[0].settings.CONFLUENCE_API_TOKEN,'synthetic-secret');
+ const job=await finished(sync);assert.equal(job.kind,'fetch');assert.equal(job.state,'succeeded');assert.equal(job.planId,null);assert.deepEqual(calls[0].args,['fetch','--base',realpathSync(root),'--refresh']);assert.equal(calls[0].settings.CONFLUENCE_API_TOKEN,'synthetic-secret');
  await assert.rejects(sync.push('anything'),/미리보기/);
 });
 

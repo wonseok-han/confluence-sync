@@ -49,7 +49,7 @@ export async function runStatus(argv: string[]) {
         try {lstatSync(resolve(base, row.path));}
         catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') console.log(`    원격에서 복구: ${cyan(`csync restore ${JSON.stringify(row.path)}`)}`);}
       }
-      if (group === 'conflict' || group === 'attention') for (const reason of row.remoteReasons ?? []) console.log(dim(`    ${reason}`));
+      if (group === 'conflict' || group === 'attention' || group==='receive'&&row.remoteReasons?.some(reason=>reason.includes('위치 변경'))) for (const reason of row.remoteReasons ?? []) console.log(dim(`    ${reason}`));
     }
   }
   if (view.rows.every(row => changeGroup(row) === 'same')) console.log(view.remoteCheckedAt ? green('\n마지막 조회 기준 표시할 변경이 없습니다.') : dim('\n로컬 변경이 없습니다. 원격 상태는 아직 확인하지 않았습니다.'));

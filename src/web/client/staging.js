@@ -46,6 +46,7 @@ export function createStaging({api, selection, changed, busy, status, update, co
       input.type = 'checkbox'; input.value = row.path; input.checked = row.staged;
       input.setAttribute('aria-label', row.path + ' 업로드에 포함');
       text.textContent = row.path;
+      text.title = [row.path, ...(row.remoteReasons || [])].join('\n');
       const changeLabel = row.renamed ? '로컬 경로 변경' : {new:'로컬 신규',changed:'로컬 수정',moved:'로컬 이동',same:'변경 없음',unavailable:'파일 확인'}[row.status];
       const icon = document.createElement('span'), statusText = document.createElement('span');
       const both = row.remoteState==='new'&&!row.unmapped&&row.status!=='unavailable'||row.remoteState === 'changed' && ['changed','moved','new'].includes(row.status);
@@ -62,7 +63,7 @@ export function createStaging({api, selection, changed, busy, status, update, co
       };
       icon.className = 'stage-state-icon'; icon.setAttribute('aria-hidden','true');
       icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + (paths[kind] || paths.attention) + '</svg>';
-      statusText.textContent = row.localUnverified?({changed:'원격 변경',new:'원격 신규',unknown:'원격 확인 필요',unavailable:'원격 조회 불가'}[row.remoteState]+' · 로컬 미확인'):row.unmapped?'받기 미완료 · 원격 대조 필요':row.remoteState==='new' ? (both?'원격 신규 · 로컬 경로 확인':'원격 신규') : both ? (row.stale ? '양쪽 수정 · 최신 내용 확인 필요' : '양쪽 수정 · 충돌 주의') : row.stale ? '최신 내용 확인 필요' : row.remoteState === 'changed' ? (row.remoteReasons?.some(reason => reason.includes('부모 위치 변경')) ? '원격 위치 변경' : '원격 수정') : row.remoteState === 'unavailable' ? '원격 조회 불가' : row.remoteState === 'unknown' ? '원격 확인 필요' : changeLabel + (row.staged ? ' · 업로드 포함' : '');
+      statusText.textContent = row.localUnverified?({changed:'원격 변경',new:'원격 신규',unknown:'원격 확인 필요',unavailable:'원격 조회 불가'}[row.remoteState]+' · 로컬 미확인'):row.unmapped?'받기 미완료 · 원격 대조 필요':row.remoteState==='new' ? (both?'원격 신규 · 로컬 경로 확인':'원격 신규') : both ? (row.stale ? '양쪽 수정 · 최신 내용 확인 필요' : '양쪽 수정 · 충돌 주의') : row.stale ? '최신 내용 확인 필요' : row.remoteState === 'changed' ? (row.remoteReasons?.some(reason => reason.includes('위치 변경')) ? '원격 위치 변경' : '원격 수정') : row.remoteState === 'unavailable' ? '원격 조회 불가' : row.remoteState === 'unknown' ? '원격 확인 필요' : changeLabel + (row.staged ? ' · 업로드 포함' : '');
       input.remoteOnly = row.unmapped&&!row.staged || row.remoteState==='new'&&!row.staged || (row.status === 'same' && row.remoteState === 'changed' && !row.staged);
       input.localUnverified = !!row.localUnverified;
       if(input.remoteOnly)input.title=row.remoteState==='new'?'아직 받지 않은 원격 문서입니다. Pull로 가져오세요.':'원격에서만 변경되었습니다. diff를 확인하고 Pull로 가져오세요.';

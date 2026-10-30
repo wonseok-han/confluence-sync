@@ -1,4 +1,5 @@
 import { progressStep } from '../shared/progress.js';
+import {folderMoves,relocated,folderStamp,checkFolderDestination,verifyRemoteFolderMoves,type FolderMove} from './remote-folder-moves.js';
 import {connectWorkspace} from './scope.js';
 import { storeBaseline } from './baseline.js';
 import { localStateHash } from './local-state.js';
@@ -12,7 +13,7 @@ import { buildTreeRenderer } from './render.js';
  * 함께 받은 페이지끼리의 내부 링크는 마지막에 상대 .md 경로로 이어 붙인다(Obsidian 그래프·백링크가 살아난다).
  * 각 문서 머리에 pageId 를 담은 frontmatter 를 남겨, 매핑 파일 없이도 push 가 원본 페이지를 다시 찾아간다.
  */
-import { mkdirSync, writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync, readdirSync, copyFileSync, lstatSync, realpathSync, rmdirSync, constants } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync, readdirSync, copyFileSync, lstatSync, realpathSync, rmdirSync, renameSync, constants } from 'node:fs';
 import { resolve, join, dirname, basename, relative } from 'node:path';
 import { fetchRemote } from './fetch.js';
 import { verifyScope } from './scope.js';
@@ -426,7 +427,7 @@ export async function mappingPass(
     for (const [dir, id] of folderIds) {
       const rel = posix(relative(baseDir, dir));
       if (!rel || rel.startsWith('..')) continue;
-      m[`${rel}/`] = { pageId: id, title: basename(dir), type: 'folder' };
+      m[`${rel}/`] = { pageId: id, title: basename(dir), type: 'folder', ...(parents.has(id)?{remoteParentId:parents.get(id)}:{}) };
       n++;
     }
 
@@ -611,19 +612,35 @@ export async function runPull(argv: string[], options: {restorePaths?: string[];
     rootId=ids.includes(scope.id)?scope.id:undefined;
     if(!ids.length){console.log('완료 · 안전하게 가져올 원격 전용 변경이 없습니다. 로컬 변경은 유지합니다.');return;}
   }
+  const moves:FolderMove[]=[];
+  for(const move of folderMoves(discovered?.folders)){
+    const descendants=Object.entries(oldMapping).filter(([path,entry])=>entry.type!=='folder'&&path.startsWith(move.from)&&/\.md$/i.test(path));
+    if(!descendants.some(([,entry])=>ids.includes(entry.pageId)))continue;
+    const protectedFolder=descendants.some(([path,entry])=>!localClean.has(path)||entry.pendingMove||!ids.includes(entry.pageId));
+    if(protectedFolder){
+      if(!remoteOnly)throw Error(`로컬 변경·누락 또는 일부 문서 선택으로 폴더 이동을 보류합니다: ${move.from}`);
+      const blocked=new Set([...descendants.map(([,entry])=>entry.pageId),...(discovered?.items??[]).filter(item=>item.state==='new'&&item.path.startsWith(move.to)).map(item=>item.pageId)]);ids=ids.filter(id=>!blocked.has(id));
+      console.log(`로컬 변경·누락이 있어 폴더와 하위 문서를 보존: ${move.from}`);continue;
+    }
+    if(moves.some(prior=>move.from.startsWith(prior.from)||prior.from.startsWith(move.from)))throw Error('서로 다른 위치로 이동한 중첩 폴더는 한 번에 적용할 수 없습니다. 로컬 파일은 유지합니다.');
+    checkFolderDestination(baseDir,move);moves.push(move);
+  }
+  if(incremental&&!ids.length){console.log('완료 · 폴더 이동을 포함해 안전하게 가져올 문서가 없습니다. 로컬 변경은 유지합니다.');return;}
+  const moveStamps=new Map(moves.map(move=>[move.from,folderStamp(baseDir,move.from)]));
+  const destination=(path:string)=>relocated(path,moves);
   const stage = mkdtempSync(join(tmpdir(), 'csync-pull-'));
   const stageOut = join(stage, relative(baseDir, outDir));
   const ctx: Ctx = {
     client, remoteBaseUrl: env.baseUrl!, missingAttachments: 0, incremental, expectedVersions,
     obsidian: argv.includes('--obsidian'), spaceKey: env.spaceKey!, written: [], pathById: new Map(), folderIds: new Map(),
-    versions: new Map(), parents: new Map(), assetOwners: new Map(), knownPaths: new Map([...knownById].map(([id, rel]) => [id, resolve(stage, rel)])),
+    versions: new Map(), parents: new Map(), assetOwners: new Map(), knownPaths: new Map([...knownById].map(([id, rel]) => [id, resolve(stage, destination(rel))])),
     stageBase: stage, baseDir, workspace, rootId, claimed: new Map(), visited: new Set(),
   };
   try {
     if(discovered?.folders)for(const folder of discovered.folders){
-      if(![...newPaths,...recoveringPaths].some(path=>path.startsWith(folder.path)))continue;
+      if(![...newPaths,...recoveringPaths,...ids.map(id=>destination(knownById.get(id)??''))].some(path=>path.startsWith(folder.path)))continue;
       const prior=oldMapping[folder.path];if(prior&&prior.pageId!==folder.pageId)throw new Error(`원격 폴더 경로 충돌: ${folder.path}`);
-      const path=resolve(stage,folder.path);claim(ctx,path,folder.pageId,true);mkdirSync(path,{recursive:true});ctx.folderIds.set(path,folder.pageId);
+      const path=resolve(stage,folder.path);claim(ctx,path,folder.pageId,true);mkdirSync(path,{recursive:true});ctx.folderIds.set(path,folder.pageId);if(folder.parentId)ctx.parents.set(folder.pageId,folder.parentId);
     }
     // Reuse page IDs and local paths even when a remote title has changed.
     if (rootId) ctx.knownPaths.delete(rootId);
@@ -687,8 +704,9 @@ export async function runPull(argv: string[], options: {restorePaths?: string[];
     }
     for (const path of [mappingPath, join(baseDir, '.env'), ...metadataFiles(baseDir)]) if (stamp(path) !== originals.get(path)) throw new Error('pull 도중 설정·매핑이 변경되었습니다.');
     if (restorePaths) validateRestorePaths(baseDir, restorePaths, restoreOverwrite);
+    await verifyRemoteFolderMoves(client,moves,discovered?.folders??[]);
     const backup=mkdtempSync(join(tmpdir(),'csync-pull-backup-'));
-    const applied:{dest:string; prior?:string; hash?:string}[]=[],createdDirs:string[]=[];
+    const applied:{dest:string; prior?:string; hash?:string}[]=[],createdDirs:string[]=[],moved:FolderMove[]=[];
     let mapped:number,keepBackup=false;
     const ensureDirectory=(dir:string)=>{
       if(existsSync(dir))return;
@@ -697,6 +715,15 @@ export async function runPull(argv: string[], options: {restorePaths?: string[];
     };
     try {
       ensureDirectory(baseDir);
+      for(const move of moves){
+        checkFolderDestination(baseDir,move);
+        if(folderStamp(baseDir,move.from)!==moveStamps.get(move.from))throw Error(`pull 도중 이동할 폴더가 변경되었습니다: ${move.from}`);
+      }
+      for(const move of moves){
+        const from=resolve(baseDir,move.from),to=resolve(baseDir,move.to);ensureDirectory(dirname(to));renameSync(from,to);moved.push(move);
+        for(const [path,hash]of [...originals])if(within(from,path))originals.set(resolve(to,relative(from,path)),hash);
+        console.log(`로컬 폴더 이동: ${move.from} → ${move.to}`);
+      }
       for(const dir of stagedDirs)ensureDirectory(join(baseDir,relative(stage,dir)));
       for(const file of stagedFiles){
         const rel=relative(stage,file).split('\\').join('/'),dest=join(baseDir,relative(stage,file));
@@ -726,6 +753,7 @@ export async function runPull(argv: string[], options: {restorePaths?: string[];
         try{if(record.prior)copyFileSync(record.prior,record.dest);else rmSync(record.dest,{force:true});}
         catch{keepBackup=true;}
       }
+      for(const move of moved.reverse())try{renameSync(resolve(baseDir,move.to),resolve(baseDir,move.from));}catch{keepBackup=true;}
       for(const dir of [...new Set(createdDirs)].reverse())try{rmdirSync(dir);}catch{/* Keep non-empty directories and concurrent local additions. */}
       console.log(preserved?`[경고] 적용 실패로 저장을 취소했습니다. 도중 추가 수정된 ${preserved}개 파일은 보존했습니다.`:'적용 실패로 문서·첨부 저장을 취소했습니다. 기존 로컬 파일은 복원했습니다.');
       if(keepBackup)throw new Error(`${(error as Error).message} · 일부 파일 복원 실패. 복구용 백업: ${backup}`);

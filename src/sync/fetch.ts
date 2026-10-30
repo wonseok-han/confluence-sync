@@ -3,7 +3,7 @@ import { progressStep } from '../shared/progress.js';
 import { bold, cyan, green, yellow, red, dim } from '../shared/colors.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { readEnv, type Env } from '../confluence/config.js';
 import { buildFolderIndex, parentKeyOf } from '../documents/catalog.js';
 import { buildIgnorer } from './ignore.js';
@@ -14,9 +14,12 @@ import { assertWorkspaceConnection, inNestedWorkspace, inScope, loadWorkspace, r
 
 export const FETCH_TTL_MS = 120_000;
 const BATCH_SIZE = 100, MAX_REQUESTS = 20;
+export type RemoteFolder = {path:string;pageId:string;title:string;previousPath?:string;parentId?:string};
 type State = 'unchanged' | 'changed' | 'unavailable' | 'unknown' | 'new';
 export type Observation = { path: string; pageId: string; state: State; baselineVersion?: number; remoteVersion?: number; title?: string; parentId?: string; reasons: string[] };
-export type FetchSnapshot = { binding?:string; version: 1; key: string; checkedAt: string; scope: string; requests: number; items: Observation[]; foldersSkipped: number; folders?: {path:string; pageId:string; title:string}[] };
+export type FetchSnapshot = { binding?:string; version: 1; key: string; checkedAt: string; scope: string; requests: number; items: Observation[]; foldersSkipped: number; folders?: RemoteFolder[] };
+const folderUnavailableReason='원격 상위 폴더를 조회할 수 없습니다. 삭제·권한 변경 여부를 확인하세요.';
+const folderMoveReason=(folder:RemoteFolder)=>`원격 상위 폴더 위치 변경: ${folder.previousPath} → ${folder.path}`;
 const states = new Set<State>(['unchanged', 'changed', 'unavailable', 'unknown', 'new']);
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function cachePath(base: string) {
@@ -35,7 +38,7 @@ function fetchContext(baseInput: string, env: Env, options: {mappingFile?:string
   if (pages.some(([, entry]) => !/^\d+$/.test(entry.pageId))) throw new Error('매핑의 페이지 ID가 숫자가 아닙니다. 매핑을 확인하세요.');
   const folderIndex = buildFolderIndex(Object.keys(mapping).filter(path => /\.md$/i.test(path)));
   const expectedParents = new Map(pages.map(([path]) => { const parent = parentKeyOf(path, folderIndex); return [path, path === 'README.md' && mapping[path].pageId === root.id ? undefined : mapping[path].remoteParentId ?? (parent ? mapping[parent]?.pageId : root.id)]; }));
-  const key = digest(['discovery-v2', base, workspace, env.baseUrl, env.spaceKey, digest([env.email, env.token]), pages, [...expectedParents], scoped.filter(([,e])=>e.type==='folder')]);
+  const key = digest(['discovery-v3', base, workspace, env.baseUrl, env.spaceKey, digest([env.email, env.token]), pages, [...expectedParents], scoped.filter(([,e])=>e.type==='folder')]);
   const binding=digest([base,workspace,env.baseUrl,env.spaceKey,digest([env.email,env.token])]);
   const path = cachePath(base), now = Date.now();
   return {base, workspace, root, mapping, pages, scoped, expectedParents, key, path, now, binding};
@@ -45,7 +48,7 @@ function cachedSnapshot(context: ReturnType<typeof fetchContext>, allowExpired =
     const value: FetchSnapshot = JSON.parse(readFileSync(context.path,'utf8'));
     const age=context.now-Date.parse(value?.checkedAt);
     if(value?.version!==1 || value.key!==context.key || age<0 || !Number.isFinite(age) || !allowExpired&&age>=FETCH_TTL_MS || !Array.isArray(value.items))return null;
-    if(value.folders!==undefined&&(!Array.isArray(value.folders)||value.folders.some(folder=>!folder||typeof folder.path!=='string'||!folder.path.endsWith('/')||!/^\d+$/.test(folder.pageId)||typeof folder.title!=='string'||!within(context.base,resolve(context.base,folder.path)))))return null;
+    if(value.folders!==undefined&&(!Array.isArray(value.folders)||value.folders.some(folder=>!folder||typeof folder.path!=='string'||!folder.path.endsWith('/')||!/^\d+$/.test(folder.pageId)||typeof folder.title!=='string'||folder.previousPath!==undefined&&(typeof folder.previousPath!=='string'||!folder.previousPath.endsWith('/')||!within(context.base,resolve(context.base,folder.previousPath)))||!within(context.base,resolve(context.base,folder.path)))))return null;
     const ids=new Set<string>();
     for(const item of value.items){
       if(!item || typeof item.path!=='string' || !within(context.base,resolve(context.base,item.path)) || !/\.md$/i.test(item.path) || !/^\d+$/.test(item.pageId) || ids.has(item.pageId) || !states.has(item.state) || !Array.isArray(item.reasons) || item.reasons.some(r=>typeof r!=='string'))return null;
@@ -66,11 +69,12 @@ export function readFetchSnapshot(base:string,env:Env): FetchSnapshot | null {
   return {...prior,key:context.key,items:prior.items.map(item=>{
     const mapped=byId.get(item.pageId);if(!mapped)return item;
     const {path,entry}=mapped,reasons:string[]=[];
-    if(item.state==='unavailable')return {...item,path,baselineVersion:entry.remoteVersion};
+    if(item.state==='unavailable'||item.state==='unknown'&&item.reasons.includes(folderUnavailableReason))return {...item,path,baselineVersion:entry.remoteVersion};
     if(!entry.remoteVersion||!item.remoteVersion||item.remoteVersion<entry.remoteVersion)return {...item,path,baselineVersion:entry.remoteVersion,state:'unknown' as const,reasons:['원격 버전 기준을 확인할 수 없습니다. Fetch로 갱신하세요.']};
     if(item.remoteVersion!==entry.remoteVersion)reasons.push(`버전 v${entry.remoteVersion} → v${item.remoteVersion}`);
     if(entry.title&&item.title&&entry.title!==item.title)reasons.push('제목 변경');
     const parent=context.expectedParents.get(path);if(parent&&item.parentId&&parent!==item.parentId)reasons.push('원격 부모 위치 변경');
+    for(const folder of prior.folders??[])if(folder.previousPath&&path.startsWith(folder.previousPath)&&context.mapping[folder.previousPath]?.pageId===folder.pageId)reasons.push(folderMoveReason(folder));
     return {...item,path,baselineVersion:entry.remoteVersion,state:reasons.length?'changed' as const:'unchanged' as const,reasons};
   })};
 }
@@ -93,7 +97,7 @@ export async function fetchRemote(baseInput: string, env: Env, options: { mappin
     if(!data||!Array.isArray(data.results))throw new Error('원격 페이지 목록 응답이 올바르지 않습니다.');
     for(const page of data.results){
       if(!page || !/^\d+$/.test(String(page.id)) || page.parentId!=null&&!/^\d+$/.test(String(page.parentId)) || String(page.spaceId)!==workspace.connection!.spaceId || remote.has(String(page.id)))throw new Error('원격 페이지 목록의 ID·스페이스 또는 중복 응답을 확인하세요.');
-      remote.set(String(page.id),page);
+      remote.set(String(page.id),{...page,id:String(page.id),parentId:page.parentId==null?undefined:String(page.parentId)});
     }
     const next=data._links?.next || link.split(',').find(part=>/rel\s*=\s*"?next"?/i.test(part))?.match(/<([^>]+)>/)?.[1];
     cursor='';
@@ -121,17 +125,19 @@ export async function fetchRemote(baseInput: string, env: Env, options: { mappin
   });
   // Batch only unresolved parents of unmapped pages; expanded ancestry is shared.
   const mappingById=new Map(Object.entries(context.mapping).map(([path,entry])=>[entry.pageId,{path,entry}]));
-  const folders=new Map<string,{path:string;pageId:string;title:string}>();
+  const folders=new Map<string,RemoteFolder>();
   const slug=(title:string)=>{const value=title.replace(/[\/\\:*?"<>|]/g,'-').replace(/\s+/g,' ').trim();return !value||/^\.+$/.test(value)?'untitled':value.startsWith('.')||['attachments','node_modules'].includes(value)?'_'+value:value;};
   const nodes=new Map(remote);
-  const missingParents=[...new Set([...remote].filter(([id])=>!mappingById.has(id)).map(([,page])=>String(page.parentId??'')).filter(id=>id&&id!==context.root.id&&!nodes.has(id)&&!mappingById.has(id)))];
+  const unavailableFolders=new Set<string>();
+  const trackedFolders=context.scoped.filter(([path,entry])=>entry.type==='folder'&&pages.some(([page])=>page.startsWith(path))).map(([,entry])=>entry.pageId);
+  const missingParents=[...new Set([...trackedFolders,...[...remote].filter(([id])=>!mappingById.has(id)).map(([,page])=>String(page.parentId??'')).filter(id=>id&&id!==context.root.id&&!nodes.has(id)&&!mappingById.has(id))])];
   for(let offset=0;offset<missingParents.length;offset+=BATCH_SIZE){
     const ids=missingParents.slice(offset,offset+BATCH_SIZE),remaining=new Set(ids),seenStarts=new Set<string>();
     let start='';
     do{
       if(requests>=MAX_REQUESTS)throw new Error('원격 조회가 최대 20회에 도달했습니다. 기존 캐시는 유지합니다.');
       const params=new URLSearchParams({cql:`id in (${ids.join(',')})`,expand:'ancestors,space',limit:String(BATCH_SIZE)});if(start)params.set('start',start);
-      requests++;progressStep(`신규 문서의 부모 폴더 메타데이터 조회 · ${offset+1}–${offset+ids.length}`);
+      requests++;progressStep(`원격 폴더 메타데이터 조회 · ${offset+1}–${offset+ids.length}`);
       const data=await client.api('/rest/api/content/search?'+params);
       if(!Array.isArray(data?.results))throw new Error('원격 부모 폴더 목록을 확인할 수 없습니다.');
       for(const info of data.results){
@@ -146,14 +152,23 @@ export async function fetchRemote(baseInput: string, env: Env, options: { mappin
         start=url.searchParams.get('start')!;if(seenStarts.has(start))throw new Error('부모 폴더 페이지네이션이 반복됩니다.');seenStarts.add(start);
       }
     }while(start);
-    if(remaining.size)throw new Error('신규 원격 문서의 부모 폴더를 찾을 수 없습니다. 기존 캐시는 유지합니다.');
+    if([...remaining].some(id=>!trackedFolders.includes(id)))throw new Error('신규 원격 문서의 부모 폴더를 찾을 수 없습니다. 기존 캐시는 유지합니다.');
+    for(const id of remaining)unavailableFolders.add(id);
   }
   async function container(id:string,visiting=new Set<string>()):Promise<string>{
     if(id===context.root.id)return '';
     if(visiting.has(id))throw new Error('원격 부모 관계가 순환합니다.');
     visiting.add(id);
     const mapped=mappingById.get(id);
-    if(mapped)return mapped.entry.type==='folder'?mapped.path.replace(/\/$/,''):dirname(mapped.path)==='.'?'':dirname(mapped.path);
+    if(mapped){
+      if(mapped.entry.type!=='folder')return dirname(mapped.path)==='.'?'':dirname(mapped.path);
+      const prior=mapped.path.replace(/\/$/,''),node=nodes.get(id);
+      if(!node)return prior;
+      const parent=node.parentId?await container(String(node.parentId),visiting):'';
+      const path=[parent,basename(prior)].filter(Boolean).join('/');
+      if(path!==prior)folders.set(id,{path:path+'/',previousPath:prior+'/',pageId:id,title:node.title,parentId:node.parentId?String(node.parentId):undefined});
+      return path;
+    }
     const node=nodes.get(id);
     if(!node)throw new Error(`원격 부모 정보를 확인할 수 없습니다: #${id}`);
     if(typeof node.title!=='string'||!node.title.trim())throw new Error(`원격 제목을 확인할 수 없습니다: #${id}`);
@@ -161,6 +176,16 @@ export async function fetchRemote(baseInput: string, env: Env, options: { mappin
     const path=[parent,slug(node.title)].filter(Boolean).join('/');
     if(!remote.has(id))folders.set(id,{path:path+'/',pageId:id,title:node.title});
     return path;
+  }
+  for(const id of trackedFolders)await container(id);
+  for(const item of items){
+    if(item.state==='unavailable'||item.state==='unknown')continue;
+    if([...unavailableFolders].some(id=>item.path.startsWith(mappingById.get(id)!.path))){
+      item.state='unknown';item.reasons.push(folderUnavailableReason);continue;
+    }
+    for(const folder of folders.values())if(folder.previousPath&&item.path.startsWith(folder.previousPath)){
+      item.state='changed';item.reasons.push(folderMoveReason(folder));
+    }
   }
   const mappedIds=new Set(Object.values(context.mapping).map(entry=>entry.pageId));
   for(const [id,page]of remote)if(!mappedIds.has(id)&&page.parentId)await container(String(page.parentId));
