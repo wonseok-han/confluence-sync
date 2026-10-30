@@ -127,3 +127,15 @@ test('base and output pickers use independent starting folders, including restor
  const restoredPicks=[],restored=browser(app,[source],{states,values,onPick:value=>restoredPicks.push(value)});await restored.api.ready;
  await restored.request('/api/pick-folder',{kind:'base'});assert.equal(restoredPicks[0].startIn,source);
 });
+
+for(const scope of ['file','folder'])test(`conversion validates only selected ${scope} documents, excluding unrelated source and output Markdown`,async t=>{
+ const app=await startHostedWeb({port:0,host:'127.0.0.1'});t.after(()=>app.close());
+ const source=new Dir('docs'),out=new Dir('existing-output');source.put('unselected.md','![unrelated](/etc/passwd)');out.put('existing.md','[existing](file:///etc/passwd)');
+ const selected=await source.getDirectoryHandle('selected',{create:true});selected.put('a.md','# Selected');
+ const b=browser(app,[source,out]);await b.choose();await b.request('/api/pick-folder',{kind:'out'});
+ const result=await b.request('/api/convert',{base:'/workspace/docs',file:'/workspace/docs/selected'+(scope==='file'?'/a.md':''),out:'/output',scope,to:'markdown',fix:false,preview:false});
+ assert.equal(result.documentCount,1);assert.equal(out.text('a.md'),'# Selected');assert.equal(out.text('existing.md'),'[existing](file:///etc/passwd)');
+ // The same dangerous link still blocks conversion when its own document is selected.
+ const blocked=await b.api.request('/api/convert',{body:JSON.stringify({base:'/workspace/docs',file:'/workspace/docs/unselected.md',out:'/output',scope:'file',to:'markdown',fix:false,preview:true})});
+ assert.equal(blocked.status,400);assert.match((await blocked.json()).error,/절대 경로/);
+});

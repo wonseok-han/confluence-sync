@@ -63,7 +63,7 @@ export function createStandaloneEngine({store=sessionStore,fetch}={}){
    if(url.pathname==='/api/browse'||url.pathname==='/api/search')pathIn(mounts,url.searchParams.get('path')||session.base);
    // Listing names does not follow document links. Validate their targets only
    // when processing documents, so one unrelated link cannot block navigation.
-   if(!['/api/sync/config','/api/sync/job','/api/browse','/api/search'].includes(url.pathname))await validateWorkspace(mounts,url.pathname.startsWith('/api/sync/')&&!input?.envId&&!url.pathname.endsWith('/env/import'),url.pathname!=='/api/sync/fetch'&&!(url.pathname==='/api/sync/staging'&&input?.remoteOnly===true));
+   if(!['/api/sync/config','/api/sync/job','/api/browse','/api/search'].includes(url.pathname))await validateWorkspace(mounts,url.pathname.startsWith('/api/sync/')&&!input?.envId&&!url.pathname.endsWith('/env/import'),url.pathname!=='/api/sync/fetch'&&!(url.pathname==='/api/sync/staging'&&input?.remoteOnly===true),url.pathname==='/api/convert'?(typeof input?.file==='string'?[input.file]:[]):undefined);
    const response=await api.request(method,url,input);
    if(url.pathname==='/api/browse'&&response.body.path===session.base){response.body.parent=session.base;response.body.home=session.base;}
    if(response.body?.job)lastJob=response.body.job;
