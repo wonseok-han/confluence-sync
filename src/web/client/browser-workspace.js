@@ -70,7 +70,10 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
  // Keep the native picker in the user's gesture; queue only state changes and
  // file transfer, including restoration, so mirrors cannot replace one another.
  const selectFolder=async kind=>{
-  const handle=await pickDirectory({mode:kind==='reference'?'read':'readwrite'});await grant(handle,kind==='reference');
+  const selected=kind==='base'?mounts[0]:kind==='out'
+   ?mounts.find(m=>m.virtual===$('out-input').dataset?.path)||mounts.find(m=>m.virtual===session?.output)||mounts[0]
+   :mounts.filter(m=>m.readonly).at(-1)||mounts[0];
+  const handle=await pickDirectory({id:'csync-'+kind,mode:kind==='reference'?'read':'readwrite',...(selected?{startIn:selected.handle}:{})});await grant(handle,kind==='reference');
   return enqueue(()=>kind==='base'?chooseBase(handle):chooseMount(kind,handle));
  };
  async function operation(path,options){
