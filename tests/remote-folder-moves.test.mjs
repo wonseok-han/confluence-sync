@@ -93,3 +93,21 @@ for(const version of [1,2])test(`deleted historical folders do not mask current 
  const a=snapshot.items.find(item=>item.pageId==='1'),b=snapshot.items.find(item=>item.pageId==='2');
  assert.equal(a.state,version===1?'unchanged':'changed');assert.equal(b.state,'unchanged');assert.ok(!snapshot.items.some(item=>item.state==='unknown'));
 });
+
+
+for(const moved of [false,true])test(`remote folder rename is applied together with ${moved?'a parent move':'the existing parent'}`,async t=>{
+ const {root}=await setup(t),title='[폐기]_원부_변경과_파생_사본의_상태_정합';
+ const renamed={...folders,body:{results:[{...folders.body.results[0],title,ancestors:[{id:'100',title:'Home'},{id:moved?'20':'10',title:moved?'New':'Old'}]}]}};
+ remote(t,root,[listing,renamed,location('1'),body('1','A'),location('2'),body('2','B'),renamed]);
+ await runPull(['pull','--base',root]);const path=(moved?'new/':'old/')+title;
+ assert.equal(fs.existsSync(join(root,'old/Folder')),false);assert.ok(fs.existsSync(join(root,path,'a.md')));assert.ok(fs.existsSync(join(root,path,'b.md')));
+ assert.equal(fs.readFileSync(join(root,path,'local.txt'),'utf8'),'Unmapped local data');
+ const mapping=JSON.parse(fs.readFileSync(mappingPath(root),'utf8'));assert.equal(mapping[path+'/'].title,title);assert.equal(mapping[path+'/a.md'].pageId,'1');
+ assert.equal(readFetchSnapshot(root,env).items.filter(i=>i.state==='changed').length,0);
+});
+
+test('a second remote rename during downloads aborts before touching local paths',async t=>{
+ const {root,before}=await setup(t),renamed={...folders,body:{results:[{...folders.body.results[0],title:'Renamed again'}]}};
+ remote(t,root,[listing,folders,location('1'),body('1','A'),location('2'),body('2','B'),renamed]);
+ await assert.rejects(runPull(['pull','--base',root]),/이름이 변경/);assert.ok(fs.existsSync(join(root,'old/Folder/a.md')));assert.equal(fs.readFileSync(mappingPath(root),'utf8'),before);
+});

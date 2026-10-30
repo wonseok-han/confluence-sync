@@ -32,7 +32,7 @@ export function scopeResponder(root, steps, config = JSON.parse(readFileSync(wor
     const current=byId.get(id),ancestors=[{id:config.remoteRoot.id,title:'Scope'}];
     const parts=current.path.replace(/\/$/,'').split('/');parts.pop();let prefix='';
     for(const part of parts){prefix+=part+'/';const parent=mapping[prefix]??mapping[prefix+'README.md'];if(parent)ancestors.push({id:parent.pageId,title:part});}
-    return {id,title:current.entry.title??current.path,type:'folder',space:{id:config.connection.spaceId},ancestors};
+    return {id,title:current.entry.title??current.path.replace(/\/$/,'').split('/').at(-1),type:'folder',space:{id:config.connection.spaceId},ancestors};
    })};
   }
   const match = path.match(/^\/wiki\/rest\/api\/content\/([^/?]+)\?expand=ancestors,space,version$/);

@@ -40,14 +40,14 @@ export function checkFolderDestination(base:string,move:FolderMove):void {
 }
 export async function verifyRemoteFolderMoves(client:ReturnType<typeof createClient>,moves:FolderMove[],folders:RemoteFolder[]):Promise<void> {
  for(let offset=0;offset<moves.length;offset+=100){
-  const batch=moves.slice(offset,offset+100),expected=new Map(batch.map(move=>[move.pageId,folders.find(folder=>folder.pageId===move.pageId)?.parentId]));
+  const batch=moves.slice(offset,offset+100),expected=new Map(batch.map(move=>[move.pageId,folders.find(folder=>folder.pageId===move.pageId)]));
   const query=new URLSearchParams({cql:`id in (${batch.map(move=>move.pageId).join(',')})`,expand:'ancestors,space',limit:'100'});
   const response=await client.api('/rest/api/content/search?'+query);
   if(!Array.isArray(response?.results)||response.results.length!==expected.size)throw Error('이동할 원격 폴더를 다시 확인할 수 없습니다. 로컬 폴더는 유지합니다.');
   const seen=new Set<string>();
   for(const folder of response.results){
    const id=String(folder?.id),parent=folder?.ancestors?.at(-1)?.id;
-   if(!expected.has(id)||seen.has(id)||folder.type!=='folder'||parent==null||String(parent)!==expected.get(id))throw Error('가져오기 도중 원격 폴더 위치가 바뀌었습니다. Fetch 후 다시 확인하세요.');
+   if(!expected.has(id)||seen.has(id)||folder.type!=='folder'||parent==null||String(parent)!==expected.get(id)?.parentId||folder.title!==expected.get(id)?.title)throw Error('가져오기 도중 원격 폴더 위치가 바뀌었거나 이름이 변경되었습니다. Fetch 후 다시 확인하세요.');
    seen.add(id);
   }
  }

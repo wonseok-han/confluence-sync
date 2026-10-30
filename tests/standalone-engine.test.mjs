@@ -128,26 +128,26 @@ test('minified browser conversion ignores unrelated input and output links but b
 });
 
 
-test('manual browser Fetch refreshes moved-folder ancestry immediately and Pull relocates its clean descendants',async t=>{
+for(const rename of [false,true])test(`manual browser Fetch and Pull apply a folder move${rename?' with a remote rename':''}`,async t=>{
  const files={'.env':env,'.csync/workspace.json':JSON.stringify(workspace),'old/README.md':'# Old','new/README.md':'# New','old/Folder/a.md':'# A','old/Folder/b.md':'# B','old/Folder/local.txt':'Keep this file'};
  const disk=diskWorkspace(t,files);
  await mappingPass(disk.root,disk.root+'/.csync/mapping.json',new Map([['10',disk.root+'/old/README.md'],['20',disk.root+'/new/README.md'],['1',disk.root+'/old/Folder/a.md'],['2',disk.root+'/old/Folder/b.md']]),new Map([[disk.root+'/old/Folder','30']]),new Map([['10',1],['20',1],['1',1],['2',1]]),new Map([['10','100'],['20','100'],['1','30'],['2','30'],['30','10']]));
  for(const file of Object.keys(files))files[file]=readFileSync(disk.root+'/'+file,'utf8');files['.csync/mapping.json']=readFileSync(disk.root+'/.csync/mapping.json','utf8');
- const c=await client();await c.mirror(files);let parent='10',pageRequests=0,folderRequests=0;
+ const c=await client();await c.mirror(files);let parent='10',folderTitle='Folder',pageRequests=0,folderRequests=0;
  t.mock.method(globalThis,'fetch',async input=>{
   const url=new URL(input),id=url.pathname.split('/').at(-1);
   if(url.pathname.endsWith('/api/v2/pages')){pageRequests++;return Response.json({results:[['10','Old','100'],['20','New','100'],['1','A','30'],['2','B','30']].map(([id,title,parentId])=>({id,title,parentId,spaceId:'space',version:{number:1}}))});}
-  if(url.pathname.endsWith('/content/search')){folderRequests++;return Response.json({results:[{id:'30',title:'Folder',type:'folder',space:{id:'space'},ancestors:[{id:'100',title:'Home'},{id:parent,title:parent==='10'?'Old':'New'}]}]});}
+  if(url.pathname.endsWith('/content/search')){folderRequests++;return Response.json({results:[{id:'30',title:folderTitle,type:'folder',space:{id:'space'},ancestors:[{id:'100',title:'Home'},{id:parent,title:parent==='10'?'Old':'New'}]}]});}
   if(url.pathname.endsWith('/api/v2/spaces'))return Response.json({results:[{id:'space',homepageId:'100'}]});
-  if(url.searchParams.get('expand')==='ancestors,space,version')return Response.json({id,title:id,type:'page',space:{id:'space'},ancestors:id==='100'?[]:[{id:'100',title:'Home'},{id:'20',title:'New'},{id:'30',title:'Folder'}],version:{number:1}});
+  if(url.searchParams.get('expand')==='ancestors,space,version')return Response.json({id,title:id,type:'page',space:{id:'space'},ancestors:id==='100'?[]:[{id:'100',title:'Home'},{id:'20',title:'New'},{id:'30',title:folderTitle}],version:{number:1}});
   if(['1','2'].includes(id)){const title=id==='1'?'A':'B';return Response.json({id,title,type:'page',version:{number:1},body:{export_view:{value:`<p>${title} remote</p>`},storage:{value:`<p>${title} remote</p>`}}});}
   throw Error('Unexpected request '+url);
  });
  const fetch=async()=>{const response=await c.api('/api/sync/fetch',{base:c.session.base,envId:''});assert.equal(response.status,202,response.error);const job=await c.finish();assert.equal(job.state,'succeeded',job.log);await c.ack();};
- await fetch();parent='20';await fetch();assert.equal(pageRequests,2);assert.equal(folderRequests,2);
+ await fetch();parent='20';if(rename)folderTitle='[폐기]_원부_변경과_파생_사본의_상태_정합';await fetch();assert.equal(pageRequests,2);assert.equal(folderRequests,2);
  const view=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(view.status,200,view.error);const moved=view.rows.filter(row=>row.path.startsWith('old/Folder/'));assert.equal(moved.length,2);assert.ok(moved.every(row=>row.status==='same'&&row.remoteState==='changed'));
  const pull=await c.api('/api/sync/pull',{base:c.session.base,envId:'',remoteOnly:true});assert.equal(pull.status,202,pull.error);const job=await c.finish();assert.equal(job.state,'succeeded',job.log);
- assert.match(await c.read(c.session.base+'/new/Folder/a.md'),/A remote/);assert.equal(await c.read(c.session.base+'/new/Folder/local.txt'),'Keep this file');
+ assert.match(await c.read(c.session.base+'/new/'+folderTitle+'/a.md'),/A remote/);assert.equal(await c.read(c.session.base+'/new/'+folderTitle+'/local.txt'),'Keep this file');
  const changed=await c.ack();assert.ok(changed.removed.includes(c.session.base+'/old/Folder/a.md'));
  const after=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(after.status,200,after.error);assert.ok(after.rows.every(row=>row.remoteState!=='changed'));
 });

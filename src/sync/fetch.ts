@@ -19,7 +19,7 @@ type State = 'unchanged' | 'changed' | 'unavailable' | 'unknown' | 'new';
 export type Observation = { path: string; pageId: string; state: State; baselineVersion?: number; remoteVersion?: number; title?: string; parentId?: string; reasons: string[] };
 export type FetchSnapshot = { binding?:string; version: 1; key: string; checkedAt: string; scope: string; requests: number; items: Observation[]; foldersSkipped: number; folders?: RemoteFolder[] };
 const folderUnavailableReason='원격 상위 폴더를 조회할 수 없습니다. 삭제·권한 변경 여부를 확인하세요.';
-const folderMoveReason=(folder:RemoteFolder)=>`원격 상위 폴더 위치 변경: ${folder.previousPath} → ${folder.path}`;
+const folderMoveReason=(folder:RemoteFolder)=>`원격 상위 폴더 위치 변경${basename(folder.previousPath!.replace(/\/$/,''))!==basename(folder.path.replace(/\/$/,''))?' (폴더 이름 변경 포함)':''}: ${folder.previousPath} → ${folder.path}`;
 const states = new Set<State>(['unchanged', 'changed', 'unavailable', 'unknown', 'new']);
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function cachePath(base: string) {
@@ -164,8 +164,10 @@ export async function fetchRemote(baseInput: string, env: Env, options: { mappin
       if(mapped.entry.type!=='folder')return dirname(mapped.path)==='.'?'':dirname(mapped.path);
       const prior=mapped.path.replace(/\/$/,''),node=nodes.get(id);
       if(!node)return prior;
+      if(typeof node.title!=='string'||!node.title.trim())throw new Error(`원격 폴더 제목을 확인할 수 없습니다: #${id}`);
       const parent=node.parentId?await container(String(node.parentId),visiting):'';
-      const path=[parent,basename(prior)].filter(Boolean).join('/');
+      const renamed=slug(node.title)!==slug(mapped.entry.title??basename(prior));
+      const path=[parent,renamed?slug(node.title):basename(prior)].filter(Boolean).join('/');
       if(path!==prior)folders.set(id,{path:path+'/',previousPath:prior+'/',pageId:id,title:node.title,parentId:node.parentId?String(node.parentId):undefined});
       return path;
     }
