@@ -31,7 +31,7 @@ test('metadata-only fetch batches IDs, classifies observations, and preserves do
 test('scope, ignores and independent workspaces constrain IDs; folder nodes are skipped',async t=>{
  const {root,put}=setup(t,{'area/a.md':{pageId:'1',remoteVersion:1},'other/b.md':{pageId:'2',remoteVersion:1},'area/ignored.md':{pageId:'3'},'area/nested/x.md':{pageId:'4'},'area/':{pageId:'5',type:'folder'}});
  const config=JSON.parse(readFileSync(workspacePath(root),'utf8'));config.scope={path:'area',type:'folder'};put('.csync/workspace.json',JSON.stringify(config));put('.csync/ignore','area/ignored.md');put('area/nested/.csync/workspace.json','{}');
- intercept(t,url=>{assert.equal(url.searchParams.has('id'),false);return response([page(1),page(2)])});
+ t.mock.method(globalThis,'fetch',async input=>{const url=new URL(input);if(url.pathname.endsWith('/content/search'))return response([{id:'5',title:'area',type:'folder',space:{id:'space'},ancestors:[{id:'100',title:'Home'}]}]);assert.equal(url.searchParams.has('id'),false);return response([page(1),page(2)])});
  const {snapshot}=await fetchRemote(root,env);assert.equal(snapshot.items.length,2);assert.equal(snapshot.foldersSkipped,1);
 });
 

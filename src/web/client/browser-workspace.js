@@ -23,6 +23,17 @@ export async function applyBrowserChanges(mounts,baseline,changes,download){
  for(const item of plan){const {mount}=relativeFile(mounts,item.path);if(mount.readonly)throw Error('참조 폴더는 수정할 수 없습니다.');const before=await current(mounts,item.path),hash=before?await sha256(before):undefined;if((!item.remove&&hash===item.hash)||(item.remove&&!before)){item.skip=true;continue;}if(hash!==old.get(item.path))throw Error(`작업 중 로컬 파일이 바뀌었습니다: ${item.path}`);item.before=before;item.beforeHash=hash;if(!item.remove){item.bytes=new Uint8Array(await download(item.path));if(await sha256(item.bytes)!==item.hash)throw Error('결과 파일이 바뀌었습니다. 다시 시도하세요.');}}
  try{for(const item of plan){if(item.skip)continue;const now=await current(mounts,item.path);if((now?await sha256(now):undefined)!==item.beforeHash)throw Error(`저장 직전 로컬 파일이 바뀌었습니다: ${item.path}`);writes.push(item);if(item.remove){if(now)await remove(mounts,item.path);}else await write(mounts,item.path,item.bytes);}}
  catch(error){const incomplete=[];for(const item of writes.reverse()){try{const now=await current(mounts,item.path);const hash=now?await sha256(now):undefined;if(hash===item.beforeHash)continue;if(hash!==(item.remove?undefined:item.hash)){incomplete.push(item.path);continue;}if(item.before)await write(mounts,item.path,item.before);else if(now)await remove(mounts,item.path);}catch{incomplete.push(item.path);}}if(incomplete.length)throw Error(`${error.message} 추가 편집 또는 복원 실패로 확인이 필요한 파일: ${incomplete.join(', ')}`);throw error;}
+ // Remove only empty parents left by successful file relocations. Never recurse
+ // through unmirrored files, ignored directories or concurrent local additions.
+ for(const path of changes.removed){
+  const {mount,parts}=relativeFile(mounts,path);parts.pop();
+  while(parts.length){try{
+   let parent=mount.handle;for(const part of parts.slice(0,-1))parent=await parent.getDirectoryHandle(part);
+   const directory=await parent.getDirectoryHandle(parts.at(-1));let empty=true;for await(const entry of directory.entries()){empty=false;break;}
+   if(!empty)break;await parent.removeEntry(parts.at(-1));parts.pop();
+  }catch{break;}}
+ }
+
 }
 function database(){return new Promise((resolve,reject)=>{const request=indexedDB.open('csync.browser-folders',1);request.onupgradeneeded=()=>request.result.createObjectStore('workspace');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}
 async function remembered(value,key='active'){const db=await database();try{return await new Promise((resolve,reject)=>{const tx=db.transaction('workspace',value===undefined?'readonly':'readwrite'),store=tx.objectStore('workspace'),request=value===undefined?store.get(key):value===null?store.delete(key):store.put(value,key);let result;request.onsuccess=()=>{result=request.result};tx.oncomplete=()=>resolve(result);tx.onerror=()=>reject(tx.error);});}finally{db.close();}}
@@ -70,7 +81,10 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
  // Keep the native picker in the user's gesture; queue only state changes and
  // file transfer, including restoration, so mirrors cannot replace one another.
  const selectFolder=async kind=>{
-  const handle=await pickDirectory({mode:kind==='reference'?'read':'readwrite'});await grant(handle,kind==='reference');
+  const selected=kind==='base'?mounts[0]:kind==='out'
+   ?mounts.find(m=>m.virtual===$('out-input').dataset?.path)||mounts.find(m=>m.virtual===session?.output)||mounts[0]
+   :mounts.filter(m=>m.readonly).at(-1)||mounts[0];
+  const handle=await pickDirectory({id:'csync-'+kind,mode:kind==='reference'?'read':'readwrite',...(selected?{startIn:selected.handle}:{})});await grant(handle,kind==='reference');
   return enqueue(()=>kind==='base'?chooseBase(handle):chooseMount(kind,handle));
  };
  async function operation(path,options){
@@ -86,7 +100,7 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
  }
  const request=(path,options={})=>{
   if(path==='/api/pick-folder'){
-   const {kind}=JSON.parse(options.body);return (async()=>{if(running||pending)throw Error('진행 중인 작업을 먼저 완료하세요.');if(kind==='base'){const result=await selectFolder('base');location.reload();return new Response(JSON.stringify(result));}return new Response(JSON.stringify(await selectFolder(kind)));})();
+   const {kind}=JSON.parse(options.body);return (async()=>{if(running||pending)throw Error('진행 중인 작업을 먼저 완료하세요.');if(kind==='base')return new Response(JSON.stringify(await selectFolder('base')));return new Response(JSON.stringify(await selectFolder(kind)));})();
   }
   const next=enqueue(()=>operation(path,options));return next.then(result=>new Response(JSON.stringify(result))).catch(error=>new Response(JSON.stringify({error:error.message,code:error.code,conflicts:error.conflicts,inPlace:error.inPlace,output:error.output}),{status:error.status??400}));
  };
@@ -116,5 +130,5 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
    }
   }).catch(error=>{note.textContent=error.message;$('local-connection-status').textContent='폴더 연결 확인 필요';dialog.showModal();});
  }
- return {ready,request,browser:true,remote:false};
+ return {ready,request,browser:true,remote:false,folderName:path=>mounts.find(m=>m.virtual===path)?.handle.name??''};
 }

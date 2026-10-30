@@ -39,3 +39,13 @@ test('unknown paths, readonly references and mismatching downloaded bytes are re
 test('explicit operations can rehash files even when size and modification time are unchanged',async()=>{
  const root=new Directory();root.put('a.md','old');const mounts=[{virtual:'/w',handle:root}],cache=new Map(),before=await scanBrowserFiles(mounts,cache);root.items.get('a.md').bytes=new TextEncoder().encode('new');const refreshed=await scanBrowserFiles(mounts,cache,true);assert.notEqual(before[0].hash,refreshed[0].hash);
 });
+
+test('successful relocation removes empty old parents but preserves unmirrored local entries',async()=>{
+ for(const preserve of [false,true]){
+  const root=new Directory(),old=await root.getDirectoryHandle('old',{create:true});old.put('a.md','A');if(preserve)old.put('.keep','Unmirrored');
+  const mounts=[{virtual:'/w',handle:root}],baseline=[await file('/w/old/a.md','A')];
+  await applyBrowserChanges(mounts,baseline,{files:[await file('/w/new/a.md','A')],removed:['/w/old/a.md']},download({'/w/new/a.md':'A'}));
+  assert.equal((await root.getDirectoryHandle('new')).text('a.md'),'A');assert.equal(root.items.has('old'),preserve);
+  if(preserve)assert.equal(old.text('.keep'),'Unmirrored');
+ }
+});

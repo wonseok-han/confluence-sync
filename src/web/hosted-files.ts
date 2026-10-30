@@ -42,8 +42,10 @@ export function validateEnv(text:string){const env=parse(text);const base=env.CO
 /** Reject local link destinations that would make shared CLI code read server files.
  * Metadata-only Fetch does not follow document links; keep env/mapping checks.
  */
-export async function validateWorkspace(mounts:Mount[],checkEnv=true,checkDocuments=true):Promise<void>{
- const parser=new MarkdownIt({html:true});const entries=await snapshot(mounts);
+export async function validateWorkspace(mounts:Mount[],checkEnv=true,checkDocuments=true,documentRoots?:string[]):Promise<void>{
+ const parser=new MarkdownIt({html:true});
+ // Existing output files are destinations, not input documents or workspace metadata.
+ const entries=await snapshot(mounts.filter((mount,index)=>index===0||mount.readonly));
  const allowed=(file:string,target:string,webLink=false)=>{
   try{target=target.replace(/^<(.*)>$/,'$1');for(let i=0;i<4;i++){const decoded=decodeURIComponent(target);if(decoded===target)break;target=decoded;}}catch{throw Error('해석할 수 없는 링크 경로입니다.');}
   if(!target||target.startsWith('#')||/^(?:https?:|mailto:|data:)/i.test(target))return;
@@ -56,7 +58,7 @@ export async function validateWorkspace(mounts:Mount[],checkEnv=true,checkDocume
   if(rel==='.csync/mapping.json'||rel==='.confluence-sync.json'||rel==='.csync/index.json'){
    const value=JSON.parse(await readFile(file,'utf8'));for(const key of Object.keys(rel.endsWith('index.json')?value.entries??{}:value))safeRelative(key.replace(/\/$/,''));
   }
-  if(!checkDocuments||!/\.md$/i.test(file)||rel.startsWith('.csync/'))continue;
+  if(!checkDocuments||!/\.md$/i.test(file)||rel.startsWith('.csync/')||documentRoots&&!documentRoots.some(root=>within(root,file)))continue;
   const text=await readFile(file,'utf8');
   const scan=(part:string)=>{
    for(const match of part.matchAll(/(?<!!)(!?)\[([^\]\n]*)\]\((<[^>\n]+>|[^()\s]+)\)/g)){if((part.slice(0,match.index).match(/\\+$/)?.[0].length??0)%2)continue;allowed(file,match[3],!match[1]);}

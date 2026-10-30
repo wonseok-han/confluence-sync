@@ -6,6 +6,7 @@ import {readFileSync} from 'node:fs';
 import {browserPlatform} from '../scripts/browser-platform.mjs';
 import {tableEditorBridge} from '../dist/web/table-editor-script.js';
 import {workspace as diskWorkspace} from './helpers/fixtures.mjs';
+import {mappingPass} from '../dist/sync/pull.js';
 import {inspectStaging,changeStaging} from '../dist/sync/staging.js';
 const result=await build({entryPoints:['src/runtime/browser/engine.js'],bundle:true,platform:'browser',format:'esm',minify:true,write:false,logLevel:'silent',plugins:[browserPlatform()],inject:['src/runtime/browser/globals.js'],define:{__CSYNC_VERSION__:'"2.0.0"',__CSYNC_TABLE_BRIDGE__:JSON.stringify(tableEditorBridge.toString())}});
 const {createStandaloneEngine}=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].text).toString('base64'));
@@ -54,7 +55,7 @@ test('folder navigation lists documents with absolute links without following th
 async function client(store){let engine=createStandaloneEngine({store,fetch:(...args)=>globalThis.fetch(...args)}),session;
  const api=async(path,body,method=body?'POST':'GET')=>{const response=await engine({path,method,headers:session?{'x-csync-session':session.id,'x-csync-token':session.token}:{},body:body instanceof ArrayBuffer?body:body?JSON.stringify(body):undefined});return {status:response.status,...JSON.parse(response.body)};};
  session=await api('/api/browser/session',{name:'notes'});assert.equal(session.status,201);
- return {session,api,restart(){engine=createStandaloneEngine({store,fetch:(...args)=>globalThis.fetch(...args)});},async read(path){const r=await engine({path:'/api/browser/file?path='+encodeURIComponent(path),headers:{'x-csync-session':session.id,'x-csync-token':session.token}});assert.equal(r.status,200,typeof r.body==='string'?r.body:'');return Buffer.from(r.body).toString();},async mirror(files){const manifest=Object.entries(files).map(([path,value])=>{const bytes=Buffer.from(value);return {path:session.base+'/'+path,size:bytes.length,hash:hash(bytes)};});const plan=await api('/api/browser/mirror',{files:manifest});assert.equal(plan.status,200,plan.error);for(const f of plan.uploads){const bytes=Buffer.from(files[f.path.slice(session.base.length+1)]);const r=await api('/api/browser/file?path='+encodeURIComponent(f.path),bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength),'PUT');assert.equal(r.status,200,r.error);}const r=await api('/api/browser/commit',{});assert.equal(r.status,200,r.error);return manifest;},async ack(){const c=await api('/api/browser/changes');assert.equal(c.status,200,c.error);const r=await api('/api/browser/ack',{files:c.snapshot});assert.equal(r.status,200,r.error);return c;},async finish(){for(let n=0;n<300;n++){const r=await api('/api/sync/job');if(r.job?.state!=='running')return r.job;await new Promise(r=>setTimeout(r,2));}assert.fail('job did not finish');}};
+ return {session,api,restart(){engine=createStandaloneEngine({store,fetch:(...args)=>globalThis.fetch(...args)});},async read(path){const r=await engine({path:'/api/browser/file?path='+encodeURIComponent(path),headers:{'x-csync-session':session.id,'x-csync-token':session.token}});assert.equal(r.status,200,typeof r.body==='string'?r.body:'');return Buffer.from(r.body).toString();},async mirror(files){const manifest=Object.entries(files).map(([path,value])=>{const bytes=Buffer.from(value);return {path:path.startsWith('/')?path:session.base+'/'+path,size:bytes.length,hash:hash(bytes)};});const plan=await api('/api/browser/mirror',{files:manifest});assert.equal(plan.status,200,plan.error);for(const f of plan.uploads){const bytes=Buffer.from(files[f.path]??files[f.path.slice(session.base.length+1)]);const r=await api('/api/browser/file?path='+encodeURIComponent(f.path),bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength),'PUT');assert.equal(r.status,200,r.error);}const r=await api('/api/browser/commit',{});assert.equal(r.status,200,r.error);return manifest;},async ack(){const c=await api('/api/browser/changes');assert.equal(c.status,200,c.error);const r=await api('/api/browser/ack',{files:c.snapshot});assert.equal(r.status,200,r.error);return c;},async finish(){for(let n=0;n<300;n++){const r=await api('/api/sync/job');if(r.job?.state!=='running')return r.job;await new Promise(r=>setTimeout(r,2));}assert.fail('job did not finish');}};
 }
 test('browser bundle runs shared preview, formatting and Obsidian conversion without a server',async()=>{
  const c=await client();await c.mirror({'a.md':'# A\n\n[[sub/b]]\n\n> [!summary]\n> Hello\n','sub/b.md':'# B\n'});
@@ -114,4 +115,39 @@ test('minified browser staging supports inline and referenced footnotes without 
  const c=await client(),text='# Notes\n\nInline^[balanced [label](https://example.com) note] and reference[^law].\n\n[^law]: Referenced note\n';
  await c.mirror({'.env':env,'.csync/workspace.json':JSON.stringify(workspace),'a.md':text});
  const rows=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(rows.status,200,rows.error);assert.equal(rows.rows.length,1);assert.equal(await c.read(c.session.base+'/a.md'),text);
+});
+
+
+test('minified browser conversion ignores unrelated input and output links but blocks selected unsafe documents',async()=>{
+ const c=await client();await c.mirror({'selected/a.md':'# Selected','other.md':'![unselected](/etc/passwd)','/output/existing.md':'[existing](file:///etc/passwd)'});
+ const request={base:c.session.base,file:c.session.base+'/selected',scope:'folder',out:'/output',to:'markdown',fix:false,preview:false};
+ const converted=await c.api('/api/convert',request);assert.equal(converted.status,200,converted.error);assert.equal(converted.documentCount,1);
+ assert.equal(await c.read('/output/a.md'),'# Selected');assert.equal(await c.read('/output/existing.md'),'[existing](file:///etc/passwd)');await c.ack();
+ const blocked=await c.api('/api/convert',{...request,file:c.session.base+'/other.md',scope:'file',preview:true});
+ assert.equal(blocked.status,400);assert.match(blocked.error,/절대 경로/);
+});
+
+
+for(const rename of [false,true])test(`manual browser Fetch and Pull apply a folder move${rename?' with a remote rename':''}`,async t=>{
+ const files={'.env':env,'.csync/workspace.json':JSON.stringify(workspace),'old/README.md':'# Old','new/README.md':'# New','old/Folder/a.md':'# A','old/Folder/b.md':'# B','old/Folder/local.txt':'Keep this file'};
+ const disk=diskWorkspace(t,files);
+ await mappingPass(disk.root,disk.root+'/.csync/mapping.json',new Map([['10',disk.root+'/old/README.md'],['20',disk.root+'/new/README.md'],['1',disk.root+'/old/Folder/a.md'],['2',disk.root+'/old/Folder/b.md']]),new Map([[disk.root+'/old/Folder','30']]),new Map([['10',1],['20',1],['1',1],['2',1]]),new Map([['10','100'],['20','100'],['1','30'],['2','30'],['30','10']]));
+ for(const file of Object.keys(files))files[file]=readFileSync(disk.root+'/'+file,'utf8');files['.csync/mapping.json']=readFileSync(disk.root+'/.csync/mapping.json','utf8');
+ const c=await client();await c.mirror(files);let parent='10',folderTitle='Folder',pageRequests=0,folderRequests=0;
+ t.mock.method(globalThis,'fetch',async input=>{
+  const url=new URL(input),id=url.pathname.split('/').at(-1);
+  if(url.pathname.endsWith('/api/v2/pages')){pageRequests++;return Response.json({results:[['10','Old','100'],['20','New','100'],['1','A','30'],['2','B','30']].map(([id,title,parentId])=>({id,title,parentId,spaceId:'space',version:{number:1}}))});}
+  if(url.pathname.endsWith('/content/search')){folderRequests++;return Response.json({results:[{id:'30',title:folderTitle,type:'folder',space:{id:'space'},ancestors:[{id:'100',title:'Home'},{id:parent,title:parent==='10'?'Old':'New'}]}]});}
+  if(url.pathname.endsWith('/api/v2/spaces'))return Response.json({results:[{id:'space',homepageId:'100'}]});
+  if(url.searchParams.get('expand')==='ancestors,space,version')return Response.json({id,title:id,type:'page',space:{id:'space'},ancestors:id==='100'?[]:[{id:'100',title:'Home'},{id:'20',title:'New'},{id:'30',title:folderTitle}],version:{number:1}});
+  if(['1','2'].includes(id)){const title=id==='1'?'A':'B';return Response.json({id,title,type:'page',version:{number:1},body:{export_view:{value:`<p>${title} remote</p>`},storage:{value:`<p>${title} remote</p>`}}});}
+  throw Error('Unexpected request '+url);
+ });
+ const fetch=async()=>{const response=await c.api('/api/sync/fetch',{base:c.session.base,envId:''});assert.equal(response.status,202,response.error);const job=await c.finish();assert.equal(job.state,'succeeded',job.log);await c.ack();};
+ await fetch();parent='20';if(rename)folderTitle='[폐기]_원부_변경과_파생_사본의_상태_정합';await fetch();assert.equal(pageRequests,2);assert.equal(folderRequests,2);
+ const view=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(view.status,200,view.error);const moved=view.rows.filter(row=>row.path.startsWith('old/Folder/'));assert.equal(moved.length,2);assert.ok(moved.every(row=>row.status==='same'&&row.remoteState==='changed'));
+ const pull=await c.api('/api/sync/pull',{base:c.session.base,envId:'',remoteOnly:true});assert.equal(pull.status,202,pull.error);const job=await c.finish();assert.equal(job.state,'succeeded',job.log);
+ assert.match(await c.read(c.session.base+'/new/'+folderTitle+'/a.md'),/A remote/);assert.equal(await c.read(c.session.base+'/new/'+folderTitle+'/local.txt'),'Keep this file');
+ const changed=await c.ack();assert.ok(changed.removed.includes(c.session.base+'/old/Folder/a.md'));
+ const after=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(after.status,200,after.error);assert.ok(after.rows.every(row=>row.remoteState!=='changed'));
 });

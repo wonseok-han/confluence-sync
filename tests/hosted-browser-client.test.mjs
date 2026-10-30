@@ -13,7 +13,7 @@ class Dir{
 function browser(app,pickers,options={}){
  const ids=['browser-folder-dialog','browser-folder-status','browser-folder-open','browser-folder-resume','browser-apply-dialog','browser-apply-status','browser-apply-retry','workspace-interface','local-disconnect','local-connection-status','root-path-editor','out-input','open'];const nodes=new Map(ids.map(id=>[id,{hidden:false,disabled:false,open:false,value:'',shown:0,showModal(){this.shown++;this.open=true},close(){this.open=false},addEventListener(){}}]));const values=options.values??new Map(),states=options.states??new Map(),calls=[],optionsHook=options.afterFetch;
  const storage={getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},location={reload(){this.reloaded=true}};
- const api=createBrowserWorkspace({document:{getElementById:id=>nodes.get(id)},window:{isSecureContext:true,showDirectoryPicker(){},addEventListener(){}},location,storage,remember:async(value,key)=>{if(value===undefined)return states.get(key);if(value===null)states.delete(key);else states.set(key,value)},pickDirectory:async()=>pickers.shift(),fetch:async(path,options)=>{calls.push(path);const response=await fetch(app.url+path,options);await optionsHook?.(path,options,response);return response;}});
+ const api=createBrowserWorkspace({document:{getElementById:id=>nodes.get(id)},window:{isSecureContext:true,showDirectoryPicker(){},addEventListener(){}},location,storage,remember:async(value,key)=>{if(value===undefined)return states.get(key);if(value===null)states.delete(key);else states.set(key,value)},pickDirectory:async settings=>{options.onPick?.(settings);return pickers.shift()},fetch:async(path,options)=>{calls.push(path);const response=await fetch(app.url+path,options);await optionsHook?.(path,options,response);return response;}});
  return {api,nodes,location,states,calls,async choose(){await new Promise(r=>setImmediate(r));await nodes.get('browser-folder-open').onclick();await api.ready;},async request(path,body){const response=await api.request(path,{method:body?'POST':'GET',...(body?{body:JSON.stringify(body)}:{})});const value=await response.json();assert.equal(response.status,200,JSON.stringify(value));return value;}};
 }
 test('browser controller uploads a selected folder, converts through the shared server and writes only into the selected output folder',async t=>{
@@ -87,4 +87,55 @@ test('revoked folder permission offers the saved handle instead of requiring ano
  assert.equal(restored.nodes.get('browser-folder-dialog').open,true);assert.equal(restored.nodes.get('browser-folder-resume').hidden,false);assert.equal(grants,0);
  await restored.nodes.get('browser-folder-resume').onclick();await restored.api.ready;
  assert.equal(grants,1);assert.equal(restored.nodes.get('browser-folder-dialog').open,false);assert.equal(restored.nodes.get('workspace-interface').inert,false);
+});
+
+
+test('changing the browser base returns its new path before the caller reloads or restores explorer state',async t=>{
+ const app=await startHostedWeb({port:0,host:'127.0.0.1'});t.after(()=>app.close());
+ const first=new Dir('first'),second=new Dir('second');first.put('old.md','# Old');second.put('new.md','# New');
+ const states=new Map(),values=new Map(),b=browser(app,[first,second],{states,values});await b.choose();
+ const response=await b.api.request('/api/pick-folder',{body:JSON.stringify({kind:'base'})});
+ assert.equal(response.status,200);const selected=await response.json();assert.equal(selected.path,'/workspace/second');assert.notEqual(b.location.reloaded,true);
+ assert.deepEqual((await b.request('/api/browse?path='+encodeURIComponent(selected.path))).entries.map(e=>e.name),['new.md']);
+ const restored=browser(app,[],{states,values});await restored.api.ready;
+ assert.deepEqual((await restored.request('/api/browse')).entries.map(e=>e.name),['new.md']);
+ assert.equal(restored.nodes.get('browser-folder-dialog').shown,0);
+});
+
+test('selected output folder names survive restoration while conversion keeps using its virtual mount',async t=>{
+ const app=await startHostedWeb({port:0,host:'127.0.0.1'});t.after(()=>app.close());
+ const source=new Dir('docs'),out=new Dir('변환 결과');source.put('a.md','# A\n\n[[b]]');source.put('b.md','# B');
+ const states=new Map(),values=new Map(),b=browser(app,[source,out],{states,values});await b.choose();
+ const response=await b.api.request('/api/pick-folder',{body:JSON.stringify({kind:'out'})});const selected=await response.json();assert.equal(response.status,200);
+ assert.equal(selected.path,'/output');assert.equal(b.api.folderName(selected.path),'변환 결과');assert.equal(b.api.folderName('/workspace/docs'),'docs');
+ await b.request('/api/convert',{base:'/workspace/docs',file:'/workspace/docs/a.md',out:selected.path,scope:'file',to:'markdown',fix:false,preview:false});
+ assert.match(out.text('a.md'),/\[b\]\(b\.md\)/);assert.match(source.text('a.md'),/\[\[b\]\]/);
+ const restored=browser(app,[],{states,values});await restored.api.ready;
+ assert.equal(restored.api.folderName(selected.path),'변환 결과');assert.equal(restored.nodes.get('browser-folder-dialog').shown,0);
+});
+
+
+test('base and output pickers use independent starting folders, including restored handles',async t=>{
+ const app=await startHostedWeb({port:0,host:'127.0.0.1'});t.after(()=>app.close());
+ const source=new Dir('docs'),out=new Dir('converted');source.put('a.md','# A');
+ const states=new Map(),values=new Map(),picks=[];
+ const b=browser(app,[source,out,out,source],{states,values,onPick:value=>picks.push(value)});await b.choose();
+ assert.equal(picks[0].id,'csync-base');assert.equal(picks[0].startIn,undefined);
+ await b.request('/api/pick-folder',{kind:'out'});assert.equal(picks[1].id,'csync-out');assert.equal(picks[1].startIn,source);
+ await b.request('/api/pick-folder',{kind:'out'});assert.equal(picks[2].startIn,out);
+ await b.request('/api/pick-folder',{kind:'base'});assert.equal(picks[3].id,'csync-base');assert.equal(picks[3].startIn,source);
+ const restoredPicks=[],restored=browser(app,[source],{states,values,onPick:value=>restoredPicks.push(value)});await restored.api.ready;
+ await restored.request('/api/pick-folder',{kind:'base'});assert.equal(restoredPicks[0].startIn,source);
+});
+
+for(const scope of ['file','folder'])test(`conversion validates only selected ${scope} documents, excluding unrelated source and output Markdown`,async t=>{
+ const app=await startHostedWeb({port:0,host:'127.0.0.1'});t.after(()=>app.close());
+ const source=new Dir('docs'),out=new Dir('existing-output');source.put('unselected.md','![unrelated](/etc/passwd)');out.put('existing.md','[existing](file:///etc/passwd)');
+ const selected=await source.getDirectoryHandle('selected',{create:true});selected.put('a.md','# Selected');
+ const b=browser(app,[source,out]);await b.choose();await b.request('/api/pick-folder',{kind:'out'});
+ const result=await b.request('/api/convert',{base:'/workspace/docs',file:'/workspace/docs/selected'+(scope==='file'?'/a.md':''),out:'/output',scope,to:'markdown',fix:false,preview:false});
+ assert.equal(result.documentCount,1);assert.equal(out.text('a.md'),'# Selected');assert.equal(out.text('existing.md'),'[existing](file:///etc/passwd)');
+ // The same dangerous link still blocks conversion when its own document is selected.
+ const blocked=await b.api.request('/api/convert',{body:JSON.stringify({base:'/workspace/docs',file:'/workspace/docs/unselected.md',out:'/output',scope:'file',to:'markdown',fix:false,preview:true})});
+ assert.equal(blocked.status,400);assert.match((await blocked.json()).error,/절대 경로/);
 });

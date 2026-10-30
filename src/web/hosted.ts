@@ -87,7 +87,7 @@ export async function startHostedWeb(options:{port?:number;host?:string;publicUr
     if(input.base&&!within(s.mounts[0].root,input.base))throw Error('문서 폴더를 기준으로 작업하세요.');
     if(input.referenceRoots)input.referenceRoots=input.referenceRoots.map((path:string)=>pathIn(s.mounts,path));
     if(url.pathname==='/api/convert'&&!input.out){input.out=s.mounts[1].root;}
-    if(!['/api/sync/config'].includes(url.pathname))await validateWorkspace(s.mounts,url.pathname.startsWith('/api/sync/')&&!input.envId&&!url.pathname.endsWith('/env/import'),url.pathname!=='/api/sync/fetch'&&!(url.pathname==='/api/sync/staging'&&input?.remoteOnly===true));
+    if(!['/api/sync/config'].includes(url.pathname))await validateWorkspace(s.mounts,url.pathname.startsWith('/api/sync/')&&!input.envId&&!url.pathname.endsWith('/env/import'),url.pathname!=='/api/sync/fetch'&&!(url.pathname==='/api/sync/staging'&&input?.remoteOnly===true),url.pathname==='/api/convert'?(typeof input?.file==='string'?[input.file]:[]):undefined);
     const response=await fetch(s.core.url+url.pathname,{method:'POST',headers:{'X-Csync-Token':s.core.token,'Content-Type':'application/json'},body:JSON.stringify(input)});const data=await response.json();
     send(response.status,publicValue(s,data));return;
    }
