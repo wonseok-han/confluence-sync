@@ -180,9 +180,14 @@ export async function fetchRemote(baseInput: string, env: Env, options: { mappin
   for(const id of trackedFolders)await container(id);
   for(const item of items){
     if(item.state==='unavailable'||item.state==='unknown')continue;
-    if([...unavailableFolders].some(id=>item.path.startsWith(mappingById.get(id)!.path))){
-      item.state='unknown';item.reasons.push(folderUnavailableReason);continue;
+    // A deleted historical local folder is not necessarily a current ancestor:
+    // its documents may already have moved elsewhere without changing local paths.
+    let parent=item.parentId,missingAncestor=false;const seenParents=new Set<string>();
+    while(parent&&parent!==context.root.id){
+      if(unavailableFolders.has(parent)||seenParents.has(parent)){missingAncestor=true;break;}
+      seenParents.add(parent);const node=nodes.get(parent);parent=node?.parentId?String(node.parentId):undefined;
     }
+    if(missingAncestor){item.state='unknown';item.reasons.push(folderUnavailableReason);continue;}
     for(const folder of folders.values())if(folder.previousPath&&item.path.startsWith(folder.previousPath)){
       item.state='changed';item.reasons.push(folderMoveReason(folder));
     }

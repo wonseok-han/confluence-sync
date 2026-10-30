@@ -83,3 +83,13 @@ test('another remote folder move during downloads aborts before relocating local
  await assert.rejects(runPull(['pull','--base',root]),/원격 폴더 위치가 바뀌/);
  assert.ok(fs.existsSync(join(root,'old/Folder/a.md')));assert.equal(fs.existsSync(join(root,'new/Folder')),false);assert.equal(fs.readFileSync(mappingPath(root),'utf8'),before);
 });
+
+
+for(const version of [1,2])test(`deleted historical folders do not mask current remote parents or version v${version}`,async t=>{
+ const {root}=await setup(t);const mapping=JSON.parse(fs.readFileSync(mappingPath(root),'utf8'));
+ mapping['old/Folder/a.md'].remoteParentId='20';mapping['old/Folder/b.md'].remoteParentId='20';fs.writeFileSync(mappingPath(root),JSON.stringify(mapping));
+ const current={...listing,body:{results:listing.body.results.map(page=>['1','2'].includes(page.id)?{...page,parentId:'20',version:{number:page.id==='1'?version:1}}:page)}};
+ remote(t,root,[current,{...folders,body:{results:[]}}]);const {snapshot}=await fetchRemote(root,env);
+ const a=snapshot.items.find(item=>item.pageId==='1'),b=snapshot.items.find(item=>item.pageId==='2');
+ assert.equal(a.state,version===1?'unchanged':'changed');assert.equal(b.state,'unchanged');assert.ok(!snapshot.items.some(item=>item.state==='unknown'));
+});
