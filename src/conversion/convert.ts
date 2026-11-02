@@ -176,7 +176,7 @@ export async function runConvert(argv: string[]): Promise<void> {
 
   const allMd = collectMarkdown(baseDir); // 링크 해석용(전체)
   const mdRels = allMd.map((f) => posix(relative(baseDir, f)));
-  const vault = buildVault(mdRels, collectAssets(baseDir).map((f) => posix(relative(baseDir, f))));
+  const vault = buildVault(mdRels, collectAssets(baseDir).map((f) => posix(relative(baseDir, f))),baseDir);
 
   // obsidian 방향의 이름 중복 검사도 트리 전체 기준이어야 한다
   const nameCount = new Map<string, number>();

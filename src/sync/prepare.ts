@@ -13,7 +13,7 @@ export async function preparePushTree(base: string, rels: string[], selected: st
   try {
     const chosen = new Set(selected);
     const sourceRenderer = buildTreeRenderer(base, rels);
-    const vault = buildVault(rels, collectAssets(base).map(file => relative(base, file).split('\\').join('/')));
+    const vault = buildVault(rels, collectAssets(base).map(file => relative(base, file).split('\\').join('/')),base);
     for (const rel of rels) {
       const original = resolve(base, rel), destination = resolve(stage, rel);
       let text = readFileSync(original, 'utf8');
@@ -39,6 +39,6 @@ export async function preparePushTree(base: string, rels: string[], selected: st
       }
       mkdirSync(dirname(destination), { recursive: true }); writeFileSync(destination, text);
     }
-    return { ...buildTreeRenderer(stage, rels, options ? { ...options, referenceBase: base } : undefined), dispose };
+    return { ...buildTreeRenderer(stage, rels, { referenceRoots:[],...options, referenceBase: base }), dispose };
   } catch (error) { dispose(); throw error; }
 }

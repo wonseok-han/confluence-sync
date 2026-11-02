@@ -25,7 +25,7 @@ export type TreeRenderer = {
 export function buildTreeRenderer(baseDir: string, rels: string[], options?: { referenceRoots: string[]; baseUrl?: string; referenceBase?: string }): TreeRenderer {
   const { titles, anchors, docs } = buildDocIndex(rels, baseDir);
   // Obsidian [[wikilink]] 해석용 이름 인덱스
-  const vault = buildVault(rels, collectAssets(baseDir).map((f) => relative(baseDir, f)));
+  const vault = buildVault(rels, collectAssets(baseDir).map((f) => relative(baseDir, f)),options?.referenceBase??baseDir);
   // 누가 어느 헤딩을 가리키는지 먼저 모은다 — 그 헤딩에만 Anchor 매크로를 심는다.
   const lookup = options ? buildReferenceLookup(options.referenceBase ?? baseDir, rels, options.referenceRoots, options.baseUrl) : null;
   const anchorTargets = resolveAnchorTargets(docs, vault, lookup?.localTarget);

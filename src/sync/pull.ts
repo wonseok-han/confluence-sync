@@ -2,7 +2,7 @@ import { progressStep } from '../shared/progress.js';
 import {folderMoves,relocated,folderStamp,checkFolderDestination,verifyRemoteFolderMoves,type FolderMove} from './remote-folder-moves.js';
 import {connectWorkspace} from './scope.js';
 import { storeBaseline } from './baseline.js';
-import { localStateHash } from './local-state.js';
+import { localStateHash, matchesLocalState } from './local-state.js';
 import { buildTreeRenderer } from './render.js';
 /**
  * `confluence-sync pull <pageId|url> [--out <dir>] (하위 항목 포함)`
@@ -246,7 +246,7 @@ async function pullNode(ctx: Ctx, id: string, destDir: string): Promise<Counts> 
 /** 앵커 해석에 필요한 문서 정보(제목 + 헤딩 목록). 내려받은 .md 에서 읽는다. */
 type DocInfo = { title: string; headings: Heading[]; textBySlug: Map<string, string> };
 
-function readDocInfo(file: string): DocInfo {
+export function readDocInfo(file: string): DocInfo {
   const { data, body } = splitFrontmatter(readFileSync(file, 'utf8'));
   const headings = collectHeadings(body);
   return {
@@ -597,7 +597,7 @@ export async function runPull(argv: string[], options: {restorePaths?: string[];
     for (const rel of scoped) {
       const doc = tree.docs[rel], rendered = tree.render(rel, doc.body, doc.title), entry = oldMapping[rel];
       const clean = entry?.localHash
-        ? entry.localHash === localStateHash(baseDir, rel, rendered)
+        ? matchesLocalState(baseDir,rel,rendered,entry,rels)
         : !!entry?.hash && (entry.hash === docHash(doc.title, rendered)
           || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title))
           || entry.hash === docHash(doc.title, tree.render(rel, doc.body, doc.title, 'panels'))

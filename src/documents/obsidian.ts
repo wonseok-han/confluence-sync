@@ -57,7 +57,7 @@ const markdownDisplayText = (text: string): string => text.replace(/[\\_]/g, '\\
  * 코드블록(``` / ~~~)과 인라인 코드(`...`) 안은 그대로 둔다 — 링크처럼 생긴 예제 코드를
  * 망가뜨리지 않기 위해서다.
  */
-function mapProse(md: string, fn: (segment: string) => string): string {
+export function mapProse(md: string, fn: (segment: string) => string): string {
   let inFence = false;
   return md
     .split('\n')

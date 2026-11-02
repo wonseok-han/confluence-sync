@@ -133,7 +133,7 @@ export function resolveAnchorTargets(
 
       if (la.wiki) {
         // dest 가 비면 `[[#헤딩]]` — 같은 문서의 섹션이다
-        target = la.dest === '' ? rel : (vault.notes[la.dest.toLowerCase().replace(/\.md$/i, '')] ?? null);
+        target = la.dest === '' ? rel : vaultPath(vault,la.dest,false,rel);
         slug = wikilinkAnchorToSlug(la.fragment);
       } else {
         target = la.dest === '' ? rel : normalizeRel(dir, decodeAnchor(la.dest));
@@ -152,37 +152,49 @@ export function resolveAnchorTargets(
 }
 
 /** vault 안에서 [[wikilink]] 대상을 찾기 위한 이름 인덱스. */
-export type Vault = { notes: Record<string, string>; assets: Record<string, string> };
+export type Vault = { notes: Record<string, string>; assets: Record<string, string>; rootName?: string };
 
 /**
  * wikilink 대상 이름 → base 상대 경로 인덱스.
  * Obsidian 은 `[[파일명]]`(짧은 이름)과 `[[폴더/파일명]]`(경로) 을 모두 허용하므로 둘 다 등록한다.
  * 짧은 이름이 겹치면 경로가 사전순으로 앞서는 쪽이 이긴다(Obsidian 의 "가장 가까운 것" 규칙과는 다르지만 결정적이다).
  */
-export function buildVault(mdRels: string[], assetRels: string[]): Vault {
+export function buildVault(mdRels: string[], assetRels: string[], base?: string): Vault {
   const index = (rels: string[], stripExt: boolean): Record<string, string> => {
     const idx: Record<string, string> = {};
     for (const rel of [...rels].sort()) {
       const withoutExt = stripExt ? rel.replace(/\.md$/i, '') : rel;
       for (const key of [withoutExt, basename(withoutExt)]) {
-        const k = key.toLowerCase();
+        const k = key.normalize('NFC').toLowerCase();
         if (!(k in idx)) idx[k] = rel; // 먼저 등록된(사전순 앞선) 것이 이긴다
       }
     }
     return idx;
   };
-  return { notes: index(mdRels, true), assets: index(assetRels, false) };
+  return { notes: index(mdRels, true), assets: index(assetRels, false), rootName:base?basename(base).normalize('NFC').toLowerCase():undefined };
+}
+
+/** Resolve a vault-root path without reading outside the selected workspace. */
+export function vaultPath(vault:Vault,target:string,embed=false,from=''):string|null {
+  let key=target.normalize('NFC').toLowerCase();
+  if(key.startsWith('/')||key.includes('\\')||key.split('/').some(part=>part==='..'||part==='.'))return null;
+  const noteKey=key.replace(/\.md$/i,'');
+  const dir=dirname(from).normalize('NFC').toLowerCase();
+  const nearby=!key.includes('/')&&dir!=='.'?vault.notes[dir+'/'+noteKey]:undefined;
+  const direct=embed?(vault.assets[key]??vault.notes[noteKey]):(nearby??vault.notes[noteKey]??vault.assets[key]);
+  if(direct)return direct;
+  if(!vault.rootName)return null;
+  const parts=key.split('/'),at=parts.lastIndexOf(vault.rootName);
+  if(at<0)return null;
+  key=parts.slice(at+1).join('/');
+  return embed?(vault.assets[key]??vault.notes[key.replace(/\.md$/i,'')]??null):(vault.notes[key.replace(/\.md$/i,'')]??vault.assets[key]??null);
 }
 
 /** 파일(rel) 기준으로 wikilink 대상을 상대경로로 풀어주는 resolver. */
 export function vaultResolver(rel: string, vault: Vault) {
   const dir = dirname(rel) === '.' ? '' : dirname(rel);
   return (target: string, embed: boolean): string | null => {
-    const key = target.toLowerCase().replace(/\.md$/i, '');
-    // 임베드(![[...]])는 대개 이미지, 링크([[...]])는 대개 노트 → 각자 먼저 찾아본다
-    const hit = embed
-      ? (vault.assets[target.toLowerCase()] ?? vault.notes[key])
-      : (vault.notes[key] ?? vault.assets[target.toLowerCase()]);
+    const hit = vaultPath(vault,target,embed,rel);
     if (!hit) return null;
     const r = relative(dir || '.', hit).split('\\').join('/');
     return r || null;

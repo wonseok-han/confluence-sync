@@ -151,3 +151,21 @@ for(const rename of [false,true])test(`manual browser Fetch and Pull apply a fol
  const changed=await c.ack();assert.ok(changed.removed.includes(c.session.base+'/old/Folder/a.md'));
  const after=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(after.status,200,after.error);assert.ok(after.rows.every(row=>row.remoteState!=='changed'));
 });
+
+
+test('compressed browser staging and remote diff accept automatic vault paths with bracketed folders',async t=>{
+ const path='archive/[폐기]_topic/a.md',target='archive/[폐기]_topic/target.md';
+ const original='# A\n\n[[target#Section|Read]]\n';
+ const files={'.env':env,'.csync/workspace.json':JSON.stringify(workspace),[path]:original,[target]:'---\ntitle: Target\n---\n\n# Target\n\n## Section\n','a/target.md':'# Duplicate'};
+ const disk=diskWorkspace(t,files);
+ await mappingPass(disk.root,disk.root+'/.csync/mapping.json',new Map([['201',disk.root+'/'+path],['202',disk.root+'/'+target],['203',disk.root+'/a/target.md']]),new Map());
+ const mapping=JSON.parse(readFileSync(disk.root+'/.csync/mapping.json','utf8'));
+ files['.csync/mapping.json']=JSON.stringify(mapping);
+ for(const entry of Object.values(mapping))if(entry.sourceObject){const object='.csync/objects/'+entry.sourceObject+'.md';files[object]=readFileSync(disk.root+'/'+object,'utf8');}
+ const c=await client();files[path]=original.replace('target#','Vault/notes/archive/[폐기]_topic/target#');await c.mirror(files);
+ t.mock.method(globalThis,'fetch',async()=>{throw Error('Staging must stay offline');});
+ const rows=await c.api('/api/sync/staging',{base:c.session.base,envId:''});assert.equal(rows.status,200,rows.error);assert.equal(rows.rows.find(row=>row.path===path).status,'same');
+ let calls=0;t.mock.method(globalThis,'fetch',async input=>{calls++;assert.match(String(input),/content\/201/);const html='<h1>A</h1><p><a href="https://example.atlassian.net/wiki/spaces/TEST/pages/202/Target#Target-Section">Read</a></p>';return Response.json({id:'201',type:'page',title:'A',version:{number:1},body:{export_view:{value:html},storage:{value:html}}});});
+ const diff=await c.api('/api/sync/diff',{base:c.session.base,envId:'',path,remote:true});assert.equal(diff.status,200,diff.error);assert.equal(diff.before,diff.after);assert.equal(calls,1);
+ assert.equal(await c.read(c.session.base+'/'+path),files[path]);assert.equal(await c.read(c.session.base+'/.csync/mapping.json'),files['.csync/mapping.json']);
+});
