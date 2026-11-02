@@ -1,6 +1,6 @@
 import { green, cyan } from '../shared/colors.js';
 import { reconcilePages } from './reconcile.js';
-import { localStateHash } from './local-state.js';
+import { localStateHash, matchesLocalState } from './local-state.js';
 import { buildTreeRenderer } from './render.js';
 /** Document-level upload selection. Source files are never copied into the index. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -88,7 +88,7 @@ export async function inspectStaging(base: string, options: Options = {}, only?:
       const oldPath = doc.fm.pageId && Object.keys(originalMapping).find(key => originalMapping[key].pageId === doc.fm.pageId && !key.endsWith('/'));
       const prior = originalMapping[path] ?? (oldPath ? originalMapping[oldPath] : undefined);
       const reconciled = mapping[path];
-      const clean = prior?.localHash ? prior.localHash === localStateHash(base, path, rendered) : !!prior?.hash && (prior.hash === hash || prior.hash === docHash(legacy.docs[path].title, legacy.render(path, legacy.docs[path].body, legacy.docs[path].title))
+      const clean = prior?.localHash ? matchesLocalState(base,path,rendered,prior,all) : !!prior?.hash && (prior.hash === hash || prior.hash === docHash(legacy.docs[path].title, legacy.render(path, legacy.docs[path].body, legacy.docs[path].title))
         || prior.hash === docHash(doc.title, prepared.render(path, doc.body, doc.title, 'panels'))
         || prior.hash === docHash(doc.title, prepared.render(path, doc.body, doc.title, true))
         || prior.hash === docHash(legacy.docs[path].title, legacy.render(path, legacy.docs[path].body, legacy.docs[path].title, 'panels'))

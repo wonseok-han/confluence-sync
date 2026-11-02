@@ -3,6 +3,7 @@ import {bold, cyan, red, green, dim} from '../shared/colors.js';
 import {readFileSync,statSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {readBaseline} from './baseline.js';
+import {diffLinks} from './diff-links.js';
 import {loadMapping} from './mapping.js';
 import {mappingPath} from './metadata.js';
 import {loadWorkspace,requireScope,inScope,inNestedWorkspace,scopePath,assertWorkspaceConnection,resolveSyncBase} from './workspace.js';
@@ -29,8 +30,11 @@ export async function documentDiff(base:string,input:string,options:{remote?:boo
     const localBody = splitFrontmatter(after).body;
     // buildFrontmatter adds one blank separator. Keep intentional body whitespace.
     const comparisonBody = localBody !== after ? localBody.replace(/^\r?\n/, '') : localBody;
-    return {path,before:htmlToMarkdown(node.html,{obsidian:/^ {0,3}(?:> ?)+\[![\w-]+\]|\[\^[^\]\s]+\]:|(?<!\\)\^\[/m.test(comparisonBody),pageId:entry.pageId,storage:node.storage,codeLangs:codeLanguagesFromStorage(node.storage)}),after:comparisonBody,
-      source:'remote',canRemote:true,note:`현재 원격 v${node.version??'?'} → 로컬 본문 비교입니다. 원격 HTML의 근사 변환이며 frontmatter는 제외합니다. 과거 동기화 기준과의 비교는 아닙니다. 변경 목록에는 본문 외 제목·원격 위치 변경도 포함됩니다.`};
+    const obsidian=/^ {0,3}(?:> ?)+\[![\w-]+\]|\[\^[^\]\s]+\]:|(?<!\\)\^\[|\[\[/m.test(comparisonBody);
+    const remote=htmlToMarkdown(node.html,{obsidian,pageId:entry.pageId,storage:node.storage,codeLangs:codeLanguagesFromStorage(node.storage)});
+    const comparison=diffLinks(base,path,node.title,remote,comparisonBody,obsidian,mapping);
+    return {path,...comparison,
+      source:'remote',canRemote:true,note:`현재 원격 v${node.version??'?'} → 로컬 본문 비교입니다. 원격 HTML을 근사 변환하고 연결된 문서 링크를 로컬 경로로 맞췄으며 frontmatter는 제외합니다. 과거 동기화 기준과의 비교는 아닙니다. 변경 목록에는 본문 외 제목·원격 위치 변경도 포함됩니다.`};
   }
   if(entry?.sourceObject)return {path,before:readBaseline(base,entry.sourceObject),after,source:'baseline',canRemote:true,note:'마지막 Pull·Push 성공 시 저장한 Markdown → 현재 로컬 문서입니다. 첨부 파일의 바이트 차이는 본문 diff에 표시하지 않습니다.'};
   if(!entry)return {path,before:'',after,source:'new',canRemote:false,note:'새 문서입니다. 전체 내용이 추가로 표시됩니다.'};

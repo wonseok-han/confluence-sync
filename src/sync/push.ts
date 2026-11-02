@@ -1,7 +1,7 @@
 import { progressStep } from '../shared/progress.js';
 import { storeBaseline } from './baseline.js';
 import { buildTreeRenderer } from './render.js';
-import { localStateHash } from './local-state.js';
+import { localStateHash, matchesLocalState } from './local-state.js';
 import { loadIndex, stagedPaths, assertStaged, completeStaged } from './staging.js';
 /** Incremental Confluence push and local preview orchestration. */
 import { mappingPath } from './metadata.js';
@@ -144,7 +144,7 @@ export async function runPush(argv: string[]): Promise<void> {
     const legacy = buildTreeRenderer(BASE_DIR, allRel);
     const locallyClean = (rel: string) => {
       const entry = mapping[rel];
-      return entry?.localHash ? entry.localHash === localHashes[rel] : !!entry?.hash && (entry.hash === hashes[rel]
+      return entry?.localHash ? matchesLocalState(BASE_DIR,rel,render(rel,docs[rel].body,docs[rel].title),entry,allRel,localHashes[rel]) : !!entry?.hash && (entry.hash === hashes[rel]
         || entry.hash === docHash(legacy.docs[rel].title, legacy.render(rel, legacy.docs[rel].body, legacy.docs[rel].title))
         || entry.hash === docHash(docs[rel].title, render(rel, docs[rel].body, docs[rel].title, 'panels'))
         || entry.hash === docHash(docs[rel].title, render(rel, docs[rel].body, docs[rel].title, true))
