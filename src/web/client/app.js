@@ -44,12 +44,12 @@ function setOutputPath(path) {
   if (connection.browser) input.dataset.path = path;
   input.value = connection.browser ? connection.folderName(path) : path;
 }
-function savePreferences() {
+function savePreferences(nextMode) {
   if (restoring) return;
   workspaces[mode] = explorerState();
   try {
     localStorage.setItem(preferencesKey, JSON.stringify({
-      workspaces, mode,
+      workspaces, mode: nextMode==='convert'||nextMode==='sync'?nextMode:mode,
       referenceRoots: $('sync-references').value, out: outputPath(),
       convertScope: convertKind, direction: $('direction').value, fix: $('fix').checked,
       verify: $('sync-verify').checked, pullFormat: $('sync-pull-format').value,
@@ -80,6 +80,11 @@ function displayMode(next) {
 async function showMode(next) {
   if (next === mode || busy) return;
   savePreferences();
+  if(connection.browser){
+    savePreferences(next);
+    if(loadPreferences().mode!==next){status('탭 전환을 위해 브라우저의 사이트 저장소를 허용해 주세요.',true);return;}
+    location.reload();return;
+  }
   restoring = true; busy = true;
   displayMode(next);
   let warning;
@@ -294,8 +299,9 @@ async function pickFolder(kind) {
         base = folder = data.path; parent = undefined; file = null; selectedDirectory = false;
         entries = []; treeCache = new Map(); expanded = new Set(); treeLoading = new Set();
         $('base-input').value = data.path;
-        setOutputPath(''); $('sync-references').value = '';
-        workspaces = { convert: {}, sync: {} };
+        if(mode==='convert')setOutputPath('');
+        else $('sync-references').value = '';
+        workspaces[mode] = {};
         savePreferences();
         location.reload();
         return;
@@ -500,11 +506,16 @@ async function restoreWorkspace() {
     ? { convert: valid(saved.workspaces.convert) ? saved.workspaces.convert : {}, sync: valid(saved.workspaces.sync) ? saved.workspaces.sync : {} }
     : { convert: { base: saved.base, folder: saved.folder, file: saved.file, baseInput: saved.baseInput },
         sync: { base: saved.base, folder: saved.folder, file: saved.file, baseInput: saved.baseInput } };
-  $('direction').onchange(); displayMode(saved.mode === 'sync' ? 'sync' : 'convert');
+  const activeMode=saved.mode === 'sync' ? 'sync' : 'convert';
+  if(connection.browser&&connection.newBaseSelected?.()){
+    workspaces[activeMode]={};
+    if(activeMode==='convert')setOutputPath('');else $('sync-references').value='';
+  }
+  $('direction').onchange(); displayMode(activeMode);
   let warning;
   try { warning = await restoreExplorer(workspaces[mode]); }
   finally { restoring = false; busy = false; controls(); render(); }
-  await syncUI.resume();
+  if(!connection.browser||mode==='sync')await syncUI.resume();
   if (warning) status(warning, true);
 }
 

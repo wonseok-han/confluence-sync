@@ -60,3 +60,21 @@ test('automatic explicit alias preserves an originally implicit link label',t=>{
  const rendered={attachments:[]},entry={localHash:localStateHash(root,path,rendered),sourceObject:storeBaseline(root,before)};
  put(path,'# A\n\n[['+expanded(root)+'|target]]\n');assert.equal(matchesLocalState(root,path,rendered,entry,[path,target]),true);
 });
+
+test('publishing a topic folder resolves all seven mixed vault-root and short navigation links with duplicate filenames elsewhere',async t=>{
+ const names=['001_개요와_판정','002_기술_문제와_처리_구조','003_선행조사','004_청구항_초안','005_검토_의견과_반례','006_명세서_구체화_자료','007_변리사_전달_문서'];
+ const topic='지식자산/특허출원/특허출원_아이디에이션/권한_규칙_변경_뒤_위임_재판정과_소급_처리';
+ const {root,put}=workspace(t);const rels=names.map(name=>topic+'/'+name+'.md');
+ for(const [i,rel] of rels.entries()){put(rel,'---\ntitle: Topic '+i+'\n---\n\n# Topic '+i+'\n');put('other/'+names[i]+'.md','# Other '+i);}
+ const navigation='구성: '+names.map((name,i)=>`[[${[0,1,2,4].includes(i)?'002_이노그리드/'+basename(root)+'/'+topic+'/':''}${name}|문서 ${i}]]`).join(' · ');
+ const source='---\ntitle: Topic 0\n---\n\n'+navigation+'\n';put(rels[0],source);
+ const all=[...rels,...names.map(name=>'other/'+name+'.md')];
+ const prepared=await preparePushTree(root,all,rels);
+ try{
+  const doc=prepared.docs[rels[0]],storage=prepared.render(rels[0],doc.body,doc.title).storage;
+  assert.doesNotMatch(doc.body,/\[\[/);assert.doesNotMatch(storage,/\[\[/);
+  for(let i=0;i<7;i++)assert.match(storage,new RegExp('ri:content-title="Topic '+i+'"'));
+  assert.doesNotMatch(storage,/ri:content-title="Other/);
+  assert.equal(readFileSync(join(root,rels[0]),'utf8'),source);
+ }finally{prepared.dispose();}
+});

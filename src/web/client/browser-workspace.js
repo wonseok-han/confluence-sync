@@ -37,10 +37,14 @@ export async function applyBrowserChanges(mounts,baseline,changes,download){
 }
 function database(){return new Promise((resolve,reject)=>{const request=indexedDB.open('csync.browser-folders',1);request.onupgradeneeded=()=>request.result.createObjectStore('workspace');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}
 async function remembered(value,key='active'){const db=await database();try{return await new Promise((resolve,reject)=>{const tx=db.transaction('workspace',value===undefined?'readonly':'readwrite'),store=tx.objectStore('workspace'),request=value===undefined?store.get(key):value===null?store.delete(key):store.put(value,key);let result;request.onsuccess=()=>{result=request.result};tx.oncomplete=()=>resolve(result);tx.onerror=()=>reject(tx.error);});}finally{db.close();}}
-export function createBrowserWorkspace({document=globalThis.document,window=globalThis.window,location=globalThis.location,storage=globalThis.sessionStorage,fetch=globalThis.fetch,remember=remembered,pickDirectory=options=>window.showDirectoryPicker(options)}={}){
+export function browserWorkspaceMode(storage=globalThis.localStorage){
+ try{return JSON.parse(storage?.getItem('csync.workspace.v1'))?.mode==='sync'?'sync':'convert';}catch{return 'convert';}
+}
+export function createBrowserWorkspace({document=globalThis.document,window=globalThis.window,location=globalThis.location,storage=globalThis.sessionStorage,fetch=globalThis.fetch,remember=remembered,pickDirectory=options=>window.showDirectoryPicker(options),workspaceMode='convert'}={}){
  const $=id=>document.getElementById(id),dialog=$('browser-folder-dialog'),note=$('browser-folder-status'),applyDialog=$('browser-apply-dialog');
  let session,mounts=[],baseline=[],running=false,queue=Promise.resolve(),cache=new Map(),resolveReady,pending=false;
- const ready=new Promise(resolve=>{resolveReady=resolve}),sessionKey='csync.browser-session.v1';
+ const ready=new Promise(resolve=>{resolveReady=resolve}),sessionKey='csync.browser-session.v2.'+(workspaceMode==='sync'?'sync':'convert');
+ let newBaseSelected=false;
  const enqueue=task=>{const next=queue.catch(()=>{}).then(task);queue=next;return next;};
  const save=async()=>{storage.setItem(sessionKey,JSON.stringify(session));await remember({mounts,baseline},session.id);};
  const grant=async(handle,readonly=false)=>{const mode=readonly?'read':'readwrite';if(await handle.queryPermission({mode})!=='granted'&&await handle.requestPermission({mode})!=='granted')throw Error('선택한 폴더의 읽기·쓰기 권한을 허용하세요.');};
@@ -68,7 +72,7 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
   if(running||pending)throw Error('진행 중인 작업을 먼저 완료하세요.');$('browser-folder-open').disabled=true;note.textContent='선택한 문서·첨부를 임시 작업공간에 준비하는 중…';
   try{
    if(session){await flush();await raw('/api/browser/session',undefined,'DELETE');await remember(null,session.id);}
-   session=await raw('/api/browser/session',{name:handle.name});mounts=[{virtual:session.base,handle}];baseline=[];cache.clear();await save();await open();return {path:session.base};
+   session=await raw('/api/browser/session',{name:handle.name});newBaseSelected=true;mounts=[{virtual:session.base,handle}];baseline=[];cache.clear();await save();await open();return {path:session.base};
   }finally{$('browser-folder-open').disabled=false;}
  }
  const chooseMount=async(kind,handle)=>{
@@ -84,7 +88,7 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
   const selected=kind==='base'?mounts[0]:kind==='out'
    ?mounts.find(m=>m.virtual===$('out-input').dataset?.path)||mounts.find(m=>m.virtual===session?.output)||mounts[0]
    :mounts.filter(m=>m.readonly).at(-1)||mounts[0];
-  const handle=await pickDirectory({id:'csync-'+kind,mode:kind==='reference'?'read':'readwrite',...(selected?{startIn:selected.handle}:{})});await grant(handle,kind==='reference');
+  const handle=await pickDirectory({id:'csync-'+(workspaceMode==='sync'?'sync':'convert')+'-'+kind,mode:kind==='reference'?'read':'readwrite',...(selected?{startIn:selected.handle}:{})});await grant(handle,kind==='reference');
   return enqueue(()=>kind==='base'?chooseBase(handle):chooseMount(kind,handle));
  };
  async function operation(path,options){
@@ -115,7 +119,12 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
   $('local-connection-status').textContent='저장된 폴더 연결을 확인하는 중…';
   enqueue(async()=>{
    let stored;
-   try{session=JSON.parse(storage.getItem(sessionKey));stored=session?await remember(undefined,session.id):undefined;}
+   try{
+    let value=storage.getItem(sessionKey);
+    // Assign the former shared connection to the current workflow only once.
+    if(!value){value=storage.getItem('csync.browser-session.v1');if(value){storage.setItem(sessionKey,value);storage.removeItem('csync.browser-session.v1');}}
+    session=JSON.parse(value??'null');stored=session?await remember(undefined,session.id):undefined;
+   }
    catch{note.textContent='저장된 폴더 연결 정보를 확인할 수 없습니다. 폴더를 다시 선택하세요.';}
    if(!session||!stored?.mounts?.length){$('local-connection-status').textContent='브라우저 폴더 선택 필요';dialog.showModal();return;}
    mounts=stored.mounts;baseline=stored.baseline??[];
@@ -130,5 +139,5 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
    }
   }).catch(error=>{note.textContent=error.message;$('local-connection-status').textContent='폴더 연결 확인 필요';dialog.showModal();});
  }
- return {ready,request,browser:true,remote:false,folderName:path=>mounts.find(m=>m.virtual===path)?.handle.name??''};
+ return {ready,request,browser:true,remote:false,newBaseSelected:()=>newBaseSelected,folderName:path=>mounts.find(m=>m.virtual===path)?.handle.name??''};
 }

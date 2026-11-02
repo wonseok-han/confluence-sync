@@ -1,4 +1,4 @@
-import { createBrowserWorkspace } from './browser-workspace.js';
+import { createBrowserWorkspace,browserWorkspaceMode } from './browser-workspace.js';
 import { createStandaloneTransport } from './standalone-transport.js';
 /** Static UI ↔ explicitly trusted loopback runner. No document data passes through hosting. */
 export function loopbackEndpoint(value) {
@@ -8,8 +8,8 @@ export function loopbackEndpoint(value) {
 }
 export function createConnection({document=globalThis.document, location=globalThis.location, history=globalThis.history, storage=globalThis.sessionStorage, fetch=globalThis.fetch}={}) {
   const explicitConnector=new URLSearchParams(location.hash?.slice(1)).has('csyncEndpoint')||storage?.getItem('csync.connector.v1');
-  if(document.querySelector('meta[name="csync-runtime"]')?.content==='standalone'&&!explicitConnector)return {...createBrowserWorkspace({fetch:createStandaloneTransport()}),standalone:true};
-  if(document.querySelector('meta[name="csync-runtime"]')?.content==='browser')return createBrowserWorkspace();
+  if(document.querySelector('meta[name="csync-runtime"]')?.content==='standalone'&&!explicitConnector)return {...createBrowserWorkspace({fetch:createStandaloneTransport(),workspaceMode:browserWorkspaceMode()}),standalone:true};
+  if(document.querySelector('meta[name="csync-runtime"]')?.content==='browser')return createBrowserWorkspace({workspaceMode:browserWorkspaceMode()});
   const $=id=>document.getElementById(id);
   const localToken=document.querySelector('meta[name="csync-token"]').content;
   let active=localToken?{endpoint:'',token:localToken}:null, resolveReady;

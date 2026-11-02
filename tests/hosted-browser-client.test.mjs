@@ -13,7 +13,7 @@ class Dir{
 function browser(app,pickers,options={}){
  const ids=['browser-folder-dialog','browser-folder-status','browser-folder-open','browser-folder-resume','browser-apply-dialog','browser-apply-status','browser-apply-retry','workspace-interface','local-disconnect','local-connection-status','root-path-editor','out-input','open'];const nodes=new Map(ids.map(id=>[id,{hidden:false,disabled:false,open:false,value:'',shown:0,showModal(){this.shown++;this.open=true},close(){this.open=false},addEventListener(){}}]));const values=options.values??new Map(),states=options.states??new Map(),calls=[],optionsHook=options.afterFetch;
  const storage={getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},location={reload(){this.reloaded=true}};
- const api=createBrowserWorkspace({document:{getElementById:id=>nodes.get(id)},window:{isSecureContext:true,showDirectoryPicker(){},addEventListener(){}},location,storage,remember:async(value,key)=>{if(value===undefined)return states.get(key);if(value===null)states.delete(key);else states.set(key,value)},pickDirectory:async settings=>{options.onPick?.(settings);return pickers.shift()},fetch:async(path,options)=>{calls.push(path);const response=await fetch(app.url+path,options);await optionsHook?.(path,options,response);return response;}});
+ const api=createBrowserWorkspace({document:{getElementById:id=>nodes.get(id)},window:{isSecureContext:true,showDirectoryPicker(){},addEventListener(){}},location,storage,remember:async(value,key)=>{if(value===undefined)return states.get(key);if(value===null)states.delete(key);else states.set(key,value)},workspaceMode:options.mode??'convert',pickDirectory:async settings=>{options.onPick?.(settings);return pickers.shift()},fetch:async(path,options)=>{calls.push(path);const response=await fetch(app.url+path,options);await optionsHook?.(path,options,response);return response;}});
  return {api,nodes,location,states,calls,async choose(){await new Promise(r=>setImmediate(r));await nodes.get('browser-folder-open').onclick();await api.ready;},async request(path,body){const response=await api.request(path,{method:body?'POST':'GET',...(body?{body:JSON.stringify(body)}:{})});const value=await response.json();assert.equal(response.status,200,JSON.stringify(value));return value;}};
 }
 test('browser controller uploads a selected folder, converts through the shared server and writes only into the selected output folder',async t=>{
@@ -120,10 +120,10 @@ test('base and output pickers use independent starting folders, including restor
  const source=new Dir('docs'),out=new Dir('converted');source.put('a.md','# A');
  const states=new Map(),values=new Map(),picks=[];
  const b=browser(app,[source,out,out,source],{states,values,onPick:value=>picks.push(value)});await b.choose();
- assert.equal(picks[0].id,'csync-base');assert.equal(picks[0].startIn,undefined);
- await b.request('/api/pick-folder',{kind:'out'});assert.equal(picks[1].id,'csync-out');assert.equal(picks[1].startIn,source);
+ assert.equal(picks[0].id,'csync-convert-base');assert.equal(picks[0].startIn,undefined);
+ await b.request('/api/pick-folder',{kind:'out'});assert.equal(picks[1].id,'csync-convert-out');assert.equal(picks[1].startIn,source);
  await b.request('/api/pick-folder',{kind:'out'});assert.equal(picks[2].startIn,out);
- await b.request('/api/pick-folder',{kind:'base'});assert.equal(picks[3].id,'csync-base');assert.equal(picks[3].startIn,source);
+ await b.request('/api/pick-folder',{kind:'base'});assert.equal(picks[3].id,'csync-convert-base');assert.equal(picks[3].startIn,source);
  const restoredPicks=[],restored=browser(app,[source],{states,values,onPick:value=>restoredPicks.push(value)});await restored.api.ready;
  await restored.request('/api/pick-folder',{kind:'base'});assert.equal(restoredPicks[0].startIn,source);
 });
@@ -138,4 +138,36 @@ for(const scope of ['file','folder'])test(`conversion validates only selected ${
  // The same dangerous link still blocks conversion when its own document is selected.
  const blocked=await b.api.request('/api/convert',{body:JSON.stringify({base:'/workspace/docs',file:'/workspace/docs/unselected.md',out:'/output',scope:'file',to:'markdown',fix:false,preview:true})});
  assert.equal(blocked.status,400);assert.match((await blocked.json()).error,/절대 경로/);
+});
+
+test('conversion and Confluence keep separate browser sessions even when folders have the same name',async t=>{
+ const app=await startHostedWeb({port:0,host:'127.0.0.1'});t.after(()=>app.close());
+ const convertRoot=new Dir('docs'),syncRoot=new Dir('docs'),replacement=new Dir('docs'),out=new Dir('converted');
+ convertRoot.put('a.md','# Convert');syncRoot.put('a.md','# Sync');replacement.put('other.md','# Other');
+ const states=new Map(),values=new Map(),options={states,values};
+ const convert=browser(app,[convertRoot,out],{...options,mode:'convert'});await convert.choose();await convert.request('/api/pick-folder',{kind:'out'});
+ const sync=browser(app,[syncRoot,replacement],{...options,mode:'sync'});await sync.choose();
+ assert.notEqual(JSON.parse(values.get('csync.browser-session.v2.convert')).id,JSON.parse(values.get('csync.browser-session.v2.sync')).id);
+ await sync.request('/api/pick-folder',{kind:'base'});
+ const restored=browser(app,[],{...options,mode:'convert'});await restored.api.ready;
+ assert.equal(restored.nodes.get('browser-folder-dialog').shown,0);assert.equal(restored.api.folderName('/output'),'converted');
+ await restored.request('/api/convert',{base:'/workspace/docs',file:'/workspace/docs/a.md',out:'/output',scope:'file',to:'markdown',fix:false,preview:false});
+ assert.equal(out.text('a.md'),'# Convert');assert.equal(convertRoot.text('a.md'),'# Convert');assert.equal(syncRoot.text('a.md'),'# Sync');
+ const restoredSync=browser(app,[],{...options,mode:'sync'});await restoredSync.api.ready;
+ assert.deepEqual((await restoredSync.request('/api/browse')).entries.map(e=>e.name),['other.md']);
+ await restoredSync.nodes.get('local-disconnect').onclick();assert.equal(values.has('csync.browser-session.v2.sync'),false);assert.equal(values.has('csync.browser-session.v2.convert'),true);
+ assert.deepEqual((await restored.request('/api/browse')).entries.map(e=>e.name),['a.md']);
+});
+
+test('the legacy shared browser session migrates only to the active workflow',async t=>{
+ const app=await startHostedWeb({port:0,host:'127.0.0.1'});t.after(()=>app.close());
+ const source=new Dir('old'),other=new Dir('new');source.put('old.md','# Old');other.put('new.md','# New');const states=new Map(),values=new Map();
+ const initial=browser(app,[source],{states,values});await initial.choose();
+ values.set('csync.browser-session.v1',values.get('csync.browser-session.v2.convert'));values.delete('csync.browser-session.v2.convert');
+ const migrated=browser(app,[],{states,values,mode:'sync'});await migrated.api.ready;
+ assert.equal(values.has('csync.browser-session.v1'),false);assert.equal(values.has('csync.browser-session.v2.sync'),true);
+ assert.deepEqual((await migrated.request('/api/browse')).entries.map(e=>e.name),['old.md']);
+ const convert=browser(app,[other],{states,values,mode:'convert'});await convert.choose();
+ assert.deepEqual((await convert.request('/api/browse')).entries.map(e=>e.name),['new.md']);
+ assert.deepEqual((await migrated.request('/api/browse')).entries.map(e=>e.name),['old.md']);
 });

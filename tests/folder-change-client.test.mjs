@@ -23,8 +23,8 @@ function fixture({browser=true,cancel=false}={}) {
 test('browser base change saves only the new workspace before reloading, without browsing an obsolete session',async()=>{
  const s=fixture();await s.ctx.pick('base');
  assert.deepEqual(s.calls,['save','reload']);assert.equal(s.ctx.busy,false);
- assert.deepEqual(s.saved[0].workspaces,{convert:{},sync:{base:'/workspace/new',folder:'/workspace/new',file:null,selectedDirectory:false,baseInput:'/workspace/new',expanded:[]}});
- assert.equal(s.saved[0].out,'');assert.equal(s.saved[0].referenceRoots,'');
+ assert.deepEqual(s.saved[0].workspaces,{convert:{base:'/workspace/old'},sync:{base:'/workspace/new',folder:'/workspace/new',file:null,selectedDirectory:false,baseInput:'/workspace/new',expanded:[]}});
+ assert.equal(s.saved[0].out,'/workspace/old/selected');assert.equal(s.saved[0].referenceRoots,'');
  assert.equal(s.ctx.selectedDirectory,false);assert.equal(s.ctx.treeCache.size,0);assert.equal(s.ctx.entries.length,0);
 });
 
@@ -44,4 +44,19 @@ test('browser output labels stay separate from persisted virtual paths, while na
  assert.equal(browser.nodes.get('out-input').value,'선택한 출력 폴더');assert.equal(browser.saved[0].out,'/workspace/new');
  const native=fixture({browser:false});await native.ctx.pick('out');native.ctx.savePreferences();
  assert.equal(native.nodes.get('out-input').value,'/workspace/new');assert.equal(native.saved[0].out,'/workspace/new');
+});
+
+test('changing the conversion base keeps the Confluence explorer and reference folders',async()=>{
+ const s=fixture();s.ctx.mode='convert';await s.ctx.pick('base');
+ assert.deepEqual(s.saved[0].workspaces.sync,{base:'/workspace/old'});assert.equal(s.saved[0].workspaces.convert.base,'/workspace/new');
+ assert.equal(s.saved[0].referenceRoots,'/workspace/old/selected');assert.equal(s.saved[0].out,'');
+});
+
+for(const browser of [false,true])test(`switching workflow restores its own explorer: browser=${browser}`,async()=>{
+ const s=fixture({browser}),show=source.slice(source.indexOf('async function showMode(next)'),source.indexOf("for (const name of ['convert', 'sync']) {",source.indexOf('async function showMode(next)')));
+ s.ctx.workspaces.convert={base:'/workspace/convert-root'};
+ s.ctx.loadPreferences=()=>s.saved.at(-1);s.ctx.displayMode=next=>{s.ctx.mode=next;};s.ctx.restoreExplorer=async saved=>{s.calls.push(['restore',saved.base]);};
+ runInNewContext(show+'\nglobalThis.switchMode=showMode;',s.ctx);await s.ctx.switchMode('convert');
+ if(browser){assert.equal(s.saved.at(-1).mode,'convert');assert.equal(s.saved.at(-1).workspaces.sync.base,'/workspace/old');assert.equal(s.saved.at(-1).workspaces.convert.base,'/workspace/convert-root');assert.equal(s.calls.at(-1),'reload');}
+ else{assert.ok(s.calls.some(call=>Array.isArray(call)&&call[0]==='restore'&&call[1]==='/workspace/convert-root'));assert.ok(!s.calls.includes('reload'));}
 });
