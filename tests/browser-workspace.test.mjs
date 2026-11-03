@@ -49,3 +49,9 @@ test('successful relocation removes empty old parents but preserves unmirrored l
   if(preserve)assert.equal(old.text('.keep'),'Unmirrored');
  }
 });
+
+test('browser scan evicts deleted paths so recreating the same name and timestamp rehashes its new bytes',async()=>{
+ const root=new Directory(),first=root.put('a.md','old'),stamp=first.stamp,mounts=[{virtual:'/workspace/docs',handle:root}],cache=new Map();
+ const initial=await scanBrowserFiles(mounts,cache);root.items.delete('a.md');await scanBrowserFiles(mounts,cache);assert.equal(cache.size,0);
+ root.put('a.md','new').stamp=stamp;const next=await scanBrowserFiles(mounts,cache);assert.notEqual(next[0].hash,initial[0].hash);
+});

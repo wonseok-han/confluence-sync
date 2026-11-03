@@ -1,7 +1,6 @@
 import { green, cyan } from '../shared/colors.js';
 import { reconcilePages } from './reconcile.js';
 import { localStateHash, matchesLocalState } from './local-state.js';
-import { buildTreeRenderer } from './render.js';
 /** Document-level upload selection. Source files are never copied into the index. */
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync, realpathSync } from 'node:fs';
@@ -80,8 +79,8 @@ export async function inspectStaging(base: string, options: Options = {}, only?:
   const prepared = await preparePushTree(base, all, selected, { referenceRoots: options.referenceRoots ?? [], baseUrl: options.baseUrl });
   try {
     const originalMapping = loadMapping(mappingPath(base));
-    const mapping = reconcilePages(base, originalMapping, all, selected, requireScope(workspace));
-    const legacy = buildTreeRenderer(base, all);
+    const mapping = reconcilePages(base, originalMapping, all, selected, requireScope(workspace), prepared.original.docs);
+    const legacy = prepared.original;
     const rows: StagingRow[] = selected.map(path => {
       const doc = prepared.docs[path], rendered = prepared.render(path, doc.body, doc.title), hash = docHash(doc.title, rendered);
       if (sourceHash(base, path) !== sources[path]) throw new Error('조회 중 문서가 변경되었습니다. 다시 시도하세요.');

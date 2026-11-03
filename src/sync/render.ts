@@ -11,10 +11,11 @@ import { buildReferenceLookup } from './references.js';
 import { relative } from 'node:path';
 import { toStorage, type Rendered } from '../documents/markdown.js';
 import {
-  buildDocIndex, buildVault, collectAssets, vaultResolver, resolveAnchorTargets, type Doc,
+  buildDocIndex, buildVault, collectAssets, vaultResolver, resolveAnchorTargets, type Doc, type Vault,
 } from '../documents/catalog.js';
 
 export type TreeRenderer = {
+  vault: Vault;
   /** base 상대 경로 → 제목 */
   titles: Record<string, string>;
   /** base 상대 경로 → 문서(제목·본문·frontmatter·헤딩) */
@@ -22,10 +23,10 @@ export type TreeRenderer = {
   render: (rel: string, body: string, title: string, legacyCallouts?: boolean | 'panels') => Rendered & { linkWarnings: string[]; referenceLinks: string[] };
 };
 
-export function buildTreeRenderer(baseDir: string, rels: string[], options?: { referenceRoots: string[]; baseUrl?: string; referenceBase?: string }): TreeRenderer {
-  const { titles, anchors, docs } = buildDocIndex(rels, baseDir);
+export function buildTreeRenderer(baseDir: string, rels: string[], options?: { referenceRoots: string[]; baseUrl?: string; referenceBase?: string }, sourceDocs?: Record<string, Doc>): TreeRenderer {
+  const { titles, anchors, docs } = buildDocIndex(rels, baseDir, sourceDocs);
   // Obsidian [[wikilink]] 해석용 이름 인덱스
-  const vault = buildVault(rels, collectAssets(baseDir).map((f) => relative(baseDir, f)),options?.referenceBase??baseDir);
+  const vault = buildVault(rels, collectAssets(baseDir).map((f) => relative(baseDir, f).split('\\').join('/')),options?.referenceBase??baseDir);
   // 누가 어느 헤딩을 가리키는지 먼저 모은다 — 그 헤딩에만 Anchor 매크로를 심는다.
   const lookup = options ? buildReferenceLookup(options.referenceBase ?? baseDir, rels, options.referenceRoots, options.baseUrl) : null;
   const anchorTargets = resolveAnchorTargets(docs, vault, lookup?.localTarget);
@@ -54,5 +55,5 @@ export function buildTreeRenderer(baseDir: string, rels: string[], options?: { r
     return { ...result, linkWarnings: [...warnings], referenceLinks: [...references] };
   };
 
-  return { titles, docs, render };
+  return { titles, docs, render, vault };
 }
