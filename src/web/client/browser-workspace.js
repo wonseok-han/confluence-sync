@@ -14,7 +14,9 @@ export async function scanBrowserFiles(mounts,cache=new Map(),force=false){
   const rel=[...parents,name].join('/');if((mount.readonly&&rel==='.env')||!allowed(rel))continue;if(handle.kind==='directory'){await walk(mount,handle,[...parents,name]);continue;}
   const file=await handle.getFile();total+=file.size;if(file.size>MAX_FILE||total>MAX_TOTAL||entries.length>=20000)throw Error('작업공간 한도를 초과했습니다(파일 100MiB, 전체 512MiB, 20,000개).');
   const path=mount.virtual+'/'+rel,stamp=`${file.size}:${file.lastModified}`,prior=cache.get(path);const hash=!force&&prior?.stamp===stamp?prior.hash:await sha256(await file.arrayBuffer());cache.set(path,{stamp,hash});entries.push({path,size:file.size,hash,file});
- }}for(const mount of mounts)await walk(mount,mount.handle);return entries.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);
+ }}for(const mount of mounts)await walk(mount,mount.handle);
+ const present=new Set(entries.map(entry=>entry.path));for(const path of cache.keys())if(!present.has(path))cache.delete(path);
+ return entries.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);
 }
 /** Preflight all affected files; on partial failure roll back only unchanged writes. */
 export async function applyBrowserChanges(mounts,baseline,changes,download){
@@ -54,7 +56,7 @@ export function createBrowserWorkspace({document=globalThis.document,window=glob
  const headers=()=>({'X-Csync-Session':session.id,'X-Csync-Token':session.token});
  async function flush(){
   const changes=await raw('/api/browser/changes');if(!changes.files.length&&!changes.removed.length)return;
-  try{pending=true;await applyBrowserChanges(mounts,baseline,changes,async path=>{const response=await fetch('/api/browser/file?path='+encodeURIComponent(path),{headers:headers(),credentials:'omit'});if(!response.ok)throw Error('결과 파일을 받지 못했습니다.');return response.arrayBuffer();});await raw('/api/browser/ack',{files:changes.snapshot});baseline=changes.snapshot;cache.clear();await save();pending=false;applyDialog.close();}
+  try{pending=true;await applyBrowserChanges(mounts,baseline,changes,async path=>{const response=await fetch('/api/browser/file?path='+encodeURIComponent(path),{headers:headers(),credentials:'omit'});if(!response.ok)throw Error('결과 파일을 받지 못했습니다.');return response.arrayBuffer();});await raw('/api/browser/ack',{files:changes.snapshot});baseline=changes.snapshot;for(const file of changes.files)cache.delete(file.path);for(const path of changes.removed)cache.delete(path);await save();pending=false;applyDialog.close();}
   catch(error){$('browser-apply-status').textContent=error.message;if(!applyDialog.open)applyDialog.showModal();throw error;}
  }
  $('browser-apply-retry').onclick=async()=>{if(running)return;try{for(const m of mounts)if(!m.readonly)await grant(m.handle);await enqueue(flush);}catch(error){$('browser-apply-status').textContent=error.message;}};

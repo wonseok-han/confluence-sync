@@ -1,15 +1,15 @@
 /** Infer local page moves without writing metadata or contacting Confluence. */
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { buildFolderIndex, parentKeyOf, readDoc } from '../documents/catalog.js';
+import { buildFolderIndex, parentKeyOf, readDoc, type Doc } from '../documents/catalog.js';
 import type { Mapping } from './mapping.js';
 
-export function reconcilePages(base: string, mapping: Mapping, allFiles: string[], selected: string[], scope: { id: string; type: string }): Mapping {
+export function reconcilePages(base: string, mapping: Mapping, allFiles: string[], selected: string[], scope: { id: string; type: string }, sourceDocs?: Record<string, Doc>): Mapping {
   const next = structuredClone(mapping);
   const byId = new Map(Object.entries(mapping).map(([key, entry]) => [entry.pageId, { key, entry }]));
   const oldFolders = buildFolderIndex(Object.keys(mapping).filter(key => key.endsWith('.md')));
   const folders = buildFolderIndex(allFiles);
-  const docs = new Map(allFiles.map(key => [key, readDoc(base, key)]));
+  const docs = new Map(allFiles.map(key => [key, sourceDocs?.[key] ?? readDoc(base, key)]));
   const seen = new Map<string, string>();
   for (const [key, doc] of docs) {
     const id = doc.fm.pageId ?? mapping[key]?.pageId;

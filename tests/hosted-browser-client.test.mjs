@@ -171,3 +171,20 @@ test('the legacy shared browser session migrates only to the active workflow',as
  assert.deepEqual((await convert.request('/api/browse')).entries.map(e=>e.name),['new.md']);
  assert.deepEqual((await migrated.request('/api/browse')).entries.map(e=>e.name),['old.md']);
 });
+
+test('sequential add operations reuse unchanged browser attachment hashes but approval still forces a fresh read',async t=>{
+ const app=await startHostedWeb({port:0,host:'127.0.0.1',syncRunner:async()=>0});t.after(()=>app.close());
+ const {root}=workspace(t);bindScope(root,{connection:{baseUrl:'https://team.atlassian.net/wiki'}});const source=new Dir('docs');source.put('a.md','# A');source.put('b.md','# B');
+ source.put('.env','CONFLUENCE_BASE_URL=https://team.atlassian.net/wiki\nCONFLUENCE_EMAIL=demo@example.invalid\nCONFLUENCE_API_TOKEN=synthetic\nCONFLUENCE_SPACE_KEY=TEST\n');
+ const metadata=await source.getDirectoryHandle('.csync',{create:true});metadata.put('workspace.json',readFileSync(join(root,'.csync/workspace.json'),'utf8'));
+ const attachment=source.put('manual.pdf','x'.repeat(65536)),get=attachment.getFile;let reads=0;
+ attachment.getFile=async function(){const file=await get.call(this),buffer=file.arrayBuffer.bind(file);file.arrayBuffer=async()=>{reads++;return buffer();};return file;};
+ const b=browser(app,[source]);await b.choose();
+ const input={base:'/workspace/docs',envId:'',action:'add'};
+ await b.request('/api/sync/staging',{...input,paths:['a.md']});const afterFirst=reads;
+ await b.request('/api/sync/staging',{...input,paths:['b.md']});assert.equal(reads,afterFirst);
+ // Critical operations force a complete mirror, even if a file keeps its size and timestamp.
+ attachment.bytes=new TextEncoder().encode('y'.repeat(65536));
+ await b.request('/api/sync/preview',{base:'/workspace/docs',target:'',envId:'',verify:false,referenceRoots:[]});assert.ok(reads>afterFirst);
+ let job;for(let n=0;n<100;n++){job=(await b.request('/api/sync/job')).job;if(job.state!=='running')break;await new Promise(resolve=>setTimeout(resolve,5));}assert.equal(job.state,'succeeded',job.log);
+});

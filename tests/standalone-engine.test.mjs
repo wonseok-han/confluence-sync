@@ -169,3 +169,18 @@ test('compressed browser staging and remote diff accept automatic vault paths wi
  const diff=await c.api('/api/sync/diff',{base:c.session.base,envId:'',path,remote:true});assert.equal(diff.status,200,diff.error);assert.equal(diff.before,diff.after);assert.equal(calls,1);
  assert.equal(await c.read(c.session.base+'/'+path),files[path]);assert.equal(await c.read(c.session.base+'/.csync/mapping.json'),files['.csync/mapping.json']);
 });
+
+test('compressed browser preview keeps staged anchors stable across separately added notes and still refuses actual edits',async t=>{
+ const c=await client(),files={'.env':env,'.csync/workspace.json':JSON.stringify(workspace),
+  'topic/source.md':'# Source\n\n[[target#Section|Read]]\n',
+  'topic/target.md':'# Target\n\n## Section\n\nBody\n',
+  'other/target.md':'# Other\n\n## Section\n'};
+ await c.mirror(files);t.mock.method(globalThis,'fetch',async()=>{throw Error('Preview must stay offline');});
+ const input={base:c.session.base,envId:'',referenceRoots:[]};
+ for(const path of ['topic/target.md','topic/source.md']){const added=await c.api('/api/sync/staging',{...input,paths:[path],action:'add'});assert.equal(added.status,200,added.error);}
+ const preview=await c.api('/api/sync/preview',{...input,target:'',verify:false});assert.equal(preview.status,202,preview.error);
+ const done=await c.finish();assert.equal(done.state,'succeeded',done.log);assert.ok(done.planId);
+ files['.csync/index.json']=await c.read(c.session.base+'/.csync/index.json');await c.ack();files['topic/target.md']+='Edited\n';await c.mirror(files);
+ const edited=await c.api('/api/sync/preview',{...input,target:'',verify:false});assert.equal(edited.status,202,edited.error);
+ const rejected=await c.finish();assert.equal(rejected.state,'failed');assert.match(rejected.log,/추가 후 문서·첨부·링크가 변경/);
+});

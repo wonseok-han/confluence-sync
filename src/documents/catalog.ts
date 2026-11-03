@@ -83,6 +83,7 @@ export function readDoc(baseDir: string, rel: string): Doc {
 export function buildDocIndex(
   rels: string[],
   baseDir: string,
+  sourceDocs?: Record<string, Doc>,
 ): {
   titles: Record<string, string>;
   anchors: Record<string, Map<string, string>>;
@@ -92,7 +93,7 @@ export function buildDocIndex(
   const anchors: Record<string, Map<string, string>> = {};
   const docs: Record<string, Doc> = {};
   for (const rel of rels) {
-    const doc = readDoc(baseDir, rel);
+    const doc = sourceDocs?.[rel] ?? readDoc(baseDir, rel);
     titles[rel] = doc.title;
     anchors[rel] = doc.anchors;
     docs[rel] = doc;
@@ -141,7 +142,9 @@ export function resolveAnchorTargets(
         slug = decodeAnchor(la.fragment).toLowerCase();
       }
 
-      if (localTarget && la.dest) target = localTarget(rel, la.dest, la.wiki);
+      // Reference lookup may be ambiguous even when the vault resolved a nearby note.
+      // Keep that local target so preprocessing other notes cannot change anchor hashes.
+      if (localTarget && la.dest) target = localTarget(rel, la.dest, la.wiki) ?? target;
       if (!target || !slug) continue;
       // 실제로 존재하는 헤딩만 — 없는 앵커는 markdown.ts 가 경고로 잡는다
       if (!docs[target]?.anchors.has(slug)) continue;
