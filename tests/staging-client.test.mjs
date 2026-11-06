@@ -105,3 +105,24 @@ test('unknown remote state on an unchanged local file is attention, not outgoing
  const list=s.nodes.get('sync-stage-list');assert.equal(list.children[0].textContent,'! 연결 확인 필요');
  assert.equal(list.querySelectorAll('button').some(button=>button.isRestore),false);assert.equal(list.querySelectorAll('input')[0].disabled,true);assert.match(s.nodes.get('sync-stage-note').textContent,/로컬 수정을 뜻하지/);
 });
+
+
+test('remote-only edits and moves have no restore action; local edits and missing files still do',async t=>{
+ const s=setup(t),restored=[];
+ const listed=[
+  {path:'remote-edit.md',status:'same',remoteState:'changed'},
+  {path:'remote-move.md',status:'same',remoteState:'changed',remoteReasons:['원격 부모 위치 변경']},
+  {path:'staged-same.md',status:'same',staged:true,remoteState:'changed'},
+  {path:'both.md',status:'changed',remoteState:'changed'},
+  {path:'local.md',status:'changed',remoteState:'unchanged'},
+  {path:'missing.md',status:'unavailable',remoteState:'unchanged'},
+  {path:'unverified.md',status:'unavailable',remoteState:'changed',localUnverified:true},
+ ].map((row,i)=>({pageId:String(i+1),staged:false,stale:false,...row}));
+ const control=s.make(async()=>({rows:listed}),{restore:(...args)=>restored.push(args),canRestore:()=>true});await control.reload();
+ const buttons=s.nodes.get('sync-stage-list').querySelectorAll('button').filter(button=>button.isRestore);
+ assert.equal(buttons.length,3);
+ for(const button of buttons){assert.equal(button.disabled,false);await button.onclick();}
+ assert.deepEqual(restored.map(args=>args[0]).sort(),['both.md','local.md','missing.md']);
+ assert.equal(restored.find(args=>args[0]==='missing.md')[1],false);
+ assert.equal(restored.find(args=>args[0]==='both.md')[1],true);
+});
