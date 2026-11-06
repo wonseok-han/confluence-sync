@@ -50,7 +50,8 @@ export function attachmentMapper(file: string, base: string) {
   }
   function rewrite(text: string): string {
     return mapMarkdownText(text, part => {
-      const md = part.replace(/(?<!!)(!?)\[([^\]\n]*)\]\((<[^>\n]+>|[^()\s]+)\)/g,
+      // Labels may contain escaped brackets or bracketed titles after --fix.
+      const md = part.replace(/(?<!!)(!?)\[((?:\\.|[^\[\]\\\n]|\[(?:\\.|[^\[\]\\\n])*\])*)\]\((<[^>\n]+>|[^()\s]+)\)/g,
         (all, bang, label, raw, offset) => {
           if ((part.slice(0, offset).match(/\\+$/)?.[0].length ?? 0) % 2) return all;
           const dest = relocate(raw.replace(/^<(.*)>$/, '$1'));
