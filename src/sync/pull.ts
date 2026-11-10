@@ -420,7 +420,7 @@ export async function mappingPass(
       const rel = posix(relative(baseDir, abs));
       const doc = rel.startsWith('..') ? undefined : docs[rel];
       if (!doc) continue; // base 밖으로 받았거나 제외 규칙에 걸린 문서는 기록하지 않는다
-      m[rel] = { pageId: id, title: doc.title, hash: docHash(doc.title, render(rel, doc.body, doc.title)), localHash: localStateHash(baseDir, rel, render(rel, doc.body, doc.title)), ...(versions.has(id) ? { remoteVersion: versions.get(id) } : {}), ...(parents.has(id) ? {remoteParentId: parents.get(id)} : {}) };
+      m[rel] = { pageId: id, title: doc.title, hash: docHash(doc.title, render(rel, doc.body, doc.title)), localHash: localStateHash(baseDir, rel, render(rel, doc.body, doc.title)), localHashVersion:2, ...(versions.has(id) ? { remoteVersion: versions.get(id) } : {}), ...(parents.has(id) ? {remoteParentId: parents.get(id)} : {}) };
       pending.push({rel,text:readFileSync(abs,'utf8')});
       n++;
     }

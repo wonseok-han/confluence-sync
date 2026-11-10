@@ -74,6 +74,7 @@ test('actual Push uploads generated PNG bytes and keeps the Obsidian source inta
  mockFetch(t,steps,scopeResponder(root,steps));await runPush(['--base',root]);
  assert.equal(readFileSync(join(root,'doc.md'),'utf8'),original);assert.equal(existsSync(join(root,'attachments')),false);
  const entry=JSON.parse(readFileSync(mappingPath(root),'utf8'))['doc.md'];assert.equal(entry.hash,hash);
+ assert.equal(entry.localHashVersion,2);
  mockFetch(t,[],scopeResponder(root,[]));await runPush(['--base',root]);assert.equal(JSON.parse(readFileSync(mappingPath(root),'utf8'))['doc.md'].hash,hash);
 });
 

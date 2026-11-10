@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 export { MAPPING_FILE } from './metadata.js';
 
-export type Mapping = Record<string, { pageId: string; title?: string; hash?: string; localHash?: string; sourceObject?: string; type?: 'page' | 'folder'; remoteVersion?: number; remoteParentId?: string; pendingMove?: { parentKey: string | null } }>;
+export type Mapping = Record<string, { pageId: string; title?: string; hash?: string; localHash?: string; localHashVersion?: 2; sourceObject?: string; type?: 'page' | 'folder'; remoteVersion?: number; remoteParentId?: string; pendingMove?: { parentKey: string | null } }>;
 
 export function loadMapping(path: string): Mapping {
   let data: unknown;
@@ -18,6 +18,7 @@ export function loadMapping(path: string): Mapping {
     !entry || typeof entry.pageId !== 'string' || !entry.pageId ||
     (entry.sourceObject !== undefined && (typeof entry.sourceObject !== 'string' || !/^[a-f0-9]{64}$/.test(entry.sourceObject))) ||
     (entry.localHash !== undefined && (typeof entry.localHash !== 'string' || !/^[a-f0-9]{64}$/.test(entry.localHash))) ||
+    (entry.localHashVersion !== undefined && entry.localHashVersion !== 2) ||
     (entry.remoteParentId !== undefined && (typeof entry.remoteParentId !== 'string' || !entry.remoteParentId)) ||
     (entry.remoteVersion !== undefined && (!Number.isInteger(entry.remoteVersion) || entry.remoteVersion < 1)))) {
     throw new Error(`잘못된 매핑 파일: ${path}`);

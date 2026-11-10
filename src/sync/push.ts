@@ -296,13 +296,13 @@ export async function runPush(argv: string[]): Promise<void> {
         const result = await apiClient.upsertPage(work, spaceId, rel, title, r.storage, hash, parentId);
         saveMapping(MAPPING_PATH, work);
         if (result === 'skipped') {
-          work[rel].localHash = localHashes[rel]; work[rel].sourceObject = storeBaseline(BASE_DIR, sourceTexts[rel]); saveMapping(MAPPING_PATH, work);
+          work[rel].localHash = localHashes[rel]; work[rel].localHashVersion=2; work[rel].sourceObject = storeBaseline(BASE_DIR, sourceTexts[rel]); saveMapping(MAPPING_PATH, work);
           console.log(`  ${gray('=  변경없음')}  ${rel}`);
           skipped++; completeStaged(BASE_DIR, rel, staged?.[rel]);
           continue;
         }
         if (result === 'moved') {
-          work[rel].localHash = localHashes[rel]; work[rel].sourceObject = storeBaseline(BASE_DIR, sourceTexts[rel]); saveMapping(MAPPING_PATH, work);
+          work[rel].localHash = localHashes[rel]; work[rel].localHashVersion=2; work[rel].sourceObject = storeBaseline(BASE_DIR, sourceTexts[rel]); saveMapping(MAPPING_PATH, work);
           console.log(`  ${cyan('→ 이동')}  ${rel}  (부모: ${pk ?? 'ROOT'})`);
           moved++; completeStaged(BASE_DIR, rel, staged?.[rel]);
           continue;
@@ -314,7 +314,7 @@ export async function runPush(argv: string[]): Promise<void> {
           delete work[rel].hash; // 부분 실패는 다음 동기화에서 재시도한다.
           saveMapping(MAPPING_PATH, work);
         }
-        if (imgOk === r.attachments.length) { work[rel].localHash = localHashes[rel]; work[rel].sourceObject = storeBaseline(BASE_DIR, sourceTexts[rel]); saveMapping(MAPPING_PATH, work); }
+        if (imgOk === r.attachments.length) { work[rel].localHash = localHashes[rel]; work[rel].localHashVersion=2; work[rel].sourceObject = storeBaseline(BASE_DIR, sourceTexts[rel]); saveMapping(MAPPING_PATH, work); }
         if (imgOk === r.attachments.length) completeStaged(BASE_DIR, rel, staged?.[rel]);
         const label = result === 'created' ? green('＋ 생성')
           : yellow('↻ 갱신');

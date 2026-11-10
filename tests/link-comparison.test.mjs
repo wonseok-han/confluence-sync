@@ -31,7 +31,7 @@ for(const change of ['alias','fragment','target','body','frontmatter','code','as
  const before=(change==='frontmatter'?'---\ntitle: A\n---\n':'')+original+(change==='code'?'\n`[[target|Read]]`\n':'');
  const {root,put}=workspace(t,{[path]:before,[target]:'# Target','archive/[폐기]_topic/other.md':'# Other','asset.bin':'old'});bindScope(root);
  const rendered={attachments:change==='asset'?[{filename:'asset.bin',abs:join(root,'asset.bin')}]:[]};
- const entry={sourceObject:storeBaseline(root,before),localHash:localStateHash(root,path,rendered)};
+ const entry={sourceObject:storeBaseline(root,before),localHash:localStateHash(root,path,rendered),localHashVersion:2};
  let after=before.replace('target#',expanded(root)+'#');
  if(change==='alias')after=after.replace('|Read','|Changed');
  if(change==='fragment')after=after.replace('#Section','#Other');
@@ -41,6 +41,24 @@ for(const change of ['alias','fragment','target','body','frontmatter','code','as
  if(change==='code')after=after.replace('`[[target|Read]]`','`[['+expanded(root)+'|Read]]`');
  if(change==='asset')put('asset.bin','changed');
  put(path,after);assert.equal(matchesLocalState(root,path,rendered,entry,[path,target,'archive/[폐기]_topic/other.md']),false);
+});
+
+test('automatic Markdown note paths remain clean with balanced parentheses and code labels',t=>{
+ const before='# A\n\n[`Read`](target.md)\n',folder='archive/(topic)',file=folder+'/a.md',linked=folder+'/target.md';
+ const {root,put}=workspace(t,{[file]:before,[linked]:'# Target'});bindScope(root);
+ const rendered={attachments:[]},entry={sourceObject:storeBaseline(root,before),localHash:localStateHash(root,file,rendered),localHashVersion:2};
+ put(file,`# A\n\n[\`Read\`](Vault/${basename(root)}/${linked})\n`);
+ assert.equal(matchesLocalState(root,file,rendered,entry,[file,linked]),true);
+});
+
+test('legacy attachment hashes defer to an unchanged Markdown baseline while versioned hashes detect bytes',t=>{
+ const source='# A\n\n![asset](asset.bin)\n';
+ const {root,put}=workspace(t,{[path]:source,'asset.bin':'old'});bindScope(root);
+ const rendered={attachments:[{filename:'asset.bin',abs:join(root,'asset.bin')}]};
+ const entry={sourceObject:storeBaseline(root,source),localHash:localStateHash(root,path,rendered)};
+ put('asset.bin','changed');
+ assert.equal(matchesLocalState(root,path,rendered,entry,[path]),true);
+ assert.equal(matchesLocalState(root,path,rendered,{...entry,localHashVersion:2},[path]),false);
 });
 
 for(const wiki of [false,true])for(const changed of [false,true])test(`remote diff resolves equivalent links but detects target edits: wiki=${wiki}, changed=${changed}`,async t=>{
@@ -59,6 +77,17 @@ test('automatic explicit alias preserves an originally implicit link label',t=>{
  const before='# A\n\n[[target]]\n';const {root,put}=workspace(t,{[path]:before,[target]:'# Target'});bindScope(root);
  const rendered={attachments:[]},entry={localHash:localStateHash(root,path,rendered),sourceObject:storeBaseline(root,before)};
  put(path,'# A\n\n[['+expanded(root)+'|target]]\n');assert.equal(matchesLocalState(root,path,rendered,entry,[path,target]),true);
+});
+
+test('generated PDF page bytes do not create local edits across renderers',t=>{
+ const source='# A\n\n[PDF](source.pdf#page=2)\n',filename='pdfjs-1234567890abcdef12345678-2.png';
+ const {root,put}=workspace(t,{[path]:source,'page.png':'renderer one'});bindScope(root);
+ const rendered={attachments:[{filename,abs:join(root,'page.png')}]},first=localStateHash(root,path,rendered);
+ put('page.png','renderer two');assert.equal(localStateHash(root,path,rendered),first);
+ assert.notEqual(localStateHash(root,path,{attachments:[{filename:'pdfjs-abcdef1234567890abcdef12-2.png',abs:join(root,'page.png')}]}),first);
+ const legacy={localHash:'0'.repeat(64),sourceObject:storeBaseline(root,source)};
+ assert.equal(matchesLocalState(root,path,rendered,legacy,[path]),true);
+ assert.equal(matchesLocalState(root,path,rendered,{...legacy,localHashVersion:2},[path]),false);
 });
 
 test('publishing a topic folder resolves all seven mixed vault-root and short navigation links with duplicate filenames elsewhere',async t=>{
