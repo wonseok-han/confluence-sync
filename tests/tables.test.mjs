@@ -87,6 +87,17 @@ test('HTML table links and images use normal page, attachment and rewrite rules'
  assert.match(rewritten.storage,/href="https:\/\/example.com\/pages\/2"/);
 });
 
+test('HTML table wikilinks and Obsidian internal anchors become Confluence links',()=>{
+ const html=table('[[other#Section|문서]] <a class="internal-link" data-href="#Local Heading" href="#Local Heading">현재 절</a>');
+ const result=toStorage(html,'doc.md',{'doc.md':'Doc','other.md':'Other'},'/tmp',{
+  title:'Doc',resolveLink:target=>target==='other'?'other.md':null,
+  anchorIndex:{'doc.md':new Map([['local-heading','Local Heading']]),'other.md':new Map([['section','Section']])},
+ });
+ assert.equal(result.internalLinks,2);assert.equal(result.anchorLinks,2);
+ assert.match(result.storage,/ri:content-title="Other"/);assert.match(result.storage,/ac:anchor="section"/);assert.match(result.storage,/ac:anchor="local-heading"/);
+ assert.doesNotMatch(result.storage,/\[문서\]\(|\[\[other/);
+});
+
 test('width-preserving pull downloads table images and files with local HTML links',async t=>{
  const {root,put}=workspace(t);configure(t);bindScope(root);put('.csync/mapping.json',JSON.stringify({'Table.md':{pageId:'123'}}));
  const html=table('<a href="/download/attachments/123/report.pdf?version=1">파일</a> <img src="/download/attachments/123/image.png">');
@@ -99,13 +110,15 @@ test('width-preserving pull downloads table images and files with local HTML lin
 });
 
 test('HTML table page and self anchors are relinked without touching code examples',t=>{
- const {put}=workspace(t);
+ const {root,put}=workspace(t);
  const html=table('<a href="https://example.invalid/wiki/spaces/T/pages/2/B#BSection">B</a> <a href="#ASelf">self</a>');
  const a=put('a.md','---\ntitle: A\n---\n## Self\n\n'+html+'\n\n```html\n'+html+'\n```\n');
  const b=put('nested/b.md','---\ntitle: B\n---\n## Section\n');const paths=new Map([['1',a],['2',b]]);
  const pass=anchorPass([a,b],paths);assert.equal(pass.count,2);assert.equal(relinkPass([a,b],paths,true,pass.info),1);
- const text=readFileSync(a,'utf8');assert.match(text,/href="nested\/b.md#section"/);assert.match(text,/href="#self"/);
+ const text=readFileSync(a,'utf8');assert.match(text,/class="internal-link"/);assert.match(text,/data-href="b#Section"/);assert.match(text,/data-href="#Self"/);
  assert.match(text.split('```html')[1],/pages\/2\/B#BSection/);
+ const tree=buildTreeRenderer(root,['a.md','nested/b.md']);const rendered=tree.render('a.md',tree.docs['a.md'].body,'A');
+ assert.match(rendered.storage,/ri:content-title="B"/);assert.match(rendered.storage,/ac:anchor="section"/);assert.match(rendered.storage,/ac:anchor="self"/);
 });
 
 test('HTML table section links cause the tree renderer to insert target anchor macros',t=>{
