@@ -24,7 +24,7 @@ import { loadWorkspace, findSyncBase, resolveSyncBase, inScope, inNestedWorkspac
 import { readEnv, requireEnv } from '../confluence/config.js';
 import { createClient, ConfluenceDownloadError, type ContentNode } from '../confluence/client.js';
 import { htmlToMarkdown, codeLanguagesFromStorage } from '../documents/html-to-markdown.js';
-import { buildFrontmatter, splitFrontmatter, wikilinkDisplayText } from '../documents/obsidian.js';
+import { buildFrontmatter, linksToWikilinks, splitFrontmatter, wikilinkDisplayText } from '../documents/obsidian.js';
 import { collectHeadings, matchConfluenceAnchor, type Heading } from '../documents/anchors.js';
 import { collectMarkdown } from '../documents/catalog.js';
 import { preparePushTree } from './prepare.js';
@@ -331,6 +331,7 @@ export function relinkPass(
   // wikilink 는 vault 어디서든 "이름"으로 찾으므로, 파일명이 유일할 때만 안전하게 쓸 수 있다.
   const nameCount = new Map<string, number>();
   for (const p of pathById.values()) nameCount.set(noExt(p), (nameCount.get(noExt(p)) ?? 0) + 1);
+  const knownPaths = new Set(pathById.values());
 
   let count = 0;
   for (const file of written) {
@@ -371,6 +372,19 @@ export function relinkPass(
         count++;
         const label = wikilinkDisplayText(text.trim());
         return label && label !== heading ? `[[#${heading}|${label}]]` : `[[#${heading}]]`;
+      });
+      after = linksToWikilinks(after, (href, label) => {
+        if (href.startsWith('#')) {
+          const heading = info?.get(file)?.textBySlug.get(href.slice(1));
+          return heading ? `[[#${heading}|${wikilinkDisplayText(label)}]]` : null;
+        }
+        const [path, ...hash] = href.split('#');
+        if (!/\.md$/i.test(path)) return null;
+        const target = resolve(dirname(file), path);
+        const name = noExt(target);
+        if (!knownPaths.has(target) || nameCount.get(name) !== 1) return null;
+        const heading = hash.length ? info?.get(target)?.textBySlug.get(hash.join('#')) : undefined;
+        return `[[${name}${heading ? `#${heading}` : ''}|${wikilinkDisplayText(label)}]]`;
       });
     }
 

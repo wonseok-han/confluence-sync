@@ -27,6 +27,20 @@ test('Markdown tables become HTML without rewriting surrounding prose, code exam
  assert.match(result,/<strong>굵게<\/strong>/);assert.match(result,/href="report.pdf"/);assert.match(result,/<col style="width: 100px;">/);
 });
 
+test('Markdown table formatting preserves wikilinks, unescaped aliases, and plain domains',()=>{
+ const source='| 노트 | 절 | 호스트 |\n|---|---|---|\n| [[Other\\|별칭]] | [[#11. 미터링·빌링|11절]] | rnd-app.innogrid.com |\n';
+ const result=formatTable(source,0,[200,300,260]);
+ assert.match(result,/<a class="internal-link" data-href="Other" href="Other">별칭<\/a>/);
+ assert.match(result,/<a class="internal-link" data-href="#11\. 미터링·빌링" href="#11\. 미터링·빌링">11절<\/a>/);
+ assert.match(result,/<td>rnd-app\.innogrid\.com<\/td>/);
+ assert.doesNotMatch(result,/href="http:\/\/rnd-app\.innogrid\.com"/);
+});
+
+test('Markdown table formatting rejects rows that would discard extra cells',()=>{
+ const source='| A | B |\n|---|---|\n| one | two | lost |\n';
+ assert.throws(()=>formatTable(source,0,[300,460]),/헤더보다 셀이 많은 행/);
+});
+
 test('source ranges preserve CRLF documents and merged-only headers use logical column counts',()=>{
  const source='# Title\r\n\r\n| A | B |\r\n| --- | --- |\r\n| X | Y |\r\n\r\nTail\r\n';
  const result=formatTable(source,0,[200,560]);assert.ok(result.startsWith('# Title\r\n\r\n'));assert.ok(result.endsWith('\r\nTail\r\n'));

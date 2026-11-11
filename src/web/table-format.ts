@@ -3,31 +3,52 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { createDocument } from '@mixmark-io/domino';
 import { htmlTableMarkdown } from '../documents/html-tables.js';
-import { splitFrontmatter } from '../documents/obsidian.js';
+import { mapProse, splitFrontmatter, wikilinksToHtmlTableAnchors } from '../documents/obsidian.js';
+import { WIKILINK_RE } from '../documents/anchors.js';
 import { applyTableWidths, tableWidths } from '../documents/tables.js';
 import { formatDocument } from '../documents/format.js';
 import { readPreviewSource } from './document-source.js';
 
 export const sourceHash = (source: string) => createHash('sha256').update(source).digest('hex');
-type Target = { start: number; end: number; html: string; markdown: boolean } | null;
+type Target = { start: number; end: number; html: string; markdown: boolean; lossless: boolean } | null;
 export type EditableTable = { index: number; widths: number[]; editable: boolean; contentWeights?: number[] };
 
 /** Source ranges come from Markdown tokens, never from the preview's sanitized HTML. */
 function targets(source: string): Target[] {
   const { body } = splitFrontmatter(source);
+  const parsedBody = mapProse(body, prose => prose.replace(WIKILINK_RE, whole => whole.replace(/(?<!\\)\|/, '\\|')));
   const prefix = source.length - body.length;
   const lines = body.split('\n');
   const offsets = [prefix];
   for (const line of lines) offsets.push(offsets.at(-1)! + line.length + 1);
-  const md = htmlTableMarkdown();
-  const tokens = md.parse(body, {});
+  const md = htmlTableMarkdown('html', false);
+  const tokens = md.parse(parsedBody, {});
   const result: Target[] = [];
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     if (token.type === 'table_open' && token.map) {
       let end = i;
       while (tokens[end]?.type !== 'table_close') end++;
-      result.push(token.level === 0 ? { start: offsets[token.map[0]], end: Math.min(source.length, offsets[token.map[1]]), html: md.renderer.render(tokens.slice(i, end + 1), md.options, {}), markdown: true } : null);
+      const split = (line: string) => {
+        const cells: string[] = [];
+        let start = 0, escaped = false;
+        for (let p = 0; p < line.length; p++) {
+          if (line[p] === '|' && !escaped) { cells.push(line.slice(start, p)); start = p + 1; }
+          escaped = line[p] === '\\';
+        }
+        cells.push(line.slice(start));
+        if (!cells[0].trim()) cells.shift();
+        if (!cells.at(-1)?.trim()) cells.pop();
+        return cells.length;
+      };
+      const rows = parsedBody.split('\n').slice(token.map[0], token.map[1]);
+      const columns = split(rows[0].trim());
+      const lossless = rows.slice(2).every(row => split(row.trim()) <= columns);
+      const rendered = md.renderer.render(tokens.slice(i, end + 1), md.options, {});
+      result.push(token.level === 0 ? {
+        start: offsets[token.map[0]], end: Math.min(source.length, offsets[token.map[1]]),
+        html: wikilinksToHtmlTableAnchors(rendered), markdown: true, lossless,
+      } : null);
       i = end;
     } else if (token.type === 'html_block' && token.map) {
       const count = createDocument(token.content).querySelectorAll('table').length;
@@ -36,7 +57,7 @@ function targets(source: string): Target[] {
       const opening = raw.match(/^\s*<table\b(?:[^"'<>]|"[^"]*"|'[^']*')*>/i);
       const close = raw.match(/<\/table\s*>/i);
       const target = count === 1 && token.level === 0 && opening && close
-        ? { start: start + raw.indexOf('<'), end: start + close.index! + close[0].length, html: raw.slice(raw.indexOf('<'), close.index! + close[0].length), markdown: false } : null;
+        ? { start: start + raw.indexOf('<'), end: start + close.index! + close[0].length, html: raw.slice(raw.indexOf('<'), close.index! + close[0].length), markdown: false, lossless: true } : null;
       for (let n = 0; n < count; n++) result.push(target);
     }
   }
@@ -110,6 +131,7 @@ export function formatTable(source: string, index: number, widths: number[]): st
   const target = list[index];
   const info = editableTables(source)[index];
   if (!target || !info?.editable || !Number.isInteger(index)) throw new Error('이 표는 너비 편집을 지원하지 않습니다.');
+  if (!target.lossless) throw new Error('헤더보다 셀이 많은 행이 있어 표 내용을 보존할 수 없습니다.');
   if (!Array.isArray(widths) || widths.length !== info.widths.length || widths.some(w => !Number.isInteger(w) || w < 40 || w > 3000)
     || widths.reduce((a, b) => a + b, 0) > 3000) throw new Error('열 너비는 40px 이상, 전체 너비는 3000px 이하여야 합니다.');
   const table = createDocument(target.html).querySelector('table')!;
