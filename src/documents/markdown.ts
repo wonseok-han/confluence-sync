@@ -103,14 +103,15 @@ function resolveInternalLink(href: string): LinkTarget | null {
   return { title, anchor: fragment ? anchorOf(rel, fragment, title) : null };
 }
 
-// 링크 대상이 되는 헤딩 바로 앞에 Anchor 매크로를 심어 이름(슬러그)을 고정한다.
+// 링크 대상이 되는 헤딩 안쪽 맨 앞에 Anchor 매크로를 심어 이름(슬러그)을 고정한다.
 // Confluence 가 헤딩에 붙이는 자동 id 는 Cloud/DC 가 다르고 바뀌므로 거기에 기대지 않는다.
+// 헤딩 밖(블록 레벨)에 두면 Confluence 가 매크로만 담은 빈 문단을 만들어 링크 아이콘이 개행되고 공백이 생긴다.
 md.renderer.rules.heading_open = (tokens, idx, opts, _env, self) => {
   const slug = ctx.bodySlugs[ctx.headingSeq++];
   const open = self.renderToken(tokens, idx, opts);
   if (!slug || !ctx.anchorNames.has(slug)) return open;
   ctx.anchorsPlaced++;
-  return anchorMacro(slug) + open;
+  return open + anchorMacro(slug);
 };
 
 md.renderer.rules.fence = (tokens, idx) => {

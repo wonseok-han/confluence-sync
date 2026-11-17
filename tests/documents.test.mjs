@@ -76,6 +76,15 @@ test('tree rendering links cross-page and self anchors with matching macros',t=>
  const tree=buildTreeRenderer(root,['a.md','nested/b.md']);const a=tree.docs['a.md'],b=tree.docs['nested/b.md'];
  const ar=tree.render('a.md',a.body,a.title),br=tree.render('nested/b.md',b.body,b.title);
  assert.equal(ar.internalLinks,2);assert.deepEqual(ar.deadAnchors,[]);assert.match(ar.storage,/ri:content-title="B"/);assert.match(ar.storage,/ac:anchor="local"/);assert.equal(br.anchorsPlaced,1);assert.match(br.storage,/ac:name="anchor"/);
+ // 앵커가 헤딩 밖 별도 블록이 되면 Confluence 에서 링크 아이콘이 개행되고 헤딩 위아래로 공백이 생긴다.
+ assert.match(br.storage,/<h2><ac:structured-macro ac:name="anchor"><ac:parameter ac:name="">section<\/ac:parameter><\/ac:structured-macro>Section<\/h2>/);
+ assert.doesNotMatch(br.storage,/<\/ac:structured-macro>\s*<h\d/);
+});
+
+test('pull keeps headings clean when an anchor macro is inside the heading',async()=>{
+ const {htmlToMarkdown}=await import('../dist/documents/html-to-markdown.js');
+ const html='<h3 id="Page-1.소개"><span class="confluence-anchor-link" id="Page-1.-소개"></span>1. 소개</h3><p>본문</p>';
+ assert.equal(htmlToMarkdown(html).trim(),'### 1. 소개\n\n본문');
 });
 
 test('rendering reports missing anchors and does not leak context between documents',t=>{
