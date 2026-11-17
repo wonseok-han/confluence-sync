@@ -98,3 +98,13 @@ test('failed overwrite download preserves all original edits and staging',async 
  const {root}=fixture(t,{'README.md':'# Dashboard edits','child.md':'# Child edits'});const map=loadMapping(mappingPath(root));map['child.md']={pageId:'202',remoteVersion:1};saveMapping(mappingPath(root),map);await changeStaging(root,['README.md','child.md'],'add');const before=readFileSync(mappingPath(root),'utf8'),index=loadIndex(root);remote(t,root,[node(),{...node('202'),status:403}]);
  await assert.rejects(runRestore(['restore','README.md','child.md','--overwrite','--base',root]),/403/);assert.equal(readFileSync(join(root,'README.md'),'utf8'),'# Dashboard edits');assert.equal(readFileSync(join(root,'child.md'),'utf8'),'# Child edits');assert.equal(readFileSync(mappingPath(root),'utf8'),before);assert.deepEqual(loadIndex(root),index);
 });
+
+for(const obsidian of [false,true])test(`overwrite restores links to the document's own anchors as in-document links like pull: obsidian=${obsidian}`,async t=>{
+ const {root}=fixture(t,{'README.md':'---\npageId: 100\n---\n# Local edits'});const self='https://example.invalid/wiki/spaces/TEST/pages/100/Dashboard';
+ remote(t,root,[node('100',`<ul><li><a href="${self}#pdf-원문-1---77쪽">3. Track 2.pdf</a> 77쪽</li><li><a href="${self}#목차">목차</a></li></ul><h2>목차</h2><h3>PDF 원문 1 - 77쪽</h3>`)]);
+ await runRestore(['restore','README.md','--overwrite','--base',root,...(obsidian?['--obsidian']:[])]);const text=readFileSync(join(root,'README.md'),'utf8');
+ assert.doesNotMatch(text,/pages\/100/);
+ if(obsidian){assert.match(text,/\[\[#PDF 원문 1 - 77쪽\|3\. Track 2\.pdf\]\]/);assert.match(text,/\[\[#목차\]\]/);}
+ else{assert.match(text,/\[3\. Track 2\.pdf\]\(#pdf-원문-1---77쪽\)/);assert.match(text,/\[목차\]\(#목차\)/);}
+ assert.equal((await inspectStaging(root)).find(r=>r.path==='README.md').status,'same');
+});

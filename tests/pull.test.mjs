@@ -23,6 +23,15 @@ test('pull to Obsidian uses heading text in page and self wikilinks',t=>{
  assert.match(readFileSync(a,'utf8'),/\[\[b#Section\|B\]\]/);assert.match(readFileSync(b,'utf8'),/\[\[#Section\|Self\]\]/);
 });
 
+for (const wiki of [false,true]) test(`pull turns absolute links to the document's own anchors into in-document links: wiki=${wiki}`,t=>{
+ const {put}=workspace(t);const self='https://example.invalid/wiki/spaces/TEST/pages/1/A';
+ const a=put('a.md',`---\ntitle: A\n---\n- [3. Track 2.pdf](${self}#pdf-원문-1---77쪽) 77쪽\n- [목차](${self}#목차)\n- [Page](${self})\n\n<table><tr><td><a href="${self}#목차">표 링크</a></td></tr></table>\n\n## 목차\n\n### PDF 원문 1 - 77쪽\n`);
+ const paths=new Map([['1',a]]);const {info}=anchorPass([a],paths);relinkPass([a],paths,wiki,info);const text=readFileSync(a,'utf8');
+ if(wiki){assert.match(text,/\[\[#PDF 원문 1 - 77쪽\|3\. Track 2\.pdf\]\]/);assert.match(text,/\[\[#목차\]\]/);}
+ else{assert.match(text,/\[3\. Track 2\.pdf\]\(#pdf-원문-1---77쪽\)/);assert.match(text,/\[목차\]\(#목차\)/);}
+ assert.match(text,/href="#목차"/);assert.match(text,/\[Page\]\(https:\/\/example\.invalid\/wiki\/spaces\/TEST\/pages\/1\/A\)/);
+});
+
 test('pull mapping uses push hashes, removes moved aliases and preserves unrelated pages',async t=>{
  const {root,put}=workspace(t,{'new.md':'---\ntitle: New\npageId: 1\n---\n## Section\n','folder/child.md':'# Child','.confluence-sync.json':JSON.stringify({'old.md':{pageId:'1'},'untouched.md':{pageId:'9'}})});
  const mapping=mappingPath(root);assert.equal(await mappingPass(root,mapping,new Map([['1',join(root,'new.md')]]),new Map([[join(root,'folder'),'2']])),2);

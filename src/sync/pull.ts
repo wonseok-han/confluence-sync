@@ -338,11 +338,18 @@ export function relinkPass(
     const before = readFileSync(file, 'utf8');
     let after = before.replace(PAGE_LINK, (whole, text: string, url: string, id: string) => {
       const target = pathById.get(id);
-      if (!target || target === file) return whole; // 못 받은 페이지·자기 자신 → 원본 URL 유지
+      if (!target) return whole; // 못 받은 페이지 → 원본 URL 유지
+      const slug = url.includes('#') ? url.split('#').slice(1).join('#') : '';
+      if (target === file) {
+        // Confluence export_view 는 같은 문서 안의 앵커(목차·PDF 쪽 링크 등)도 자기 페이지 절대 URL 로 내보낸다.
+        // 앵커가 있으면 문서 내부 링크로 되돌리고(wikilink 변환은 아래 SELF_ANCHOR 단계가 맡는다), 없으면 URL 유지.
+        if (!slug) return whole;
+        count++;
+        return `[${text || info?.get(file)?.textBySlug.get(slug) || slug}](${dest(`#${slug}`)})`;
+      }
       count++;
       const name = noExt(target);
       const label = (text || name).trim();
-      const slug = url.includes('#') ? url.split('#').slice(1).join('#') : '';
 
       if (wikilinks && nameCount.get(name) === 1) {
         // Obsidian 은 슬러그가 아니라 헤딩 텍스트로 섹션을 가리킨다: [[문서#헤딩 텍스트]]
@@ -359,7 +366,12 @@ export function relinkPass(
     after = rewriteTableLinks(after, href => {
       const match = href.match(/^https?:\/\/[^\s]*?\/pages\/(\d+)[^#]*(#.*)?$/);
       const target = match ? pathById.get(match[1]) : undefined;
-      if (!target || target === file) return href;
+      if (!target) return href;
+      if (target === file) {
+        if (!match![2] || match![2] === '#') return href;
+        count++;
+        return match![2];
+      }
       count++;
       return relative(dirname(file), target).split('\\').join('/') + (match![2] ?? '');
     });
