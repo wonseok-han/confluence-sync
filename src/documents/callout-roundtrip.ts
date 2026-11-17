@@ -7,7 +7,10 @@ type Metadata = { type: string; fold: string; explicit: boolean };
 const direct = (el: Element, name: string) => Array.from(el.children).find(child => child.nodeName.toLowerCase() === name);
 function metadata(panel: Element): Metadata | undefined {
   const body = direct(panel, 'ac:rich-text-body');
-  const anchor = body && direct(body, 'ac:structured-macro');
+  // The marker is either the body's first block or the first node of its first paragraph.
+  const first = body?.firstElementChild;
+  const leading = first?.nodeName.toLowerCase() === 'p' ? (first.firstChild as Element | null) : first;
+  const anchor = leading?.nodeName.toLowerCase() === 'ac:structured-macro' ? leading : undefined;
   if (anchor?.getAttribute('ac:name') !== 'anchor') return;
   const value = direct(anchor, 'ac:parameter')?.textContent ?? '';
   if (!value.startsWith(calloutMarker) || value.length > 2000) return;
