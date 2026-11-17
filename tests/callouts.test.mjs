@@ -21,7 +21,7 @@ for(const [type,title,color] of [['ABSTRACT','요약','#e6fcff'],['tldr','요약
 test('custom titles are escaped and fold markers do not leak into output',()=>{
  for(const marker of ['','+','-']){
   const result=storage(`> [!warning]${marker} <script>alert(1)</script> & "Title"\n> Body`);
-  assert.match(result,/&lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; &quot;Title&quot;/);assert.doesNotMatch(result,/<script>|\[!warning\]/);assert.match(result,/<p>Body<\/p>/);
+  assert.match(result,/&lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; &quot;Title&quot;/);assert.doesNotMatch(result,/<script>|\[!warning\]/);assert.match(result,/<p>(?:<ac:structured-macro ac:name="anchor">[\s\S]*?<\/ac:structured-macro>)?Body<\/p>/);
  }
  assert.match(storage('> [!note] Title only'),/ac:name="title">Title only<\/ac:parameter>/);
 });
@@ -58,6 +58,18 @@ for(const type of ['summary','abstract','tldr','CUSTOM-kind','__proto__'])for(co
  const saved=storage(source),html=panelExport(saved);
  const obsidian=htmlToMarkdown(html,{storage:saved,obsidian:true});assert.equal(obsidian,source.replace(/> - /g,'> -   '));assert.equal(storage(obsidian),saved);assert.doesNotMatch(obsidian,/csync-callout|panelHeader/);
  const markdown=htmlToMarkdown(html,{storage:saved});assert.match(markdown,/^> \*\*/);assert.match(markdown,/> \*\*Body\*\*/);assert.doesNotMatch(markdown,/\[!|csync-callout/);
+});
+test('callout metadata never becomes a standalone empty paragraph inside the panel',()=>{
+ const blockMarker=/<ac:rich-text-body>\s*<ac:structured-macro ac:name="anchor">/;
+ // 제목만 있는 [!note]: 제목·색으로 그대로 복원되므로 마커가 필요 없다.
+ const titleOnly=storage('> [!note] 녹음으로 자동 전사해 정리한 내용입니다.');
+ assert.doesNotMatch(titleOnly,/ac:name="anchor"/);assert.match(titleOnly,/<ac:rich-text-body>\n<\/ac:rich-text-body>/);
+ // 본문이 있으면 첫 문단 안에 인라인으로 붙는다.
+ const withBody=storage('> [!summary]- Custom\n> Body\n>\n> - item');
+ assert.doesNotMatch(withBody,blockMarker);assert.match(withBody,/<p><ac:structured-macro ac:name="anchor"><ac:parameter ac:name="">csync-callout-v1-[^<]+<\/ac:parameter><\/ac:structured-macro>Body<\/p>/);
+ for(const source of ['> [!note] 녹음으로 자동 전사해 정리한 내용입니다.\n','> [!summary]- Custom\n> Body\n','> [!summary]- 제목만\n','> [!note]\n> Body\n']){
+  const saved=storage(source);assert.equal(htmlToMarkdown(panelExport(saved),{storage:saved,obsidian:true}),source);
+ }
 });
 test('nested panels, explicit default title, title-only, escaped custom title and code survive recovery',()=>{
  const source='> [!summary]- 요약\n> Intro\n>\n> > [!warning]+ Inner & <title>\n> > ```md\n> > [!summary] example\n> > ```\n\n> [!note] Title only\n';

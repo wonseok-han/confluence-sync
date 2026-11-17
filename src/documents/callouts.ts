@@ -47,16 +47,28 @@ export function installCallouts(md: MarkdownIt, format: 'html' | 'storage') {
         if (tokens[end].type === 'blockquote_close' && --depth === 0) break;
       }
       if (end === tokens.length) continue;
-      const style = calloutStyle(match[1]);
-      const marker = format === 'html' || state.env?.legacyCallouts === 'panels' ? '' : anchorMacro(calloutMarker + Buffer.from(JSON.stringify({ type: match[1], fold: match[2], explicit: !!match[3]?.trim(), index: serial++ })).toString('base64url'));
-      tokens[i].type = 'callout_open'; tokens[i].meta = { ...style, title: match[3]?.trim() || style.title, marker };
+      const style = calloutStyle(match[1]), title = match[3]?.trim() || style.title, explicit = !!match[3]?.trim();
+      // Pull infers type from title+color with fold '' and an explicit title; the marker is needed only otherwise.
+      const inferable = !match[2] && explicit && inferCallout(title, style.background) === match[1];
+      const metadata = calloutMarker + Buffer.from(JSON.stringify({ type: match[1], fold: match[2], explicit, index: serial++ })).toString('base64url');
+      let marker = format === 'html' || state.env?.legacyCallouts === 'panels' || inferable ? '' : anchorMacro(metadata);
+      tokens[i].type = 'callout_open';
       tokens[end].type = 'callout_close';
-      if (newline < 0) tokens.splice(i + 1, 3);
+      if (newline < 0) { tokens.splice(i + 1, 3); }
       else {
         inline.content = inline.content.slice(newline + 1);
         inline.children = [];
         state.md.inline.parse(inline.content, state.md, state.env, inline.children);
       }
+      // A block-level macro becomes an empty paragraph in Confluence, so ride inside the first paragraph when possible.
+      const first = tokens[i + 1], firstInline = tokens[i + 2];
+      if (marker && first?.type === 'paragraph_open' && firstInline?.type === 'inline' && firstInline.children) {
+        const token = new state.Token('html_inline', '', 0);
+        token.content = marker;
+        firstInline.children.unshift(token);
+        marker = '';
+      }
+      tokens[i].meta = { ...style, title, marker };
     }
   });
   md.renderer.rules.callout_open = (tokens, idx) => {
