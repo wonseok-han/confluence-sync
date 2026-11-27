@@ -7,6 +7,7 @@ import {readFileSync,existsSync} from 'node:fs';
 import {anchorPass,relinkPass,mappingPass,runPull} from '../dist/sync/pull.js';
 import {buildTreeRenderer} from '../dist/sync/render.js';
 import {docHash} from '../dist/documents/markdown.js';
+import {splitFrontmatter} from '../dist/documents/obsidian.js';
 import {loadMapping} from '../dist/sync/mapping.js';
 import {workspace,mockFetch,configure} from './helpers/fixtures.mjs';
 
@@ -43,7 +44,7 @@ test('full pull downloads referenced image and writes frontmatter plus matching 
  const {root,put}=workspace(t);configure(t);bindScope(root);put('.csync/mapping.json',JSON.stringify({'Proposal.md':{pageId:'123'}}));
  const steps=[{path:'/wiki/rest/api/content/123?expand=body.export_view,body.storage,version',body:{id:'123',title:'Proposal',type:'page',body:{export_view:{value:'<h2>Section</h2><p>Text</p><img src="/download/attachments/123/screen.png"/>'},storage:{value:''}},_links:{base:'https://example.invalid',webui:'/wiki/pages/123'},version:{when:'2026-01-01'}}},{path:'/wiki/rest/api/content/123/child/folder?limit=100',body:{results:[]}},{path:'/wiki/rest/api/content/123/child/page?limit=100',body:{results:[]}},{path:'/wiki/rest/api/content/123/child/attachment?limit=100',body:{results:[{title:'screen.png',_links:{download:'/download/screen.png'}},{title:'unused.pdf',_links:{download:'/download/unused.pdf'}}]}},{path:'/wiki/download/screen.png',bytes:new Uint8Array([1,2,3])}];mockFetch(t,steps,scopeResponder(root,steps));
  await runPull(['pull','123','--out',root]);const path=join(root,'Proposal.md');
- assert.match(readFileSync(path,'utf8'),/pageId: 123/);assert.match(readFileSync(path,'utf8'),/attachments\/Proposal\/screen.png/);assert.deepEqual(readFileSync(join(root,'attachments/Proposal/screen.png')),Buffer.from([1,2,3]));
+ assert.equal(splitFrontmatter(readFileSync(path,'utf8')).data.pageId,'123');assert.match(readFileSync(path,'utf8'),/attachments\/Proposal\/screen.png/);assert.deepEqual(readFileSync(join(root,'attachments/Proposal/screen.png')),Buffer.from([1,2,3]));
  assert.equal(existsSync(join(root,'attachments/Proposal/unused.pdf')),false);assert.equal(loadMapping(mappingPath(root))['Proposal.md'].pageId,'123');
 });
 

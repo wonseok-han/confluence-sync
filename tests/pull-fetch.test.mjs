@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,statSync,rmSync,existsSync} from 'node:fs';
 import {join} from 'node:path';
+import {parse as parseYaml} from 'yaml';
 import {workspace,mockFetch,configure} from './helpers/fixtures.mjs';
 import {bindScope,scopeResponder} from './helpers/scope.mjs';
 import {mappingPath,workspacePath} from '../dist/sync/metadata.js';
@@ -17,6 +18,37 @@ async function fixture(t){
  return {root,put,mapping:JSON.parse(readFileSync(mappingPath(root),'utf8'))};
 }
 const scopedMock=(t,root,steps)=>mockFetch(t,steps,scopeResponder(root,steps));
+
+test('Fetch and repeated Pull repair legacy generated YAML and keep local lists, nested values and links',async t=>{
+ const {root,put}=await fixture(t), file=join(root,'a.md');
+ const link='[Keep](https://example.invalid/wiki/spaces/TEST/pages/103/C#CSection)';
+ const base=`---\ntitle: [Legacy]suffix\npageId: 101\n# local settings\ntags:\n  - one\n  - two\nlocal:\n  enabled: true\n  link: "${link}"\n---\nOriginal body`;
+ put('a.md',base);
+ await mappingPass(root,mappingPath(root),new Map([['101',file]]),new Map(),new Map([['101',1]]),new Map([['101','100']]));
+ const pages=[...batch({'101':2}).body.results];pages.find(p=>p.id==='101').title='[Label]suffix';
+ const listing={...batch(),body:{results:pages}};
+ const calls=scopedMock(t,root,[listing,node('101','[Label]suffix',`<p>New body <a href="https://example.invalid/wiki/spaces/TEST/pages/103/C#CSection">Follow</a></p>`),listing]);
+ await fetchRemote(root,env);await runPull(['pull','--base',root,'--obsidian']);
+ const text=readFileSync(file,'utf8'), fm=parseYaml(text.split('\n---\n')[0].slice(4));
+ assert.deepEqual(fm,{title:'[Label]suffix',pageId:'101',spaceKey:'TEST',tags:['one','two'],local:{enabled:true,link}});
+ assert.match(text,/# local settings/);assert.match(text,/New body \[\[c#Section\|Follow\]\]/);
+ const map=readFileSync(mappingPath(root),'utf8'),entry=JSON.parse(map)['a.md'];
+ assert.equal(entry.remoteVersion,2);assert.equal(readFileSync(join(root,'.csync/objects',entry.sourceObject+'.md'),'utf8'),text);
+ await runPull(['pull','--base',root,'--obsidian']);
+ assert.equal(readFileSync(file,'utf8'),text);assert.equal(readFileSync(mappingPath(root),'utf8'),map);
+ assert.equal(calls.filter(call=>call.url.includes('body.export_view')).length,1);
+});
+
+test('Pull leaves the file and its baseline intact when local YAML cannot be repaired',async t=>{
+ const {root,put}=await fixture(t),file=join(root,'a.md');
+ const source='---\ntitle: A\npageId: 101\nlocal: [unfinished\n---\nLocal body';
+ put('a.md',source);
+ await mappingPass(root,mappingPath(root),new Map([['101',file]]),new Map(),new Map([['101',1]]));
+ const baseline=readFileSync(mappingPath(root),'utf8');
+ scopedMock(t,root,[batch({'101':2}),node('101','A','<p>New body</p>')]);
+ await assert.rejects(runPull(['pull','--base',root]),/올바른 YAML 매핑/);
+ assert.equal(readFileSync(file,'utf8'),source);assert.equal(readFileSync(mappingPath(root),'utf8'),baseline);
+});
 
 test('root Pull uses Fetch to download exactly two changed bodies, skips all child scans, and keeps unchanged files and links',async t=>{
  const {root,mapping}=await fixture(t);const c=readFileSync(join(root,'c.md'),'utf8'),mtime=statSync(join(root,'c.md')).mtimeMs;

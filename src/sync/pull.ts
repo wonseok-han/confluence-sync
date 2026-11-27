@@ -24,7 +24,8 @@ import { loadWorkspace, findSyncBase, resolveSyncBase, inScope, inNestedWorkspac
 import { readEnv, requireEnv } from '../confluence/config.js';
 import { createClient, ConfluenceDownloadError, type ContentNode } from '../confluence/client.js';
 import { htmlToMarkdown, codeLanguagesFromStorage } from '../documents/html-to-markdown.js';
-import { buildFrontmatter, linksToWikilinks, splitFrontmatter, wikilinkDisplayText } from '../documents/obsidian.js';
+import { linksToWikilinks, splitFrontmatter, wikilinkDisplayText } from '../documents/obsidian.js';
+import { markdownBody, mergePullFrontmatter } from '../documents/frontmatter.js';
 import { collectHeadings, matchConfluenceAnchor, type Heading } from '../documents/anchors.js';
 import { collectMarkdown } from '../documents/catalog.js';
 import { preparePushTree } from './prepare.js';
@@ -72,6 +73,7 @@ type Ctx = Opts & {
   parents: Map<string, string>;
   assetOwners: Map<string, string>;
   knownPaths: Map<string, string>;
+  originalById: Map<string, string>;
   stageBase: string;
   baseDir: string;
   workspace: Workspace;
@@ -182,7 +184,10 @@ async function pullPage(ctx: Ctx, node: ContentNode, destDir: string): Promise<C
 
   // frontmatter 의 pageId 는 push 왕복의 앵커다(매핑 파일이 없어도 원본 페이지를 찾아간다).
   // 취향 옵션이 아니라 중복 페이지 생성을 막는 장치이므로 항상 쓴다. Obsidian 은 이를 속성으로 보여준다.
-  const fm = buildFrontmatter({
+  const original = ctx.originalById.get(id);
+  const prior = original && existsSync(original) && lstatSync(original).isFile()
+    && within(realpathSync(ctx.baseDir), realpathSync(original)) ? readFileSync(original, 'utf8') : '';
+  const fm = mergePullFrontmatter(prior, {
     title,
     pageId: id,
     spaceKey: ctx.spaceKey,
@@ -274,7 +279,8 @@ export function anchorPass(
   let count = 0;
   for (const file of written) {
     const self = info.get(file)!;
-    const before = readFileSync(file, 'utf8');
+    const raw = readFileSync(file, 'utf8');
+    const before = markdownBody(raw);
 
     // 우리가 올린 페이지는 Anchor 매크로 이름이 이미 마크다운 슬러그라 그대로 두면 된다.
     // Confluence 에서 직접 쓴 페이지만 헤딩을 찾아 맞춘다.
@@ -311,7 +317,7 @@ export function anchorPass(
       return href.startsWith('#') ? `#${slug}` : `${match![1]}#${slug}`;
     });
 
-    if (after !== before) writeFileSync(file, after);
+    if (after !== before) writeFileSync(file, raw.slice(0, raw.length - before.length) + after);
   }
   return { count, info };
 }
@@ -335,7 +341,8 @@ export function relinkPass(
 
   let count = 0;
   for (const file of written) {
-    const before = readFileSync(file, 'utf8');
+    const raw = readFileSync(file, 'utf8');
+    const before = markdownBody(raw);
     let after = before.replace(PAGE_LINK, (whole, text: string, url: string, id: string) => {
       const target = pathById.get(id);
       if (!target) return whole; // 못 받은 페이지 → 원본 URL 유지
@@ -400,7 +407,7 @@ export function relinkPass(
       });
     }
 
-    if (after !== before) writeFileSync(file, after);
+    if (after !== before) writeFileSync(file, raw.slice(0, raw.length - before.length) + after);
   }
   return count;
 }
@@ -660,6 +667,9 @@ export async function runPull(argv: string[], options: {restorePaths?: string[];
     client, remoteBaseUrl: env.baseUrl!, missingAttachments: 0, incremental, expectedVersions,
     obsidian: argv.includes('--obsidian'), spaceKey: env.spaceKey!, written: [], pathById: new Map(), folderIds: new Map(),
     versions: new Map(), parents: new Map(), assetOwners: new Map(), knownPaths: new Map([...knownById].map(([id, rel]) => [id, resolve(stage, destination(rel))])),
+    originalById: new Map(Object.entries(oldMapping).filter(([rel, entry]) =>
+      entry.type !== 'folder' && inScope(rel, workspace) && !inNestedWorkspace(baseDir, rel) && !ignore.ignores(rel),
+    ).map(([rel, entry]) => [entry.pageId, resolve(baseDir, rel)])),
     stageBase: stage, baseDir, workspace, rootId, claimed: new Map(), visited: new Set(),
   };
   try {
