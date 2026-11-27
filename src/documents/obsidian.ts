@@ -6,43 +6,15 @@
  *  - pull: Obsidian·GitHub·VS Code 어디서나 열리는 표준 상대 링크로 내보낸다
  *          (frontmatter 의 pageId 가 왕복 동기화의 앵커가 된다).
  *
- * frontmatter 는 평면 `key: value` 만 다룬다. 중첩·리스트가 필요할 만큼 복잡한 메타데이터는
- * 이 도구의 관심사가 아니며, 알 수 없는 키는 건드리지 않고 보존한다.
  */
 
 import { createDocument } from '@mixmark-io/domino';
 import { htmlTableMarkdown } from './html-tables.js';
 import { wikilinkAnchorToSlug, WIKILINK_RE, parseWikilink } from './anchors.js';
 
-export type Frontmatter = Record<string, string>;
+export { buildFrontmatter, splitFrontmatter, type Frontmatter } from './frontmatter.js';
 
 const FENCE = /^\s*(?:```|~~~)/;
-
-/**
- * 문서 맨 앞의 YAML frontmatter 를 분리한다. 없으면 data 는 빈 객체.
- * `key: value` 한 줄짜리만 인식하고, 값의 감싼 따옴표는 벗긴다.
- */
-export function splitFrontmatter(raw: string): { data: Frontmatter; body: string } {
-  const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
-  if (!m) return { data: {}, body: raw };
-
-  const data: Frontmatter = {};
-  for (const line of m[1].split(/\r?\n/)) {
-    const kv = line.match(/^([A-Za-z_][\w-]*)\s*:\s*(.*)$/);
-    if (!kv) continue; // 중첩/리스트 등 평면이 아닌 줄은 무시(보존은 하지 않음)
-    data[kv[1]] = kv[2].trim().replace(/^["'](.*)["']$/, '$1');
-  }
-  return { data, body: raw.slice(m[0].length) };
-}
-
-/** 평면 frontmatter 블록 생성. 값이 비면 그 키는 생략한다. */
-export function buildFrontmatter(data: Frontmatter): string {
-  const lines = Object.entries(data)
-    .filter(([, v]) => v !== undefined && v !== null && v !== '')
-    // 콜론·따옴표·선행 특수문자가 있으면 YAML 이 깨지므로 인용한다
-    .map(([k, v]) => `${k}: ${/[:#"'\n]|^\s|\s$/.test(v) ? JSON.stringify(v) : v}`);
-  return lines.length ? `---\n${lines.join('\n')}\n---\n\n` : '';
-}
 
 /** 대상 이름 → 링크 목적지(현재 파일 기준 상대경로). 못 찾으면 null. */
 export type LinkResolver = (target: string, embed: boolean) => string | null;

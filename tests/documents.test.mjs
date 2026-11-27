@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {join,relative} from 'node:path';
 import {readFileSync} from 'node:fs';
+import {parse as parseYaml} from 'yaml';
 import {workspace} from './helpers/fixtures.mjs';
 import {collectHeadings,slugifyHeading,matchConfluenceAnchor,wikilinkAnchorToSlug,collectLinkAnchors} from '../dist/documents/anchors.js';
 import {splitFrontmatter,buildFrontmatter,resolveWikilinks,linksToWikilinks} from '../dist/documents/obsidian.js';
@@ -29,6 +30,17 @@ test('frontmatter keeps quoted values and body separate',()=>{
  const parsed=splitFrontmatter(buildFrontmatter(fm)+'## Body\n');
  assert.deepEqual(parsed.data,fm);assert.equal(parsed.body.trim(),'## Body');
  assert.deepEqual(splitFrontmatter('plain'),{data:{},body:'plain'});
+});
+
+test('generated YAML scalars and old page links retain their string meanings',()=>{
+ for (const title of ['[Label]suffix','[Label]','@team','true','null','No','123','2026-01-01',' A: B # "quoted" \\ path\nline\t']) {
+  const fm={title,pageId:'000123',spaceKey:'TEST',source:'https://example.invalid/wiki/pages/000123',updated:'2026-01-01'};
+  const text=buildFrontmatter(fm);
+  assert.deepEqual(parseYaml(text.slice(4,-5),{version:'1.1'}),fm);
+  assert.deepEqual(splitFrontmatter(text).data,fm);
+ }
+ assert.equal(splitFrontmatter('---\ntitle: [Label]suffix\npageId: 000123\n---\nBody').data.title,'[Label]suffix');
+ assert.equal(splitFrontmatter('---\ntitle: Legacy\npageId: 000123\n---\nBody').data.pageId,'000123');
 });
 
 test('wikilinks handle table aliases, self anchors, unknown targets and code examples',()=>{

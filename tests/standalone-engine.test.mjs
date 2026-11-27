@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
+import {parse as parseYaml} from 'yaml';
 import {browserPlatform} from '../scripts/browser-platform.mjs';
 import {tableEditorBridge} from '../dist/web/table-editor-script.js';
 import {workspace as diskWorkspace} from './helpers/fixtures.mjs';
@@ -96,6 +97,38 @@ test('browser pull writes shared baseline and restore requires an explicit overw
  const calls=[];t.mock.method(globalThis,'fetch',async(input,options={})=>{const url=new URL(input);calls.push(options.method??'GET');if(url.pathname.endsWith('/api/v2/spaces'))return Response.json({results:[{id:'space',homepageId:'100'}]});if(url.search.includes('expand=ancestors'))return Response.json({id:url.pathname.split('/').at(-1),type:'page',space:{id:'space'},ancestors:[{id:'100'}],version:{number:1}});if(url.pathname.endsWith('/api/v2/pages'))return Response.json({results:[{id:'201',title:'New',spaceId:'space',parentId:'100',version:{number:1}}]});if(url.pathname.endsWith('/rest/api/content/201'))return Response.json({id:'201',type:'page',title:'New',version:{number:1},body:{export_view:{value:'<p>Remote</p>'},storage:{value:'<p>Remote</p>'}}});throw Error('Unexpected request '+url);});
  const r=await c.api('/api/sync/pull',{base:c.session.base,envId:'',remoteOnly:true});assert.equal(r.status,202,r.error);const done=await c.finish();assert.equal(done.state,'succeeded',done.log);assert.match(await c.read(c.session.base+'/New.md'),/Remote/);const map=JSON.parse(await c.read(c.session.base+'/.csync/mapping.json'));assert.equal(map['New.md'].pageId,'201');assert.ok(map['New.md'].localHash);await c.ack();assert.ok(calls.every(method=>method==='GET'));
  const restore=await c.api('/api/sync/restore',{base:c.session.base,envId:'',path:'New.md',overwrite:true});assert.equal(restore.status,200,restore.error);assert.ok(restore.confirmationId);
+});
+
+test('minified browser Fetch and Pull repair old generated YAML without losing local properties',async t=>{
+ const files={'.env':env,'.csync/workspace.json':JSON.stringify(workspace),'a.md':'---\ntitle: [Label]suffix\npageId: 201\ntags: [one, two]\nlocal:\n  pin: true\n---\nOld body'};
+ const disk=diskWorkspace(t,files),map=disk.root+'/.csync/mapping.json';
+ await mappingPass(disk.root,map,new Map([['201',disk.root+'/a.md']]),new Map(),new Map([['201',1]]),new Map([['201','100']]));
+ const entry=JSON.parse(readFileSync(map,'utf8'))['a.md'];
+ const c=await client();
+ await c.mirror({...files,'.csync/mapping.json':readFileSync(map),['.csync/objects/'+entry.sourceObject+'.md']:files['a.md']});
+ let downloads=0;
+ t.mock.method(globalThis,'fetch',async (input,options={})=>{
+  assert.equal(options.method??'GET','GET');
+  const url=new URL(input),id=url.pathname.split('/').at(-1);
+  if(url.pathname.endsWith('/api/v2/spaces'))return Response.json({results:[{id:'space',homepageId:'100'}]});
+  if(url.pathname.endsWith('/api/v2/pages'))return Response.json({results:[{id:'201',title:'[Label]suffix',spaceId:'space',parentId:'100',version:{number:2}}]});
+  if(url.searchParams.get('expand')==='ancestors,space,version')return Response.json({id,type:'page',space:{id:'space'},ancestors:id==='100'?[]:[{id:'100'}],version:{number:2}});
+  if(id==='201'&&url.searchParams.get('expand')==='body.export_view,body.storage,version'){
+   downloads++;
+   return Response.json({id,type:'page',title:'[Label]suffix',version:{number:2},body:{export_view:{value:'<p>New body</p>'},storage:{value:'<p>New body</p>'}}});
+  }
+  throw Error('Unexpected request '+url);
+ });
+ const request={base:c.session.base,envId:'',remoteOnly:true,format:'obsidian'};
+ for(const kind of ['fetch','pull','pull']){
+  const result=await c.api('/api/sync/'+kind,request);assert.equal(result.status,202,result.error);
+  const done=await c.finish();assert.equal(done.state,'succeeded',done.log);await c.ack();
+ }
+ const text=await c.read(c.session.base+'/a.md');
+ assert.deepEqual(parseYaml(text.split('\n---\n')[0].slice(4)),{title:'[Label]suffix',pageId:'201',spaceKey:'TEST',tags:['one','two'],local:{pin:true}});
+ assert.match(text,/New body/);assert.equal(downloads,1);
+ const after=JSON.parse(await c.read(c.session.base+'/.csync/mapping.json'))['a.md'];
+ assert.equal(after.remoteVersion,2);assert.equal(await c.read(c.session.base+'/.csync/objects/'+after.sourceObject+'.md'),text);
 });
 
 
